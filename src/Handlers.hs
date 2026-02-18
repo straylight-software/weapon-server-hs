@@ -3,7 +3,140 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Handlers where
+module Handlers
+    ( -- * Server
+      server
+
+      -- * Core Handlers
+    , healthHandler
+    , pathHandler
+    , globalConfigHandler
+    , globalConfigUpdateHandler
+    , globalDisposeHandler
+    , instanceDisposeHandler
+    , logHandler
+    , eventHandler
+
+      -- * Project Handlers
+    , projectListHandler
+    , projectCurrentHandler
+    , projectGetHandler
+    , projectUpdateHandler
+
+      -- * Provider Handlers
+    , providerListHandler
+    , providerAuthHandler
+    , providerHandler
+    , providerOauthAuthorizeHandler
+    , providerOauthCallbackHandler
+    , authCreateHandler
+    , authUpdateHandler
+    , authDeleteHandler
+
+      -- * Config Handlers
+    , configHandler
+    , configUpdateHandler
+    , commandHandler
+    , agentHandler
+
+      -- * Session Handlers
+    , sessionStatusHandler
+    , sessionListHandler
+    , sessionCreateHandler
+    , sessionGetHandler
+    , sessionDeleteHandler
+    , sessionUpdateHandler
+    , sessionChildrenHandler
+    , sessionTodoHandler
+    , sessionInitHandler
+    , sessionForkHandler
+    , sessionAbortHandler
+    , sessionShareCreateHandler
+    , sessionShareDeleteHandler
+    , sessionDiffHandler
+    , sessionSummarizeHandler
+    , sessionCommandHandler
+    , sessionShellHandler
+    , sessionRevertHandler
+    , sessionUnrevertHandler
+    , sessionPermissionHandler
+
+      -- * Message Handlers
+    , sessionMessageListHandler
+    , sessionMessageCreateHandler
+    , sessionMessageGetHandler
+    , sessionMessagePartDeleteHandler
+    , sessionMessagePartUpdateHandler
+    , sessionPromptAsyncHandler
+    , startPromptAsyncWorker
+
+      -- * Infrastructure Handlers
+    , lspHandler
+    , vcsHandler
+    , permissionHandler
+    , permissionReplyHandler
+    , questionHandler
+    , questionReplyHandler
+    , questionRejectHandler
+
+      -- * Find Handlers
+    , findHandler
+    , findFileHandler
+    , findSymbolHandler
+    , findMatches
+
+      -- * File Handlers
+    , fileListHandler
+    , fileReadHandler
+    , fileStatusHandler
+
+      -- * PTY Handlers
+    , ptyListHandler
+    , ptyCreateHandler
+    , ptyGetHandler
+    , ptyUpdateHandler
+    , ptyDeleteHandler
+    , ptyCommitHandler
+    , ptyChangesHandler
+
+      -- * TUI Handlers
+    , tuiAppendPromptHandler
+    , tuiOpenHandler
+    , tuiSubmitPromptHandler
+    , tuiClearPromptHandler
+    , tuiExecuteCommandHandler
+    , tuiShowToastHandler
+    , tuiPublishHandler
+    , tuiSelectSessionHandler
+    , tuiControlHandler
+
+      -- * Skill/Formatter Handlers
+    , skillHandler
+    , formatterHandler
+
+      -- * Experimental Handlers
+    , experimentalToolIdsHandler
+    , experimentalToolHandler
+    , experimentalToolListHandler
+    , experimentalWorktreeGetHandler
+    , experimentalWorktreePostHandler
+    , experimentalWorktreeResetHandler
+    , experimentalWorktreeDeleteHandler
+
+      -- * Chat Handlers
+    , chatHandler
+
+      -- * Session Helpers
+    , sessionContext
+    , toApiSession
+    , toApiSummary
+    , toApiShare
+    , toApiRevert
+    , toInternalSummary
+    , toInternalShare
+    , toInternalRevert
+    , toInternalInput
+    ) where
 
 import Agent.Agent qualified as Agent
 import Agent.Types qualified as AT

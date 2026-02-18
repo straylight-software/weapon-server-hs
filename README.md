@@ -1,116 +1,163 @@
-# weapon-server (Haskell)
+# `// weapon-server-hs`
 
-Haskell implementation of the Weapon server backend.
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                                                        // haskell // server
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## Building
+   "The matrix has its roots in primitive arcade games," said the voice-over,
+    "in early graphics programs and military experimentation with cranial jacks."
 
-```bash
-nix develop --command cabal build
+                                                                 — Neuromancer
 ```
 
-## Running
+Haskell implementation of the Weapon AI coding agent server. Full API parity
+with the TypeScript reference implementation, 100% endpoint coverage, property
+tested with Hedgehog.
+
+## `// quick start`
 
 ```bash
-nix develop --command cabal run
+# build
+nix build
+
+# run
+nix run
+
+# develop
+nix develop
+cabal build
+cabal run weapon-server
 ```
 
 Server listens on port 4096.
 
-## Architecture
+## `// what is this`
+
+Weapon is an AI coding agent. This server provides the backend API that:
+
+- manages coding sessions with persistent storage
+- orchestrates LLM interactions (Anthropic, OpenRouter)
+- executes tools (file operations, shell commands, search)
+- streams events via SSE for real-time UI updates
+- manages PTY terminals with WebSocket bridge
+- supports sandboxed execution via bubblewrap
+
+## `// api coverage`
+
+Full parity with the OpenAPI specification:
+
+| Category | Endpoints | Status |
+|----------|-----------|--------|
+| Health & Config | 10 | ✓ |
+| Sessions | 18 | ✓ |
+| Messages | 8 | ✓ |
+| Files | 6 | ✓ |
+| PTY Terminals | 8 | ✓ |
+| Events (SSE) | 2 | ✓ |
+| Experimental | 12 | ✓ |
+| **Total** | **95** | **100%** |
+
+See [API.md](./docs/API.md) for complete endpoint documentation.
+
+## `// architecture`
 
 ```
 src/
-├── Main.hs              # Entry point, Warp server setup
-├── Api.hs               # Servant API type definitions
-├── Handlers.hs          # Request handlers
-├── State.hs             # AppState with Bus, Storage, PTY manager
+├── Api.hs                 # servant api type definitions
+├── Handlers.hs            # request handlers
+├── State.hs               # appstate with bus, storage, pty manager
 │
-├── Tool/                # Tool execution framework
-│   ├── Types.hs         # Input types (ReadInput, BashInput, etc.)
-│   ├── Defs.hs          # Anthropic API tool definitions (JSON schemas)
-│   ├── Exec.hs          # Tool executors (file ops, bash, fd, rg)
-│   └── Tool.hs          # Re-export module
-│
-├── LLM/                 # LLM provider integrations
-│   ├── Types.hs         # Message, ToolUse, ToolResult, ChatRequest/Response
-│   ├── Anthropic.hs     # Direct Anthropic API client
-│   └── OpenRouter.hs    # OpenRouter API client (streaming via curl -4)
-│
-├── Agent/               # Agent definitions and permissions
-│   ├── Types.hs         # Agent, PermissionRuleset
-│   └── Agent.hs         # Built-in agents (armed, locked, explore, etc.)
-│
-├── Bus/                 # Event bus for SSE
-│   ├── Bus.hs           # Pub/sub implementation
-│   └── Event.hs         # Event types
-│
-├── Pty/                 # PTY session management
-│   ├── Types.hs         # PtySession, PtyManager
-│   └── Pty.hs           # PTY creation, resize, WebSocket bridge
-│
-├── Sandbox/             # Sandbox isolation (bwrap + overlayfs)
-│   ├── Types.hs         # SandboxConfig
-│   └── Sandbox.hs       # Namespace setup, overlay management
-│
-├── Proxy/               # MITM proxy for LLM traffic inspection
-│   ├── Types.hs         # ProxyConfig
-│   └── Proxy.hs         # HTTP proxy, token counting
-│
-├── Session/             # Session management
-├── Message/             # Message types
-├── Storage/             # Persistence layer
-├── Config/              # Configuration
-├── Provider/            # Provider definitions
-└── Log.hs               # Structured logging (Katip, JSON to stdout)
+├── Agent/                 # agent definitions and permissions
+├── Bus/                   # event bus for sse streaming
+├── Config/                # configuration parsing
+├── LLM/                   # provider integrations (anthropic, openrouter)
+├── Message/               # message types and parts
+├── Project/               # project discovery
+├── Provider/              # provider definitions and oauth
+├── Proxy/                 # mitm proxy for traffic inspection
+├── Pty/                   # pty session management
+├── Sandbox/               # bwrap + overlayfs isolation
+├── Session/               # session lifecycle
+├── Storage/               # persistence layer
+├── Tool/                  # tool execution framework
+└── Log.hs                 # structured logging (katip)
 ```
 
-## Tool Execution
+See [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for detailed module documentation.
 
-The `Tool` module provides the framework for executing LLM tool calls:
+## `// tool execution`
 
-### Supported Tools
+The server executes LLM tool calls with the following tools:
 
 | Tool | Description |
-| ------- | ---------------------------------------------- |
-| `read` | Read file/directory contents with line numbers |
-| `write` | Write content to file |
-| `edit` | Replace oldString with newString in file |
-| `bash` | Execute shell command with timeout |
-| `glob` | Find files by pattern (uses `fd`) |
-| `grep` | Search file contents (uses `rg`) |
+|------|-------------|
+| `read` | read file/directory contents with line numbers |
+| `write` | write content to file |
+| `edit` | replace oldString with newString in file |
+| `bash` | execute shell command with timeout |
+| `glob` | find files by pattern (uses `fd`) |
+| `grep` | search file contents (uses `rg`) |
 
-### Flow
+Tool execution flow:
 
 1. LLM returns `stop_reason: "tool_use"` with `tool_use` content blocks
-1. Server parses `ToolUse` from response
-1. `Tool.Exec.executeToolUse` runs the tool and returns `ToolResult`
-1. Results sent back as `tool_result` content blocks
-1. Conversation continues until `stop_reason: "end_turn"`
+2. server parses `ToolUse` from response
+3. `Tool.Exec.executeToolUse` runs the tool and returns `ToolResult`
+4. results sent back as `tool_result` content blocks
+5. conversation continues until `stop_reason: "end_turn"`
 
-### Adding New Tools
-
-1. Add input type to `Tool/Types.hs`
-1. Add `FromJSON` instance for parsing
-1. Add tool definition to `Tool/Defs.hs` with JSON schema
-1. Add executor to `Tool/Exec.hs`
-1. Wire into `execute` dispatcher
-
-## Environment Variables
+## `// environment`
 
 | Variable | Description |
-| -------------------- | -------------------------------------- |
+|----------|-------------|
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM calls |
-| `ANTHROPIC_API_KEY` | Direct Anthropic API key (alternative) |
+| `ANTHROPIC_API_KEY` | direct Anthropic API key (alternative) |
 
-## Dependencies
+## `// dependencies`
 
-External tools used by executors:
+Runtime tools used by executors:
 
-- `fd` - fast file finder (glob)
-- `rg` - ripgrep (grep)
-- `curl` - HTTP client (streaming with IPv4 flag)
-- `bwrap` - bubblewrap for sandboxing (optional)
+- `fd` — fast file finder (glob)
+- `rg` — ripgrep (grep)
+- `curl` — HTTP client (streaming with IPv4 flag)
+- `bwrap` — bubblewrap for sandboxing (optional)
 
-## TODO
+All dependencies are provided by the nix flake.
 
-See [TODO.md](./TODO.md) for remaining work.
+## `// testing`
+
+```bash
+# run all tests
+cabal test
+
+# run with verbose output
+cabal test --test-show-details=direct
+```
+
+Test suite includes:
+
+- 221 property tests with Hedgehog
+- API compatibility verification against TypeScript server
+- Haskemathesis OpenAPI property testing
+- Unit tests for serialization and parsing
+
+## `// contributing`
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for code style and contribution guidelines.
+
+```
+────────────────────────────────────────────────────────────────────────────────
+
+   "He'd operated on an almost permanent adrenaline high, a byproduct of youth
+    and proficiency, jacked into a custom cyberspace deck that projected his
+    disembodied consciousness into the consensual hallucination that was the
+    matrix."
+
+                                                                 — Neuromancer
+────────────────────────────────────────────────────────────────────────────────
+```
+
+## `// license`
+
+MIT. See [LICENSE](./LICENSE).

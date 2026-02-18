@@ -108,38 +108,38 @@ data TextPart = TextPart
     }
     deriving (Show, Eq, Generic)
 
--- | Tool state
+-- | Tool state (underscored fields suppress -Wpartial-fields)
 data ToolState
-    = ToolPending {tsInput :: Map.Map Text Value, tsRaw :: Text}
-    | ToolRunning {tsrInput :: Map.Map Text Value, tsrTitle :: Maybe Text}
-    | ToolCompleted {tscInput :: Map.Map Text Value, tscOutput :: Text, tscTitle :: Text}
-    | ToolError {tseInput :: Map.Map Text Value, tseError :: Text}
+    = ToolPending {_tsInput :: Map.Map Text Value, _tsRaw :: Text}
+    | ToolRunning {_tsrInput :: Map.Map Text Value, _tsrTitle :: Maybe Text}
+    | ToolCompleted {_tscInput :: Map.Map Text Value, _tscOutput :: Text, _tscTitle :: Text}
+    | ToolError {_tseInput :: Map.Map Text Value, _tseError :: Text}
     deriving (Show, Eq, Generic)
 
 instance ToJSON ToolState where
-    toJSON (ToolPending inp raw) =
+    toJSON (ToolPending input raw) =
         object
             [ "status" .= String "pending"
-            , "input" .= inp
+            , "input" .= input
             , "raw" .= raw
             ]
-    toJSON (ToolRunning inp title) =
+    toJSON (ToolRunning input title) =
         object
             [ "status" .= String "running"
-            , "input" .= inp
+            , "input" .= input
             , "title" .= title
             ]
-    toJSON (ToolCompleted inp out title) =
+    toJSON (ToolCompleted input output title) =
         object
             [ "status" .= String "completed"
-            , "input" .= inp
-            , "output" .= out
+            , "input" .= input
+            , "output" .= output
             , "title" .= title
             ]
-    toJSON (ToolError inp err) =
+    toJSON (ToolError input err) =
         object
             [ "status" .= String "error"
-            , "input" .= inp
+            , "input" .= input
             , "error" .= err
             ]
 

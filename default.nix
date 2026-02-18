@@ -139,9 +139,8 @@ mkDerivation {
     wai
     wai-extra
   ];
-  description = "Weapon Haskell Server";
+  homepage = "https://github.com/straylight-software/weapon-server-hs";
+  description = "Haskell server for Weapon AI coding agent";
   license = lib.licenses.mit;
   mainProgram = "weapon-server";
-  # Disable tests for now - some are environment-dependent
-  doCheck = false;
 }

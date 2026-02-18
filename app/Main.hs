@@ -1,3 +1,18 @@
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // weapon-server // main
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "The matrix has its roots in primitive arcade games," said the voice-over,
+--    "in early graphics programs and military experimentation with cranial
+--    jacks."
+--
+--                                                                — Neuromancer
+--
+-- Entry point for the Weapon Haskell server. Sets up Warp with WebSocket
+-- support for PTY connections, CORS middleware, and the Servant API.
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
@@ -19,7 +34,16 @@ import Network.HTTP.Types (methodOptions, status200)
 import Network.Wai (Middleware, mapResponseHeaders, requestMethod, responseLBS)
 import Network.Wai.Handler.Warp (run)
 import Network.Wai.Handler.WebSockets (websocketsOr)
-import Network.WebSockets (PendingConnection, acceptRequest, defaultConnectionOptions, pendingRequest, receiveData, requestPath, sendBinaryData)
+import Network.WebSockets
+    ( Connection
+    , PendingConnection
+    , acceptRequest
+    , defaultConnectionOptions
+    , pendingRequest
+    , receiveData
+    , requestPath
+    , sendBinaryData
+    )
 import Pty.Connect ()
 import Pty.Pty qualified as Pty
 import Servant
@@ -28,85 +52,104 @@ import System.Directory (getCurrentDirectory)
 import System.FilePath ((</>))
 import System.IO (BufferMode (..), hSetBuffering, stdout)
 
--- | CORS Middleware
+
+-- ════════════════════════════════════════════════════════════════════════════
+--                                                                 // middleware
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- | CORS middleware for cross-origin requests.
 enableCors :: Middleware
-enableCors app req respond' =
-    if requestMethod req == methodOptions
-        then respond' $ responseLBS status200 corsHeaders ""
-        else app req $ \res -> respond' $ mapResponseHeaders (\h -> h ++ corsHeaders) res
+enableCors app req callback
+    | requestMethod req == methodOptions =
+        callback $ responseLBS status200 corsHeaders ""
+    | otherwise =
+        app req $ \response ->
+            callback $ mapResponseHeaders (<> corsHeaders) response
   where
     corsHeaders =
         [ ("Access-Control-Allow-Origin", "*")
         , ("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-        , ("Access-Control-Allow-Headers", "Authorization, Content-Type, x-opencode-directory")
+        , ("Access-Control-Allow-Headers", "Authorization, Content-Type, x-weapon-directory")
         ]
 
--- | WebSocket application for PTY connections
+
+-- ════════════════════════════════════════════════════════════════════════════
+--                                                                 // websocket
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- | WebSocket handler for PTY connections.
+--
+-- Bridges WebSocket I/O to PTY sessions, enabling terminal access from
+-- browser clients.
 ptyWebSocketApp :: AppState -> PendingConnection -> IO ()
-ptyWebSocketApp st pending = do
-    -- Extract PTY ID from request path
+ptyWebSocketApp appState pending = do
     let path = requestPath (pendingRequest pending)
         pathParts = BS.split (fromIntegral (fromEnum '/')) path
-        -- Path should be /pty/{ptyId}/connect
-        mPtyId = case pathParts of
-            [_, "pty", ptyIdBs, "connect"] -> Just (TE.decodeUtf8 ptyIdBs)
+        -- path should be /pty/{ptyId}/connect
+        maybePtyId = case pathParts of
+            [_, "pty", ptyIdBytes, "connect"] -> Just (TE.decodeUtf8 ptyIdBytes)
             _ -> Nothing
 
-    case mPtyId of
-        Nothing -> pure () -- Invalid path
+    case maybePtyId of
+        Nothing -> pure ()
         Just ptyId -> do
-            -- Connect to PTY
-            mConn <- Pty.connect (stPtyManager st) ptyId Nothing
-            case mConn of
-                Nothing -> pure () -- PTY not found
-                Just ptyConn -> do
-                    -- Accept WebSocket
-                    conn <- acceptRequest pending
+            maybeConnection <- Pty.connect (stPtyManager appState) ptyId Nothing
+            case maybeConnection of
+                Nothing -> pure ()
+                Just ptyConnection -> do
+                    websocketConnection <- acceptRequest pending
+                    bridgePtyToWebSocket ptyConnection websocketConnection
 
-                    -- Set up bidirectional bridge
-                    -- Reader thread: PTY -> WebSocket
-                    void $ forkIO $ Pty.pcOnData ptyConn $ \bs -> do
-                        void $ try @SomeException $ sendBinaryData conn bs
+-- | Bidirectional bridge between PTY and WebSocket.
+bridgePtyToWebSocket :: Pty.PtyConnection -> Network.WebSockets.Connection -> IO ()
+bridgePtyToWebSocket ptyConnection websocketConnection = do
+    -- reader thread: pty -> websocket
+    void $ forkIO $ Pty.pcOnData ptyConnection $ \bytes -> do
+        void $ try @SomeException $ sendBinaryData websocketConnection bytes
 
-                    -- Writer loop: WebSocket -> PTY
-                    let loop = do
-                            result <- try @SomeException $ receiveData conn
-                            case result of
-                                Left _ -> Pty.pcClose ptyConn -- Connection closed
-                                Right bs -> do
-                                    Pty.pcSend ptyConn bs
-                                    loop
+    -- writer loop: websocket -> pty
+    let loop = do
+            result <- try @SomeException $ receiveData websocketConnection
+            case result of
+                Left _ -> Pty.pcClose ptyConnection
+                Right bytes -> do
+                    Pty.pcSend ptyConnection bytes
                     loop
+    loop
 
--- | Entry Point
+
+-- ════════════════════════════════════════════════════════════════════════════
+--                                                                      // main
+-- ════════════════════════════════════════════════════════════════════════════
+
 main :: IO ()
-main = Log.withLogger "opencode" $ \logger -> do
+main = Log.withLogger "weapon" $ \logger -> do
     hSetBuffering stdout LineBuffering
 
-    let lg = Log.withNS logger "server"
-    Log.logMsg lg Katip.InfoS "initializing opencode server"
+    let serverLogger = Log.withNS logger "server"
+    Log.logMsg serverLogger Katip.InfoS "initializing weapon server"
 
-    -- Get working directory for project context
-    cwd <- getCurrentDirectory
-    let storageDir = cwd </> ".opencode" </> "storage"
-    let projectID = "proj_default"
+    workingDirectory <- getCurrentDirectory
+    let storageDirectory = workingDirectory </> ".weapon" </> "storage"
+    let projectId = "proj_default"
 
-    state <- initialState storageDir (T.pack projectID) (T.pack cwd) logger
-    startPromptAsyncWorker state
+    appState <- initialState storageDirectory (T.pack projectId) (T.pack workingDirectory) logger
+    startPromptAsyncWorker appState
 
-    -- Heartbeat
-    _ <- forkIO $ do
-        let loop = do
-                threadDelay 10000000 -- 10s
-                Bus.publish (stBus state) "server.heartbeat" (object [])
-                loop
-        loop
+    -- heartbeat thread
+    _ <- forkIO $ heartbeatLoop appState
 
-    Log.logMsg lg Katip.InfoS $ "storage: " <> T.pack storageDir
-    Log.logMsg lg Katip.InfoS "listening on port 4096"
+    Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
+    Log.logMsg serverLogger Katip.InfoS "listening on port 4096"
 
-    -- Wrap the Servant app with WebSocket support
-    let servantApp = enableCors (serve api (server state))
-        wsApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp state) servantApp
+    let servantApp = enableCors (serve api (server appState))
+        websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
 
-    run 4096 wsApp
+    run 4096 websocketApp
+
+-- | Periodic heartbeat to keep SSE connections alive.
+heartbeatLoop :: AppState -> IO ()
+heartbeatLoop appState = do
+    threadDelay 10_000_000  -- 10 seconds
+    Bus.publish (stBus appState) "server.heartbeat" (object [])
+    heartbeatLoop appState

@@ -1,67 +1,148 @@
 cabal-version: 3.0
 name:          weapon-server
 version:       0.1.0.0
-synopsis:      Weapon Haskell Server
+synopsis:      Haskell server for Weapon AI coding agent
+description:
+  Haskell implementation of the Weapon AI coding agent server backend.
+  .
+  Features:
+  .
+  * Full API parity with TypeScript reference (95 endpoints)
+  * Session management with persistent storage
+  * LLM integration (Anthropic, OpenRouter)
+  * Tool execution (read, write, edit, bash, glob, grep)
+  * PTY terminals with WebSocket bridge
+  * SSE event streaming
+  * Sandboxed execution via bubblewrap
+
 license:       MIT
+license-file:  LICENSE
+author:        Straylight Software
+maintainer:    dev@straylight.ai
+copyright:     2026 Straylight Software
+category:      Web, AI
 build-type:    Simple
+homepage:      https://github.com/straylight-software/weapon-server-hs
+bug-reports:   https://github.com/straylight-software/weapon-server-hs/issues
+
+extra-doc-files:
+  README.md
+  CONTRIBUTING.md
+  docs/API.md
+  docs/ARCHITECTURE.md
+
+source-repository head
+  type:     git
+  location: https://github.com/straylight-software/weapon-server-hs.git
+
+-- ════════════════════════════════════════════════════════════════════════════
+--                                                                  // library
+-- ════════════════════════════════════════════════════════════════════════════
 
 library
   exposed-modules:
+    -- // agent
     Agent.Agent
     Agent.Types
+    -- // api
     Api
+    Api.Experimental
+    Api.File
+    Api.Message
+    Api.Pty
+    Api.Session
+    Api.Tui
+    Api.Types
+    Handlers
+    State
+    -- // bus
     Bus.Bus
     Bus.Event
+    -- // config
     Config.Config
     Config.Types
+    -- // experimental
     Experimental.Worktree
+    -- // find
     Find.Parse
     Find.Search
+    -- // formatter
     Formatter.Status
+    -- // global
     Global.Event
-    Handlers
+    -- // health
     Health.Build
+    -- // llm
     LLM.Anthropic
     LLM.OpenRouter
     LLM.Types
+    -- // log
     Log
+    -- // lsp
     Lsp.Store
+    -- // message
     Message.Parts
     Message.Todo
     Message.Types
+    -- // path
     Path.Build
+    -- // project
     Project.Build
     Project.Discovery
+    -- // prompt
     Prompt.Async
+    -- // provider
     Provider.OAuth
     Provider.Provider
     Provider.Types
+    -- // proxy
     Proxy.Proxy
     Proxy.Types
+    -- // pty
     Pty.Connect
     Pty.Parse
     Pty.Pty
     Pty.Types
+    -- // request
     Request.Store
+    -- // sandbox
     Sandbox.Sandbox
     Sandbox.Types
+    -- // session
     Session.Session
     Session.Status
     Session.Types
+    -- // skill
     Skill.Skill
-    State
+    -- // storage
     Storage.Storage
+    -- // tool
     Tool.Defs
     Tool.Exec
     Tool.Tool
     Tool.Types
+    -- // tui
     Tui.Store
+    -- // vcs
     Vcs.Diff
     Vcs.Status
 
   hs-source-dirs:     src
   default-language:   GHC2021
-  ghc-options:        -Wall -O2 -Werror
+
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+    -Werror
+    -O2
+
   build-depends:
     , aeson               >=2.0
     , base                >=4.17 && <5
@@ -96,17 +177,35 @@ library
     , websockets          >=0.12
 
   default-extensions:
+    BangPatterns
     DataKinds
     DeriveGeneric
+    DerivingStrategies
     LambdaCase
+    NamedFieldPuns
     OverloadedStrings
+    RecordWildCards
+    StrictData
     TypeOperators
+
+-- ════════════════════════════════════════════════════════════════════════════
+--                                                               // executable
+-- ════════════════════════════════════════════════════════════════════════════
 
 executable weapon-server
   main-is:          Main.hs
   hs-source-dirs:   app
   default-language: GHC2021
-  ghc-options:      -Wall -O2 -threaded -rtsopts -with-rtsopts=-N -Werror
+
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Werror
+    -O2
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N -T"
+
   build-depends:
     , aeson
     , base             >=4.17 && <5
@@ -116,7 +215,6 @@ executable weapon-server
     , filepath
     , http-types
     , katip
-    , weapon-server
     , process
     , servant-server
     , stm
@@ -125,15 +223,38 @@ executable weapon-server
     , wai
     , wai-websockets
     , warp
+    , weapon-server
     , websockets
+
+  default-extensions:
+    OverloadedStrings
+    RecordWildCards
+
+-- ════════════════════════════════════════════════════════════════════════════
+--                                                               // test suite
+-- ════════════════════════════════════════════════════════════════════════════
 
 test-suite weapon-server-test
   type:               exitcode-stdio-1.0
   main-is:            Spec.hs
+  hs-source-dirs:     test
+  default-language:   GHC2021
+
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Werror
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+
   other-modules:
+    -- // compatibility
     ApiCompatibilitySpec
+    -- // integration
     Integration.ApiComplianceTest
     Integration.HaskemathesisTest
+    -- // property tests
     Property.BusProps
     Property.ConfigProps
     Property.DiffProps
@@ -164,11 +285,9 @@ test-suite weapon-server-test
     Property.ToolProps
     Property.TuiProps
     Property.VcsStatusProps
+    -- // unit tests
     Unit.ApiSpec
 
-  hs-source-dirs:     test
-  default-language:   GHC2021
-  ghc-options:        -Wall -threaded -rtsopts -with-rtsopts=-N -Werror
   build-depends:
     , aeson                 >=2.0
     , base                  >=4.17 && <5
@@ -187,7 +306,6 @@ test-suite weapon-server-test
     , http-types
     , katip                 >=0.8
     , openapi3              >=3.2
-    , weapon-server
     , process
     , regex-pcre            >=0.95
     , servant               >=0.20
@@ -203,6 +321,7 @@ test-suite weapon-server-test
     , unordered-containers  >=0.2
     , wai                   >=3.2
     , wai-extra             >=3.1
+    , weapon-server
 
   default-extensions:
     DataKinds

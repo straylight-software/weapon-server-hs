@@ -20,7 +20,7 @@
           hsPkgs = pkgs.haskellPackages.override {
             overrides = self: super: {
               haskemathesis = self.callPackage ./haskemathesis.nix { };
-              weapon-server = self.callPackage ./default.nix { };
+              weapon-server = pkgs.haskell.lib.dontCheck (self.callPackage ./default.nix { });
             };
           };
 
