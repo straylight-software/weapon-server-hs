@@ -297,7 +297,7 @@ type SessionForkAPI =
     "session" :> Capture "sessionID" Text :> "fork" :> Post '[JSON] Session
 
 type SessionAbortAPI =
-    "session" :> Capture "sessionID" Text :> "abort" :> Post '[JSON] Value
+    "session" :> Capture "sessionID" Text :> "abort" :> QueryParam "directory" Text :> Post '[JSON] Bool
 
 type SessionShareCreateAPI =
     "session" :> Capture "sessionID" Text :> "share" :> Post '[JSON] Session
@@ -344,5 +344,6 @@ type SessionPermissionAPI =
         :> Capture "sessionID" Text
         :> "permissions"
         :> Capture "permissionID" Text
+        :> QueryParam "directory" Text
         :> ReqBody '[JSON] Value
-        :> Post '[JSON] Value
+        :> Post '[JSON] Bool

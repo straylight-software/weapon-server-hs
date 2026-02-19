@@ -143,6 +143,7 @@ import Agent.Types qualified as AT
 import Api
 import Bus.Bus qualified as Bus
 import Config.Config qualified as Config
+import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
@@ -190,7 +191,6 @@ import Pty.Types qualified as PtyT
 import Request.Store qualified as RequestStore
 import Servant
 import Session.Session qualified as Sess
-import Session.Status qualified as SessStatus
 import Session.Types qualified as ST
 import Skill.Skill qualified as Skill
 import State
@@ -369,35 +369,62 @@ projectUpdateHandler st pid _input = do
 
 -- * Provider/Config Handlers
 
-providerListHandler :: AppState -> Handler ProviderList
-providerListHandler _st = liftIO $ do
+providerListHandler :: AppState -> Maybe Text -> Handler ConfigProviderList
+providerListHandler _st _mDir = liftIO $ do
     providers <- Provider.list
-    let providerJson = map toJSON providers
-    -- Default model selection (first model of first provider)
+    -- For config.providers, we need to add "source" field per the component schema
+    let providerJson = map toConfigProvider providers
+
+    -- Default model selection as a map of providerID -> modelID
     let defaultModel = case providers of
             (p : _) -> case Map.elems (PT.providerModels p) of
-                (m : _) -> object ["providerID" .= PT.providerId p, "modelID" .= PT.modelId m]
+                (m : _) -> object [K.fromText (PT.providerId p) .= PT.modelId m]
                 [] -> object []
             [] -> object []
-    return $ ProviderList providerJson defaultModel
+
+    return $ ConfigProviderList providerJson defaultModel
   where
-    toJSON = Data.Aeson.toJSON
+    -- Convert provider to config.providers format (adds required "source" and "options" fields)
+    toConfigProvider p =
+        object
+            [ "id" .= PT.providerId p
+            , "name" .= PT.providerName p
+            , "source" .= ("env" :: Text)  -- Default source for builtin providers
+            , "env" .= PT.providerEnv p
+            , "options" .= object []
+            , "models" .= PT.providerModels p
+            ]
 
 providerAuthHandler :: AppState -> Handler Value
 providerAuthHandler _st = liftIO $ do
     providers <- Provider.list
-    let entries = map (\p -> (PT.providerId p, map toMethod (PT.providerAuth p))) providers
+    -- Auth methods are derived from env vars - all use API key auth
+    let entries = map (\p -> (PT.providerId p, [authMethodForProvider p])) providers
     return $ object (map (\(pid, methods) -> K.fromText pid .= methods) entries)
   where
-    toMethod method =
-        let mtype = if PT.amType method == "oauth" then "oauth" else "api" :: Text
-            label = if mtype == "oauth" then "OAuth" else "API key" :: Text
-         in object ["type" .= mtype, "label" .= label]
+    authMethodForProvider p =
+        object
+            [ "type" .= ("api" :: Text)
+            , "label" .= ("API key" :: Text)
+            , "envVars" .= PT.providerEnv p
+            ]
 
-providerHandler :: Handler [Value]
-providerHandler = liftIO $ do
+providerHandler :: AppState -> Maybe Text -> Handler ProviderList
+providerHandler st _mDir = liftIO $ do
     providers <- Provider.list
-    return $ map Data.Aeson.toJSON providers
+    let providerJson = map Data.Aeson.toJSON providers
+
+    -- Get connected providers (those with stored auth)
+    connectedIds <- Provider.listConnected (stStorage st)
+
+    -- Default model selection as a map of providerID -> modelID
+    let defaultModel = case providers of
+            (p : _) -> case Map.elems (PT.providerModels p) of
+                (m : _) -> object [K.fromText (PT.providerId p) .= PT.modelId m]
+                [] -> object []
+            [] -> object []
+
+    return $ ProviderList providerJson defaultModel connectedIds
 
 providerOauthAuthorizeHandler :: AppState -> Text -> Value -> Handler Value
 providerOauthAuthorizeHandler st pid input = liftIO $ do
@@ -413,9 +440,9 @@ providerOauthAuthorizeHandler st pid input = liftIO $ do
     Storage.write (stStorage st) ["auth", "oauth", pid] (object ["state" .= state, "redirect" .= redirect])
     return payload
 
-providerOauthCallbackHandler :: AppState -> Text -> Value -> Handler Value
-providerOauthCallbackHandler st pid input = liftIO $ do
-    stored <-
+providerOauthCallbackHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
+providerOauthCallbackHandler st pid _mDir input = do
+    stored <- liftIO $
         (Just <$> Storage.read (stStorage st) ["auth", "oauth", pid])
             `catch` \(Storage.NotFoundError _) -> return Nothing
     let provided = extractText input "state"
@@ -423,27 +450,27 @@ providerOauthCallbackHandler st pid input = liftIO $ do
     case (storedState, provided) of
         (Just s, Just p) | s == p -> do
             case extractToken input of
-                Nothing -> return $ object ["providerID" .= pid, "authenticated" .= False, "ok" .= True]
+                Nothing -> return True  -- Authenticated via OAuth but no token
                 Just token -> do
-                    Provider.setAuth (stStorage st) pid token
-                    return $ object ["providerID" .= pid, "authenticated" .= True, "ok" .= True]
-        _ -> return $ object ["providerID" .= pid, "error" .= ("invalid_state" :: Text), "ok" .= False]
+                    liftIO $ Provider.setAuth (stStorage st) pid token
+                    return True
+        _ -> throwError $ err400 { errBody = "{\"error\":\"invalid_state\"}" }
 
-authCreateHandler :: AppState -> Text -> Value -> Handler Value
+authCreateHandler :: AppState -> Text -> Value -> Handler Bool
 authCreateHandler st pid input = liftIO $ do
     case extractToken input of
-        Nothing -> return $ object ["providerID" .= pid, "authenticated" .= False]
+        Nothing -> return False
         Just token -> do
             Provider.setAuth (stStorage st) pid token
-            return $ object ["providerID" .= pid, "authenticated" .= True]
+            return True
 
-authUpdateHandler :: AppState -> Text -> Value -> Handler Value
+authUpdateHandler :: AppState -> Text -> Value -> Handler Bool
 authUpdateHandler = authCreateHandler
 
-authDeleteHandler :: AppState -> Text -> Handler Value
+authDeleteHandler :: AppState -> Text -> Handler Bool
 authDeleteHandler st pid = liftIO $ do
     Provider.removeAuth (stStorage st) pid
-    return $ object ["providerID" .= pid, "authenticated" .= False]
+    return True
 
 extractToken :: Value -> Maybe Text
 extractToken (Object obj) = case KM.lookup "token" obj of
@@ -500,12 +527,10 @@ agentHandler = liftIO $ do
 -- * Session Handlers
 
 sessionStatusHandler :: AppState -> Handler Value
-sessionStatusHandler st = liftIO $ do
-    let ctx = sessionContext st
-    sessions <- Sess.list ctx Nothing Nothing Nothing Nothing
-    ptys <- Pty.list (stPtyManager st)
-    let status = SessStatus.buildStatus (length sessions) (length ptys)
-    return $ Data.Aeson.toJSON status
+sessionStatusHandler _st = liftIO $ do
+    -- Return empty map since we don't track per-session status yet
+    -- The spec expects Map SessionID SessionStatus
+    return $ object []
 
 sessionListHandler :: AppState -> Maybe Text -> Maybe Bool -> Maybe Int -> Maybe Int -> Maybe Text -> Handler [Session]
 sessionListHandler st _mDir mRoots mLimit mStart mSearch = liftIO $ do
@@ -598,10 +623,10 @@ sessionForkHandler st sid = liftIO $ do
                 }
     return $ toApiSession session
 
-sessionAbortHandler :: AppState -> Text -> Handler Value
-sessionAbortHandler st sid = liftIO $ do
+sessionAbortHandler :: AppState -> Text -> Maybe Text -> Handler Bool
+sessionAbortHandler st sid _mDir = liftIO $ do
     Bus.publish (stBus st) "session.error" (object ["sessionID" .= sid, "aborted" .= True])
-    return $ object ["sessionID" .= sid, "aborted" .= True]
+    return True
 
 sessionShareCreateHandler :: AppState -> Text -> Handler Session
 sessionShareCreateHandler st sid = do
@@ -709,10 +734,10 @@ sessionUnrevertHandler st sid = do
         Nothing -> throwError err404
         Just session -> return $ toApiSession session
 
-sessionPermissionHandler :: AppState -> Text -> Text -> Value -> Handler Value
-sessionPermissionHandler st sid pid input = liftIO $ do
+sessionPermissionHandler :: AppState -> Text -> Text -> Maybe Text -> Value -> Handler Bool
+sessionPermissionHandler st sid pid _mDir input = liftIO $ do
     Bus.publish (stBus st) "permission.replied" (object ["sessionID" .= sid, "permissionID" .= pid, "response" .= input])
-    return $ object ["sessionID" .= sid, "permissionID" .= pid, "ok" .= True]
+    return True
 
 -- * Message Handlers (still in-memory for now, TODO: port to storage)
 
@@ -1101,34 +1126,34 @@ vcsHandler st = liftIO $ do
     branchName <- VcsStatus.loadBranch root
     return $ VcsInfo branchName
 
-permissionHandler :: AppState -> Handler [Value]
-permissionHandler st = liftIO $ do
+permissionHandler :: AppState -> Maybe Text -> Handler [Value]
+permissionHandler st _mDir = liftIO $ do
     RequestStore.listRequests (stStorage st) "permission"
 
-questionHandler :: AppState -> Handler [Value]
-questionHandler st = liftIO $ do
+questionHandler :: AppState -> Maybe Text -> Handler [Value]
+questionHandler st _mDir = liftIO $ do
     RequestStore.listRequests (stStorage st) "question"
 
-questionReplyHandler :: AppState -> Text -> Value -> Handler Value
-questionReplyHandler st rid input = liftIO $ do
+questionReplyHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
+questionReplyHandler st rid _mDir input = liftIO $ do
     let payload = object ["requestID" .= rid, "reply" .= input, "status" .= ("replied" :: Text)]
     RequestStore.writeRequest (stStorage st) "question" rid payload
     Bus.publish (stBus st) "question.replied" payload
-    return payload
+    return True
 
-questionRejectHandler :: AppState -> Text -> Value -> Handler Value
-questionRejectHandler st rid input = liftIO $ do
+questionRejectHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
+questionRejectHandler st rid _mDir input = liftIO $ do
     let payload = object ["requestID" .= rid, "reject" .= input, "status" .= ("rejected" :: Text)]
     RequestStore.writeRequest (stStorage st) "question" rid payload
     Bus.publish (stBus st) "question.rejected" payload
-    return payload
+    return True
 
-permissionReplyHandler :: AppState -> Text -> Value -> Handler Value
-permissionReplyHandler st rid input = liftIO $ do
+permissionReplyHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
+permissionReplyHandler st rid _mDir input = liftIO $ do
     let payload = object ["requestID" .= rid, "reply" .= input, "status" .= ("replied" :: Text)]
     RequestStore.writeRequest (stStorage st) "permission" rid payload
     Bus.publish (stBus st) "permission.replied" payload
-    return payload
+    return True
 
 findHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Text -> Handler [Value]
 findHandler st mQuery mPattern mDir = liftIO $ do
@@ -1172,88 +1197,88 @@ fileStatusHandler st mDir mPath = liftIO $ do
                     return [object ["path" .= path, "status" .= ("clean" :: Text), "exists" .= exists]]
                 _ -> return $ map Data.Aeson.toJSON filtered
 
-tuiAppendPromptHandler :: AppState -> Value -> Handler Value
-tuiAppendPromptHandler st input = liftIO $ do
+tuiAppendPromptHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+tuiAppendPromptHandler st _mDir input = liftIO $ do
     let text = case extractText input "text" of
             Just t -> t
             Nothing -> fromMaybe "" (extractText input "prompt")
     prompt <- TuiStore.appendPrompt (stStorage st) text
     let payload = object ["prompt" .= prompt]
     Bus.publish (stBus st) "tui.append-prompt" payload
-    return payload
+    return True
 
-tuiOpenHandler :: AppState -> Text -> Value -> Handler Value
-tuiOpenHandler st name input = liftIO $ do
-    let payload = object ["panel" .= name, "payload" .= input]
+tuiOpenHandler :: AppState -> Text -> Maybe Text -> Handler Bool
+tuiOpenHandler st name _mDir = liftIO $ do
+    let payload = object ["panel" .= name]
     TuiStore.setLast (stStorage st) payload
     Bus.publish (stBus st) ("tui." <> name) payload
-    return $ object ["ok" .= True]
+    return True
 
-tuiSubmitPromptHandler :: AppState -> Value -> Handler Value
-tuiSubmitPromptHandler st _ = liftIO $ do
+tuiSubmitPromptHandler :: AppState -> Maybe Text -> Handler Bool
+tuiSubmitPromptHandler st _mDir = liftIO $ do
     prompt <- TuiStore.submitPrompt (stStorage st)
     let payload = object ["prompt" .= prompt]
     Bus.publish (stBus st) "tui.submit-prompt" payload
-    return payload
+    return True
 
-tuiClearPromptHandler :: AppState -> Value -> Handler Value
-tuiClearPromptHandler st _ = liftIO $ do
+tuiClearPromptHandler :: AppState -> Maybe Text -> Handler Bool
+tuiClearPromptHandler st _mDir = liftIO $ do
     TuiStore.clearPrompt (stStorage st)
     Bus.publish (stBus st) "tui.clear-prompt" (object [])
-    return $ object ["ok" .= True]
+    return True
 
-tuiExecuteCommandHandler :: AppState -> Value -> Handler Value
-tuiExecuteCommandHandler st input = liftIO $ do
+tuiExecuteCommandHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+tuiExecuteCommandHandler st _mDir input = liftIO $ do
     TuiStore.setLast (stStorage st) input
     Bus.publish (stBus st) "tui.execute-command" (object ["payload" .= input])
-    return $ object ["ok" .= True]
+    return True
 
-tuiShowToastHandler :: AppState -> Value -> Handler Value
-tuiShowToastHandler st input = liftIO $ do
+tuiShowToastHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+tuiShowToastHandler st _mDir input = liftIO $ do
     TuiStore.setLast (stStorage st) input
     Bus.publish (stBus st) "tui.show-toast" (object ["payload" .= input])
-    return $ object ["ok" .= True]
+    return True
 
-tuiPublishHandler :: AppState -> Value -> Handler Value
-tuiPublishHandler st input = liftIO $ do
+tuiPublishHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+tuiPublishHandler st _mDir input = liftIO $ do
     TuiStore.setLast (stStorage st) input
     Bus.publish (stBus st) "tui.publish" (object ["payload" .= input])
-    return $ object ["ok" .= True]
+    return True
 
-tuiSelectSessionHandler :: AppState -> Value -> Handler Value
-tuiSelectSessionHandler st input = liftIO $ do
+tuiSelectSessionHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+tuiSelectSessionHandler st _mDir input = liftIO $ do
     TuiStore.setLast (stStorage st) input
     Bus.publish (stBus st) "tui.select-session" (object ["payload" .= input])
-    return $ object ["ok" .= True]
+    return True
 
-tuiControlHandler :: AppState -> Text -> Value -> Handler Value
-tuiControlHandler st name input = liftIO $ do
+tuiControlHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
+tuiControlHandler st name _mDir input = liftIO $ do
     let payload = object ["control" .= name, "payload" .= input]
     TuiStore.setLast (stStorage st) payload
     Bus.publish (stBus st) ("tui.control." <> name) payload
-    return $ object ["ok" .= True]
+    return True
 
-instanceDisposeHandler :: AppState -> Handler Value
+instanceDisposeHandler :: AppState -> Handler Bool
 instanceDisposeHandler st = liftIO $ do
     case stProxy st of
         Nothing -> pure ()
         Just proxy -> Proxy.stop proxy
     Bus.publish (stBus st) "server.instance.disposed" (object [])
-    return $ object ["disposed" .= True]
+    return True
 
 -- | Handler for /global/dispose (same as /instance/dispose)
-globalDisposeHandler :: AppState -> Handler Value
+globalDisposeHandler :: AppState -> Handler Bool
 globalDisposeHandler = instanceDisposeHandler
 
 -- | Handler for /event - accepts directory query param to filter events
 eventHandler :: AppState -> Tagged Handler Application
 eventHandler = Event.eventHandler
 
-logHandler :: AppState -> Value -> Handler Value
-logHandler st input = liftIO $ do
+logHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+logHandler st _mDir input = liftIO $ do
     let lg = Log.withNS (stLogger st) "client"
     Log.logMsg lg Katip.InfoS $ "log " <> T.pack (show input)
-    return $ object ["ok" .= True]
+    return True
 
 skillHandler :: AppState -> Maybe Text -> Handler [Skill.SkillInfo]
 skillHandler st mDir = liftIO $ do
@@ -1283,24 +1308,26 @@ experimentalToolHandler st input = liftIO $ do
     RequestStore.writeRequest (stStorage st) "experimental-tool" name payload
     return payload
 
-experimentalWorktreeGetHandler :: AppState -> Handler Value
-experimentalWorktreeGetHandler st = liftIO $ do
-    Worktree.getInfo (stStorage st) (stDirectory st)
+experimentalWorktreeGetHandler :: AppState -> Maybe Text -> Handler [Text]
+experimentalWorktreeGetHandler _st _mDir = liftIO $ do
+    -- Return empty list - worktree listing not yet implemented
+    return []
 
 experimentalWorktreePostHandler :: AppState -> Value -> Handler Value
 experimentalWorktreePostHandler st input = liftIO $ do
     Worktree.setInfo (stStorage st) input
 
-experimentalWorktreeResetHandler :: AppState -> Value -> Handler Value
-experimentalWorktreeResetHandler st _ = liftIO $ do
-    Worktree.resetInfo (stStorage st) (stDirectory st)
+experimentalWorktreeResetHandler :: AppState -> Maybe Text -> Handler Bool
+experimentalWorktreeResetHandler st _mDir = liftIO $ do
+    _ <- Worktree.resetInfo (stStorage st) (stDirectory st)
+    return True
 
 -- | Delete a worktree and its branch (DELETE /experimental/worktree)
-experimentalWorktreeDeleteHandler :: AppState -> Value -> Handler Bool
-experimentalWorktreeDeleteHandler st input = liftIO $ do
-    -- Extract directory from input if provided
-    let mDir = extractText input "directory"
-    result <- Worktree.remove (stStorage st) (stDirectory st) mDir
+experimentalWorktreeDeleteHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+experimentalWorktreeDeleteHandler st mDir input = liftIO $ do
+    -- Use query param directory if provided, otherwise extract from body
+    let dir = mDir <|> extractText input "directory"
+    result <- Worktree.remove (stStorage st) (stDirectory st) dir
     case result of
         Left _err -> return False
         Right _ -> return True
@@ -1459,7 +1486,7 @@ server st =
         :<|> projectCurrentHandler st
         :<|> providerListHandler st
         :<|> providerAuthHandler st
-        :<|> providerHandler
+        :<|> providerHandler st
         :<|> providerOauthAuthorizeHandler st
         :<|> providerOauthCallbackHandler st
         :<|> authCreateHandler st

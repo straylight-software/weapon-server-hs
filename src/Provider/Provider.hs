@@ -8,6 +8,9 @@ module Provider.Provider (
     Provider.Types.Provider (..),
     Provider.Types.Model (..),
     Provider.Types.ModelCost (..),
+    Provider.Types.ModelLimit (..),
+    Provider.Types.ModelInterleaved (..),
+    Provider.Types.ModelModalities (..),
     Provider.Types.ProviderAuth (..),
 
     -- * Operations
@@ -15,6 +18,7 @@ module Provider.Provider (
     get,
     getModel,
     authStatus,
+    listConnected,
     setAuth,
     removeAuth,
 
@@ -39,7 +43,7 @@ builtinProviders =
     [ Provider
         { providerId = "anthropic"
         , providerName = "Anthropic"
-        , providerIcon = Nothing
+        , providerEnv = ["ANTHROPIC_API_KEY"]
         , providerModels =
             Map.fromList
                 [
@@ -47,13 +51,22 @@ builtinProviders =
                     , Model
                         { modelId = "claude-sonnet-4-20250514"
                         , modelName = "Claude Sonnet 4"
-                        , modelProviderID = "anthropic"
-                        , modelContextLength = Just 200000
-                        , modelMaxOutput = Just 16384
-                        , modelCost = ModelCost 3.0 15.0 (Just 0.3) (Just 3.75)
-                        , modelCapabilities = Map.fromList [("thinking", True), ("tools", True)]
-                        , modelAttachment = Just ["image"]
-                        , modelOptions = Nothing
+                        , modelReleaseDate = "2025-05-14"
+                        , modelAttachment = True
+                        , modelReasoning = True
+                        , modelTemperature = True
+                        , modelToolCall = True
+                        , modelLimit = ModelLimit 200000 Nothing 16384
+                        , modelOptions = Map.empty
+                        , modelFamily = Just "claude"
+                        , modelInterleaved = Nothing
+                        , modelCost = Just $ ModelCost 3.0 15.0 (Just 0.3) (Just 3.75) Nothing
+                        , modelModalities = Just $ ModelModalities ["text", "image", "pdf"] ["text"]
+                        , modelExperimental = Nothing
+                        , modelStatus = Nothing
+                        , modelHeaders = Nothing
+                        , modelProvider = Nothing
+                        , modelVariants = Nothing
                         }
                     )
                 ,
@@ -61,24 +74,32 @@ builtinProviders =
                     , Model
                         { modelId = "claude-opus-4-20250514"
                         , modelName = "Claude Opus 4"
-                        , modelProviderID = "anthropic"
-                        , modelContextLength = Just 200000
-                        , modelMaxOutput = Just 32000
-                        , modelCost = ModelCost 15.0 75.0 (Just 1.5) (Just 18.75)
-                        , modelCapabilities = Map.fromList [("thinking", True), ("tools", True)]
-                        , modelAttachment = Just ["image"]
-                        , modelOptions = Nothing
+                        , modelReleaseDate = "2025-05-14"
+                        , modelAttachment = True
+                        , modelReasoning = True
+                        , modelTemperature = True
+                        , modelToolCall = True
+                        , modelLimit = ModelLimit 200000 Nothing 32000
+                        , modelOptions = Map.empty
+                        , modelFamily = Just "claude"
+                        , modelInterleaved = Nothing
+                        , modelCost = Just $ ModelCost 15.0 75.0 (Just 1.5) (Just 18.75) Nothing
+                        , modelModalities = Just $ ModelModalities ["text", "image", "pdf"] ["text"]
+                        , modelExperimental = Nothing
+                        , modelStatus = Nothing
+                        , modelHeaders = Nothing
+                        , modelProvider = Nothing
+                        , modelVariants = Nothing
                         }
                     )
                 ]
-        , providerAuth = [AuthMethod "api_key" ["ANTHROPIC_API_KEY"] Nothing]
-        , providerEnv = ["ANTHROPIC_API_KEY"]
-        , providerOptions = Nothing
+        , providerApi = Nothing
+        , providerNpm = Nothing
         }
     , Provider
         { providerId = "openai"
         , providerName = "OpenAI"
-        , providerIcon = Nothing
+        , providerEnv = ["OPENAI_API_KEY"]
         , providerModels =
             Map.fromList
                 [
@@ -86,13 +107,22 @@ builtinProviders =
                     , Model
                         { modelId = "gpt-4o"
                         , modelName = "GPT-4o"
-                        , modelProviderID = "openai"
-                        , modelContextLength = Just 128000
-                        , modelMaxOutput = Just 16384
-                        , modelCost = ModelCost 2.5 10.0 Nothing Nothing
-                        , modelCapabilities = Map.fromList [("tools", True)]
-                        , modelAttachment = Just ["image"]
-                        , modelOptions = Nothing
+                        , modelReleaseDate = "2024-05-13"
+                        , modelAttachment = True
+                        , modelReasoning = False
+                        , modelTemperature = True
+                        , modelToolCall = True
+                        , modelLimit = ModelLimit 128000 Nothing 16384
+                        , modelOptions = Map.empty
+                        , modelFamily = Just "gpt"
+                        , modelInterleaved = Nothing
+                        , modelCost = Just $ ModelCost 2.5 10.0 Nothing Nothing Nothing
+                        , modelModalities = Just $ ModelModalities ["text", "image"] ["text"]
+                        , modelExperimental = Nothing
+                        , modelStatus = Nothing
+                        , modelHeaders = Nothing
+                        , modelProvider = Nothing
+                        , modelVariants = Nothing
                         }
                     )
                 ,
@@ -100,28 +130,35 @@ builtinProviders =
                     , Model
                         { modelId = "o3"
                         , modelName = "o3"
-                        , modelProviderID = "openai"
-                        , modelContextLength = Just 200000
-                        , modelMaxOutput = Just 100000
-                        , modelCost = ModelCost 10.0 40.0 Nothing Nothing
-                        , modelCapabilities = Map.fromList [("reasoning", True), ("tools", True)]
-                        , modelAttachment = Just ["image"]
-                        , modelOptions = Nothing
+                        , modelReleaseDate = "2025-01-01"
+                        , modelAttachment = True
+                        , modelReasoning = True
+                        , modelTemperature = False
+                        , modelToolCall = True
+                        , modelLimit = ModelLimit 200000 Nothing 100000
+                        , modelOptions = Map.empty
+                        , modelFamily = Just "o"
+                        , modelInterleaved = Nothing
+                        , modelCost = Just $ ModelCost 10.0 40.0 Nothing Nothing Nothing
+                        , modelModalities = Just $ ModelModalities ["text", "image"] ["text"]
+                        , modelExperimental = Nothing
+                        , modelStatus = Nothing
+                        , modelHeaders = Nothing
+                        , modelProvider = Nothing
+                        , modelVariants = Nothing
                         }
                     )
                 ]
-        , providerAuth = [AuthMethod "api_key" ["OPENAI_API_KEY"] Nothing]
-        , providerEnv = ["OPENAI_API_KEY"]
-        , providerOptions = Nothing
+        , providerApi = Nothing
+        , providerNpm = Nothing
         }
     , Provider
         { providerId = "openrouter"
         , providerName = "OpenRouter"
-        , providerIcon = Nothing
-        , providerModels = Map.empty -- Loaded dynamically
-        , providerAuth = [AuthMethod "api_key" ["OPENROUTER_API_KEY"] Nothing]
         , providerEnv = ["OPENROUTER_API_KEY"]
-        , providerOptions = Nothing
+        , providerModels = Map.empty -- Loaded dynamically
+        , providerApi = Nothing
+        , providerNpm = Nothing
         }
     ]
 
@@ -196,6 +233,13 @@ anyM _ [] = pure False
 anyM f (x : xs) = do
     ok <- f x
     if ok then pure True else anyM f xs
+
+-- | List connected provider IDs (those with stored auth)
+listConnected :: Storage.StorageConfig -> IO [Text]
+listConnected storage = do
+    keys <- Storage.list storage ["auth"]
+    -- Each key is ["auth", providerID], so extract the second element
+    return [pid | [_, pid] <- keys]
 
 -- | Set auth for a provider
 setAuth :: Storage.StorageConfig -> Text -> Text -> IO ()

@@ -30,6 +30,7 @@ import Global.Event ()
 import Handlers
 import Katip qualified
 import Log qualified
+import Middleware (supplyEmptyBody)
 import Network.HTTP.Types (methodOptions, status200)
 import Network.Wai (Middleware, mapResponseHeaders, requestMethod, responseLBS)
 import Network.Wai.Handler.Warp (run)
@@ -71,7 +72,6 @@ enableCors app req callback
         , ("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
         , ("Access-Control-Allow-Headers", "Authorization, Content-Type, x-weapon-directory")
         ]
-
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                 // websocket
@@ -142,7 +142,7 @@ main = Log.withLogger "weapon" $ \logger -> do
     Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
     Log.logMsg serverLogger Katip.InfoS "listening on port 4096"
 
-    let servantApp = enableCors (serve api (server appState))
+    let servantApp = enableCors $ supplyEmptyBody $ serve api (server appState)
         websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
 
     run 4096 websocketApp

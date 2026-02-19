@@ -19,6 +19,7 @@ module Api.Types
     , PathInfo (..)
     , Project (..)
     , ProviderList (..)
+    , ConfigProviderList (..)
     , VcsInfo (..)
     , ChatInput (..)
 
@@ -124,22 +125,50 @@ instance FromJSON Project
 -- // provider //
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- | Provider list response matching OpenAPI spec
+-- Returns all providers, default model selection, and connected provider IDs
 data ProviderList = ProviderList
-    { providers :: [Value]
-    , default_ :: Value
+    { plAll :: [Value]           -- ^ All available providers
+    , plDefault :: Value         -- ^ Default model selection (map of provider -> model)
+    , plConnected :: [Text]      -- ^ List of connected provider IDs
     }
     deriving (Eq, Show, Generic)
 
 instance ToJSON ProviderList where
-    toJSON (ProviderList providersList defaultProvider) =
-        object ["providers" .= providersList, "default" .= defaultProvider]
+    toJSON (ProviderList allProviders defaultSelection connected) =
+        object
+            [ "all" .= allProviders
+            , "default" .= defaultSelection
+            , "connected" .= connected
+            ]
 
 instance FromJSON ProviderList where
     parseJSON = withObject "ProviderList" $ \v ->
         ProviderList
+            <$> v .: "all"
+            <*> v .: "default"
+            <*> v .: "connected"
+
+-- | Config providers response type (for /config/providers endpoint)
+-- Uses "providers" key per the OpenAPI spec for config.providers
+data ConfigProviderList = ConfigProviderList
+    { cplProviders :: [Value]     -- ^ All available providers
+    , cplDefault :: Value         -- ^ Default model selection (map of provider -> model)
+    }
+    deriving (Eq, Show, Generic)
+
+instance ToJSON ConfigProviderList where
+    toJSON (ConfigProviderList providers defaultSelection) =
+        object
+            [ "providers" .= providers
+            , "default" .= defaultSelection
+            ]
+
+instance FromJSON ConfigProviderList where
+    parseJSON = withObject "ConfigProviderList" $ \v ->
+        ConfigProviderList
             <$> v .: "providers"
             <*> v .: "default"
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // vcs //
@@ -192,16 +221,16 @@ type ProjectUpdateAPI = "project" :> Capture "projectID" Text :> ReqBody '[JSON]
 type ProjectCurrentAPI = "project" :> "current" :> QueryParam "directory" Text :> Get '[JSON] Project
 
 -- provider and auth
-type ProviderListAPI = "config" :> "providers" :> Get '[JSON] ProviderList
+type ProviderListAPI = "config" :> "providers" :> QueryParam "directory" Text :> Get '[JSON] ConfigProviderList
 type ProviderAuthAPI = "provider" :> "auth" :> Get '[JSON] Value
-type ProviderAPI = "provider" :> Get '[JSON] [Value]
+type ProviderAPI = "provider" :> QueryParam "directory" Text :> Get '[JSON] ProviderList
 type ProviderOauthAuthorizeAPI =
     "provider" :> Capture "providerID" Text :> "oauth" :> "authorize" :> ReqBody '[JSON] Value :> Post '[JSON] Value
 type ProviderOauthCallbackAPI =
-    "provider" :> Capture "providerID" Text :> "oauth" :> "callback" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type AuthCreateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type AuthUpdateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] Value :> Put '[JSON] Value
-type AuthDeleteAPI = "auth" :> Capture "providerID" Text :> Delete '[JSON] Value
+    "provider" :> Capture "providerID" Text :> "oauth" :> "callback" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type AuthCreateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type AuthUpdateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] Value :> Put '[JSON] Bool
+type AuthDeleteAPI = "auth" :> Capture "providerID" Text :> Delete '[JSON] Bool
 
 -- agent and config
 type AgentAPI = "agent" :> Get '[JSON] [Value]
@@ -214,11 +243,12 @@ type LspAPI = "lsp" :> Get '[JSON] [Value]
 type VcsAPI = "vcs" :> Get '[JSON] VcsInfo
 
 -- permission and question
-type PermissionAPI = "permission" :> Get '[JSON] [Value]
-type PermissionReplyAPI = "permission" :> Capture "requestID" Text :> "reply" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type QuestionAPI = "question" :> Get '[JSON] [Value]
-type QuestionReplyAPI = "question" :> Capture "requestID" Text :> "reply" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type QuestionRejectAPI = "question" :> Capture "requestID" Text :> "reject" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+-- Note: OpenAPI spec expects Bool response for permission.reply
+type PermissionAPI = "permission" :> QueryParam "directory" Text :> Get '[JSON] [Value]
+type PermissionReplyAPI = "permission" :> Capture "requestID" Text :> "reply" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type QuestionAPI = "question" :> QueryParam "directory" Text :> Get '[JSON] [Value]
+type QuestionReplyAPI = "question" :> Capture "requestID" Text :> "reply" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type QuestionRejectAPI = "question" :> Capture "requestID" Text :> "reject" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
 -- find
 type FindAPI = "find" :> QueryParam "query" Text :> QueryParam "pattern" Text :> QueryParam "directory" Text :> Get '[JSON] [Value]
@@ -230,11 +260,11 @@ type GlobalEventAPI = "global" :> "event" :> Raw
 type EventAPI = "event" :> Raw
 
 -- lifecycle
-type InstanceDisposeAPI = "instance" :> "dispose" :> Post '[JSON] Value
-type GlobalDisposeAPI = "global" :> "dispose" :> Post '[JSON] Value
+type InstanceDisposeAPI = "instance" :> "dispose" :> Post '[JSON] Bool
+type GlobalDisposeAPI = "global" :> "dispose" :> Post '[JSON] Bool
 
 -- logging
-type LogAPI = "log" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type LogAPI = "log" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
 -- skill and formatter
 type SkillAPI = "skill" :> QueryParam "directory" Text :> Get '[JSON] [SkillInfo]

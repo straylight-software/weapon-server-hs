@@ -46,6 +46,7 @@
   wai-websockets,
   warp,
   websockets,
+  pkgs,
 }:
 mkDerivation {
   pname = "weapon-server";
@@ -138,6 +139,11 @@ mkDerivation {
     unordered-containers
     wai
     wai-extra
+  ];
+  testToolDepends = [
+    pkgs.ripgrep
+    pkgs.fd
+    pkgs.git
   ];
   homepage = "https://github.com/straylight-software/weapon-server-hs";
   description = "Haskell server for Weapon AI coding agent";

@@ -2,6 +2,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    haskemathesis.url = "github:weyl-ai/haskemathesis";
   };
 
   outputs =
@@ -15,12 +16,12 @@
       ];
 
       perSystem =
-        { pkgs, system, ... }:
+        { pkgs, system, inputs', ... }:
         let
           hsPkgs = pkgs.haskellPackages.override {
             overrides = self: super: {
-              haskemathesis = self.callPackage ./haskemathesis.nix { };
-              weapon-server = pkgs.haskell.lib.dontCheck (self.callPackage ./default.nix { });
+              haskemathesis = inputs'.haskemathesis.packages.default;
+              weapon-server = self.callPackage ./default.nix { };
             };
           };
 
@@ -43,6 +44,8 @@
             default = server;
             weapon-server = hsPkgs.weapon-server;
           };
+
+          checks.weapon-server = server;
 
           devShells.default = hsPkgs.shellFor {
             packages = p: [ p.weapon-server ];

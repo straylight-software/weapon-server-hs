@@ -28,6 +28,7 @@ module Api.Tui
     ) where
 
 import Data.Aeson (Value)
+import Data.Text (Text)
 import Servant
 
 
@@ -36,28 +37,29 @@ import Servant
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- prompt management
-type TuiAppendPromptAPI = "tui" :> "append-prompt" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type TuiSubmitPromptAPI = "tui" :> "submit-prompt" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type TuiClearPromptAPI = "tui" :> "clear-prompt" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+-- Note: OpenAPI spec expects Bool responses for all TUI endpoints
+type TuiAppendPromptAPI = "tui" :> "append-prompt" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiSubmitPromptAPI = "tui" :> "submit-prompt" :> QueryParam "directory" Text :> Post '[JSON] Bool
+type TuiClearPromptAPI = "tui" :> "clear-prompt" :> QueryParam "directory" Text :> Post '[JSON] Bool
 
--- navigation panels
-type TuiOpenHelpAPI = "tui" :> "open-help" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type TuiOpenSessionsAPI = "tui" :> "open-sessions" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type TuiOpenThemesAPI = "tui" :> "open-themes" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type TuiOpenModelsAPI = "tui" :> "open-models" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+-- navigation panels (no request body required per OpenAPI spec)
+type TuiOpenHelpAPI = "tui" :> "open-help" :> QueryParam "directory" Text :> Post '[JSON] Bool
+type TuiOpenSessionsAPI = "tui" :> "open-sessions" :> QueryParam "directory" Text :> Post '[JSON] Bool
+type TuiOpenThemesAPI = "tui" :> "open-themes" :> QueryParam "directory" Text :> Post '[JSON] Bool
+type TuiOpenModelsAPI = "tui" :> "open-models" :> QueryParam "directory" Text :> Post '[JSON] Bool
 
 -- command execution
-type TuiExecuteCommandAPI = "tui" :> "execute-command" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type TuiExecuteCommandAPI = "tui" :> "execute-command" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
 -- notifications
-type TuiShowToastAPI = "tui" :> "show-toast" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type TuiShowToastAPI = "tui" :> "show-toast" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
 -- publishing
-type TuiPublishAPI = "tui" :> "publish" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type TuiPublishAPI = "tui" :> "publish" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
 -- session selection
-type TuiSelectSessionAPI = "tui" :> "select-session" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type TuiSelectSessionAPI = "tui" :> "select-session" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
 -- control flow
-type TuiControlNextAPI = "tui" :> "control" :> "next" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-type TuiControlResponseAPI = "tui" :> "control" :> "response" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type TuiControlNextAPI = "tui" :> "control" :> "next" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiControlResponseAPI = "tui" :> "control" :> "response" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool

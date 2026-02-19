@@ -37,15 +37,6 @@ prop_modelRoundtrip = property $ do
         Nothing -> failure
         Just model' -> model === model'
 
--- | Property: AuthMethod JSON round-trip
-prop_authMethodRoundtrip :: Property
-prop_authMethodRoundtrip = property $ do
-    auth <- forAll genAuthMethod
-    let json = encode auth
-    case decode json of
-        Nothing -> failure
-        Just auth' -> auth === auth'
-
 -- | Property: ProviderAuth JSON round-trip
 prop_providerAuthRoundtrip :: Property
 prop_providerAuthRoundtrip = property $ do
@@ -101,36 +92,56 @@ genNonEmptyText = Gen.text (Range.linear 1 100) Gen.alphaNum
 genDouble :: Gen Double
 genDouble = Gen.double (Range.linearFrac 0 1000)
 
-genMaybeDouble :: Gen (Maybe Double)
-genMaybeDouble = Gen.maybe genDouble
-
 genModelCost :: Gen ModelCost
 genModelCost =
     ModelCost
-        <$> genDouble
-        <*> genDouble
-        <*> genMaybeDouble
-        <*> genMaybeDouble
+        <$> genDouble                  -- mcInput
+        <*> genDouble                  -- mcOutput
+        <*> Gen.maybe genDouble        -- mcCacheRead
+        <*> Gen.maybe genDouble        -- mcCacheWrite
+        <*> pure Nothing               -- mcContextOver200k (don't recurse)
+
+genModelLimit :: Gen ModelLimit
+genModelLimit =
+    ModelLimit
+        <$> Gen.int (Range.linear 1000 200000)
+        <*> Gen.maybe (Gen.int (Range.linear 0 100000))
+        <*> Gen.int (Range.linear 1000 100000)
+
+genModelInterleaved :: Gen ModelInterleaved
+genModelInterleaved =
+    Gen.choice
+        [ InterleavedBool <$> Gen.bool
+        , InterleavedField <$> Gen.element ["reasoning_content", "reasoning_details"]
+        ]
+
+genModelModalities :: Gen ModelModalities
+genModelModalities =
+    ModelModalities
+        <$> Gen.list (Range.linear 1 5) (Gen.element ["text", "audio", "image", "video", "pdf"])
+        <*> Gen.list (Range.linear 1 5) (Gen.element ["text", "audio", "image", "video", "pdf"])
 
 genModel :: Gen Model
 genModel =
     Model
-        <$> genNonEmptyText
-        <*> genText
-        <*> genNonEmptyText
-        <*> Gen.maybe (Gen.int (Range.linear 0 100000))
-        <*> Gen.maybe (Gen.int (Range.linear 0 100000))
-        <*> genModelCost
-        <*> pure Map.empty
-        <*> Gen.maybe (Gen.list (Range.linear 0 3) genNonEmptyText)
-        <*> Gen.maybe (pure Map.empty)
-
-genAuthMethod :: Gen AuthMethod
-genAuthMethod =
-    AuthMethod
-        <$> genNonEmptyText
-        <*> Gen.list (Range.linear 0 3) genNonEmptyText
-        <*> Gen.maybe genNonEmptyText
+        <$> genNonEmptyText             -- modelId
+        <*> genNonEmptyText             -- modelName
+        <*> genNonEmptyText             -- modelReleaseDate
+        <*> Gen.bool                    -- modelAttachment
+        <*> Gen.bool                    -- modelReasoning
+        <*> Gen.bool                    -- modelTemperature
+        <*> Gen.bool                    -- modelToolCall
+        <*> genModelLimit               -- modelLimit
+        <*> pure Map.empty              -- modelOptions
+        <*> Gen.maybe genNonEmptyText   -- modelFamily
+        <*> Gen.maybe genModelInterleaved  -- modelInterleaved
+        <*> Gen.maybe genModelCost      -- modelCost
+        <*> Gen.maybe genModelModalities   -- modelModalities
+        <*> Gen.maybe Gen.bool          -- modelExperimental
+        <*> Gen.maybe (Gen.element ["alpha", "beta", "deprecated"])  -- modelStatus
+        <*> pure Nothing                -- modelHeaders
+        <*> pure Nothing                -- modelProvider
+        <*> pure Nothing                -- modelVariants
 
 genProviderAuth :: Gen ProviderAuth
 genProviderAuth =
@@ -146,7 +157,6 @@ tests =
         "Provider Property Tests"
         [ testProperty "ModelCost round-trip" prop_modelCostRoundtrip
         , testProperty "Model round-trip" prop_modelRoundtrip
-        , testProperty "AuthMethod round-trip" prop_authMethodRoundtrip
         , testProperty "ProviderAuth round-trip" prop_providerAuthRoundtrip
         , testProperty "Auth persistence" prop_authPersistence
         , testProperty "Auth status handles corrupt JSON" prop_authStatusCorruptJson

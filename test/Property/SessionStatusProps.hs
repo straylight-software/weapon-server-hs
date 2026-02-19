@@ -8,27 +8,52 @@ import Data.Aeson.KeyMap qualified as KM
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
-import Session.Status qualified as Status
+import Session.Status (SessionStatus (..), SessionStatusType (..))
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
-prop_buildStatus :: Property
-prop_buildStatus = property $ do
-    sessions <- forAll $ Gen.int (Range.linear 0 100)
-    ptys <- forAll $ Gen.int (Range.linear 0 100)
-    let status = Status.buildStatus sessions ptys
-    Status.ssSessions status === sessions
-    Status.ssPtys status === ptys
-
-prop_statusJsonKeys :: Property
-prop_statusJsonKeys = property $ do
-    sessions <- forAll $ Gen.int (Range.linear 0 100)
-    ptys <- forAll $ Gen.int (Range.linear 0 100)
-    let status = Status.buildStatus sessions ptys
+-- | Test that idle status serializes correctly
+prop_idleStatusJson :: Property
+prop_idleStatusJson = property $ do
+    let status = SessionStatus StatusIdle
     case decodeValue (encode status) of
         Object obj -> do
-            assert $ KM.member (Key.fromText "sessions") obj
-            assert $ KM.member (Key.fromText "ptys") obj
+            assert $ KM.member (Key.fromText "type") obj
+            case KM.lookup (Key.fromText "type") obj of
+                Just (String "idle") -> success
+                _ -> failure
+        _ -> failure
+  where
+    decodeValue bytes = case decode bytes of
+        Nothing -> Null
+        Just v -> v
+
+-- | Test that retry status includes all required fields
+prop_retryStatusJson :: Property
+prop_retryStatusJson = property $ do
+    attempt <- forAll $ Gen.int (Range.linear 1 10)
+    next <- forAll $ Gen.int (Range.linear 1000 60000)
+    let status = SessionStatus (StatusRetry attempt "rate limited" next)
+    case decodeValue (encode status) of
+        Object obj -> do
+            assert $ KM.member (Key.fromText "type") obj
+            assert $ KM.member (Key.fromText "attempt") obj
+            assert $ KM.member (Key.fromText "message") obj
+            assert $ KM.member (Key.fromText "next") obj
+        _ -> failure
+  where
+    decodeValue bytes = case decode bytes of
+        Nothing -> Null
+        Just v -> v
+
+-- | Test that active status includes stepID
+prop_activeStatusJson :: Property
+prop_activeStatusJson = property $ do
+    let status = SessionStatus (StatusActive "step-123")
+    case decodeValue (encode status) of
+        Object obj -> do
+            assert $ KM.member (Key.fromText "type") obj
+            assert $ KM.member (Key.fromText "stepID") obj
         _ -> failure
   where
     decodeValue bytes = case decode bytes of
@@ -39,6 +64,7 @@ tests :: TestTree
 tests =
     testGroup
         "Session Status Property Tests"
-        [ testProperty "build status" prop_buildStatus
-        , testProperty "status JSON keys" prop_statusJsonKeys
+        [ testProperty "idle status JSON" prop_idleStatusJson
+        , testProperty "retry status JSON" prop_retryStatusJson
+        , testProperty "active status JSON" prop_activeStatusJson
         ]

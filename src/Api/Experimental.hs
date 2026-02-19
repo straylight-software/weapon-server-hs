@@ -54,14 +54,14 @@ type ExperimentalToolListAPI =
 -- worktree endpoints
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- get worktree state
-type ExperimentalWorktreeGetAPI = "experimental" :> "worktree" :> Get '[JSON] Value
+-- get worktree list (returns array of directory strings)
+type ExperimentalWorktreeGetAPI = "experimental" :> "worktree" :> QueryParam "directory" Text :> Get '[JSON] [Text]
 
 -- create/update worktree
 type ExperimentalWorktreePostAPI = "experimental" :> "worktree" :> ReqBody '[JSON] Value :> Post '[JSON] Value
 
 -- reset worktree
-type ExperimentalWorktreeResetAPI = "experimental" :> "worktree" :> "reset" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type ExperimentalWorktreeResetAPI = "experimental" :> "worktree" :> "reset" :> QueryParam "directory" Text :> Post '[JSON] Bool
 
 -- delete worktree
-type ExperimentalWorktreeDeleteAPI = "experimental" :> "worktree" :> ReqBody '[JSON] Value :> Delete '[JSON] Bool
+type ExperimentalWorktreeDeleteAPI = "experimental" :> "worktree" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Delete '[JSON] Bool
