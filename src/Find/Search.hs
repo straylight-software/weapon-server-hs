@@ -11,6 +11,7 @@ module Find.Search
 
 import Control.Exception (Exception, throwIO)
 import Data.Aeson (Value, object, (.=))
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import System.Directory (findExecutable)
@@ -74,9 +75,6 @@ findFileWithOptions root pattern opts = do
             Nothing -> results
         _ -> pure []
   where
-    mapMaybe f = foldr (\x acc -> case f x of
-        Nothing -> acc
-        Just v -> v : acc) []
     toValue path = object ["path" .= path]
 
 runRg :: FilePath -> Text -> IO [Value]
@@ -90,7 +88,4 @@ runRg root query = do
         ExitSuccess -> pure $ map toValue $ mapMaybe parseRgLine (T.lines (T.pack out))
         ExitFailure _ -> pure []
   where
-    mapMaybe f = foldr (\x acc -> case f x of
-        Nothing -> acc
-        Just v -> v : acc) []
     toValue (path, lineNum, text) = object ["path" .= path, "line" .= lineNum, "text" .= text]

@@ -22,7 +22,6 @@ module Session.Session (
     withSessionContext,
 ) where
 
-import Control.Exception (catch)
 import Control.Monad (forM)
 import Data.Aeson (object, (.=))
 import Data.Maybe (fromMaybe, isNothing)
@@ -109,9 +108,7 @@ create ctx input = do
 
 -- | Get a session by ID
 get :: SessionContext -> Text -> IO (Maybe Session)
-get ctx sid =
-    (Just <$> Storage.read (scStorage ctx) ["session", scProjectID ctx, sid])
-        `catch` \(Storage.NotFoundError _) -> pure Nothing
+get ctx sid = Storage.readMaybe (scStorage ctx) ["session", scProjectID ctx, sid]
 
 -- | Update a session
 update :: SessionContext -> Text -> (Session -> Session) -> IO (Maybe Session)

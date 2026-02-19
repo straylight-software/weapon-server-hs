@@ -15,6 +15,8 @@ module Provider.Types (
     ModelProvider (..),
     ProviderAuth (..),
     AuthMethod (..),
+    -- * Smart constructors
+    defaultModel,
 )
 where
 
@@ -273,3 +275,28 @@ instance FromJSON ProviderAuth where
             <$> v .: "providerID"
             <*> v .: "authenticated"
             <*> v .:? "method"
+
+-- | Smart constructor for Model with sensible defaults for optional fields
+-- Required: id, name, releaseDate, limit
+-- Defaults: attachment=True, reasoning=False, temperature=True, toolCall=True
+defaultModel :: Text -> Text -> Text -> ModelLimit -> Model
+defaultModel mid name releaseDate limit = Model
+    { modelId = mid
+    , modelName = name
+    , modelReleaseDate = releaseDate
+    , modelAttachment = True
+    , modelReasoning = False
+    , modelTemperature = True
+    , modelToolCall = True
+    , modelLimit = limit
+    , modelOptions = Map.empty
+    , modelFamily = Nothing
+    , modelInterleaved = Nothing
+    , modelCost = Nothing
+    , modelModalities = Nothing
+    , modelExperimental = Nothing
+    , modelStatus = Nothing
+    , modelHeaders = Nothing
+    , modelProvider = Nothing
+    , modelVariants = Nothing
+    }

@@ -299,11 +299,17 @@ exitMonitor sessions ptyId ph mOverlayDir = do
             threadDelay 5000000 -- 5 seconds
             void $ try @SomeException $ Sandbox.destroyDir dir
 
+-- | Helper to run an action on a PTY session, returning a default if not found
+withSession :: PtyManager -> Text -> a -> (RealPtySession -> IO a) -> IO a
+withSession PtyManager{..} ptyId defaultVal action = do
+    sessions <- readTVarIO pmSessions
+    case Map.lookup ptyId sessions of
+        Nothing -> pure defaultVal
+        Just session -> action session
+
 -- | Get a PTY session by ID
 get :: PtyManager -> Text -> IO (Maybe PtyInfo)
-get PtyManager{..} ptyId = do
-    sessions <- readTVarIO pmSessions
-    pure $ fmap rpsInfo (Map.lookup ptyId sessions)
+get mgr ptyId = withSession mgr ptyId Nothing (pure . Just . rpsInfo)
 
 -- | List all PTY sessions
 list :: PtyManager -> IO [PtyInfo]
@@ -378,27 +384,15 @@ remove PtyManager{..} ptyId = do
 
 -- | Write data to a PTY
 write :: PtyManager -> Text -> ByteString -> IO Bool
-write PtyManager{..} ptyId bs = do
-    sessions <- readTVarIO pmSessions
-    case Map.lookup ptyId sessions of
-        Nothing -> pure False
-        Just session -> do
-            result <- try @SomeException $ writePty (rpsPty session) bs
-            case result of
-                Left _ -> pure False
-                Right _ -> pure True
+write mgr ptyId bs = withSession mgr ptyId False $ \session -> do
+    result <- try @SomeException $ writePty (rpsPty session) bs
+    pure $ either (const False) (const True) result
 
 -- | Resize a PTY (sends SIGWINCH via ioctl TIOCSWINSZ)
 resize :: PtyManager -> Text -> Int -> Int -> IO Bool
-resize PtyManager{..} ptyId cols rows = do
-    sessions <- readTVarIO pmSessions
-    case Map.lookup ptyId sessions of
-        Nothing -> pure False
-        Just session -> do
-            result <- try @SomeException $ resizePty (rpsPty session) (cols, rows)
-            case result of
-                Left _ -> pure False
-                Right _ -> pure True
+resize mgr ptyId cols rows = withSession mgr ptyId False $ \session -> do
+    result <- try @SomeException $ resizePty (rpsPty session) (cols, rows)
+    pure $ either (const False) (const True) result
 
 -- | PTY connection for WebSocket bridging
 data PtyConnection = PtyConnection
@@ -409,74 +403,64 @@ data PtyConnection = PtyConnection
 
 -- | Connect to a PTY session (for WebSocket bridging)
 connect :: PtyManager -> Text -> Maybe Word64 -> IO (Maybe PtyConnection)
-connect PtyManager{..} ptyId cursor = do
-    sessions <- readTVarIO pmSessions
-    case Map.lookup ptyId sessions of
-        Nothing -> pure Nothing
-        Just session -> do
-            buf <- readTVarIO (rpsBuffer session)
+connect mgr ptyId cursor = withSession mgr ptyId Nothing $ \session -> do
+    buf <- readTVarIO (rpsBuffer session)
 
-            let replayFrom = fromMaybe 0 cursor
-                replayData =
-                    if replayFrom >= pbCursor buf
-                        then BS.empty
-                        else
-                            let offset = max 0 (fromIntegral $ replayFrom - pbBufferCursor buf)
-                             in BS.drop offset (pbData buf)
+    let replayFrom = fromMaybe 0 cursor
+        replayData =
+            if replayFrom >= pbCursor buf
+                then BS.empty
+                else
+                    let offset = max 0 (fromIntegral $ replayFrom - pbBufferCursor buf)
+                     in BS.drop offset (pbData buf)
 
-            lastCursorRef <- newIORef (pbCursor buf)
-            runningRef <- newIORef True
+    lastCursorRef <- newIORef (pbCursor buf)
+    runningRef <- newIORef True
 
-            pure $
-                Just
-                    PtyConnection
-                        { pcSend = \bs -> void $ try @SomeException $ writePty (rpsPty session) bs
-                        , pcOnData = \handler -> do
-                            when (not $ BS.null replayData) $ handler replayData
+    pure $
+        Just
+            PtyConnection
+                { pcSend = \bs -> void $ try @SomeException $ writePty (rpsPty session) bs
+                , pcOnData = \handler -> do
+                    when (not $ BS.null replayData) $ handler replayData
 
-                            void $ forkIO $ do
-                                let pollLoop = do
-                                        running <- readIORef runningRef
-                                        when running $ do
-                                            currentBuf <- readTVarIO (rpsBuffer session)
-                                            lastCursor <- readIORef lastCursorRef
+                    void $ forkIO $ do
+                        let pollLoop = do
+                                running <- readIORef runningRef
+                                when running $ do
+                                    currentBuf <- readTVarIO (rpsBuffer session)
+                                    lastCursor <- readIORef lastCursorRef
 
-                                            when (pbCursor currentBuf > lastCursor) $ do
-                                                let start = pbBufferCursor currentBuf
-                                                    offset = max 0 (fromIntegral $ lastCursor - start)
-                                                    newData = BS.drop offset (pbData currentBuf)
-                                                when (not $ BS.null newData) $ handler newData
-                                                writeIORef lastCursorRef (pbCursor currentBuf)
+                                    when (pbCursor currentBuf > lastCursor) $ do
+                                        let start = pbBufferCursor currentBuf
+                                            offset = max 0 (fromIntegral $ lastCursor - start)
+                                            newData = BS.drop offset (pbData currentBuf)
+                                        when (not $ BS.null newData) $ handler newData
+                                        writeIORef lastCursorRef (pbCursor currentBuf)
 
-                                            threadDelay 10000
-                                            pollLoop
-                                pollLoop
-                        , pcClose = writeIORef runningRef False
-                        }
+                                    threadDelay 10000
+                                    pollLoop
+                        pollLoop
+                , pcClose = writeIORef runningRef False
+                }
 
 {- | Commit sandbox changes to real filesystem
 Copies modified files from sandbox overlay to the workdir
 -}
 commitChanges :: PtyManager -> Text -> IO (Either Text ())
-commitChanges PtyManager{..} ptyId = do
-    sessions <- readTVarIO pmSessions
-    case Map.lookup ptyId sessions of
-        Nothing -> pure $ Left "PTY not found"
-        Just session -> case (rpsOverlayDir session, rpsSandboxCfg session) of
-            (Nothing, _) -> pure $ Left "PTY is not sandboxed"
-            (_, Nothing) -> pure $ Left "PTY has no sandbox config"
-            (Just overlayDir, Just cfg) -> do
-                let workdir = scWorkdir cfg
-                Sandbox.commit overlayDir workdir
+commitChanges mgr ptyId = withSession mgr ptyId (Left "PTY not found") $ \session ->
+    case (rpsOverlayDir session, rpsSandboxCfg session) of
+        (Nothing, _) -> pure $ Left "PTY is not sandboxed"
+        (_, Nothing) -> pure $ Left "PTY has no sandbox config"
+        (Just overlayDir, Just cfg) -> do
+            let workdir = scWorkdir cfg
+            Sandbox.commit overlayDir workdir
 
 -- | Get list of changed files in sandbox
 getChangedFiles :: PtyManager -> Text -> IO (Either Text [FilePath])
-getChangedFiles PtyManager{..} ptyId = do
-    sessions <- readTVarIO pmSessions
-    case Map.lookup ptyId sessions of
-        Nothing -> pure $ Left "PTY not found"
-        Just session -> case rpsOverlayDir session of
-            Nothing -> pure $ Left "PTY is not sandboxed"
-            Just overlayDir -> do
-                files <- Sandbox.getChanges overlayDir
-                pure $ Right files
+getChangedFiles mgr ptyId = withSession mgr ptyId (Left "PTY not found") $ \session ->
+    case rpsOverlayDir session of
+        Nothing -> pure $ Left "PTY is not sandboxed"
+        Just overlayDir -> do
+            files <- Sandbox.getChanges overlayDir
+            pure $ Right files

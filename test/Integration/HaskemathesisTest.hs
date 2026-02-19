@@ -4,16 +4,22 @@
 --
 -- This module runs generated property tests against the server's WAI application
 -- to verify compliance with the OpenAPI specification.
+--
+-- Key features:
+-- - Each operation gets isolated storage to avoid file lock conflicts
+-- - Pre-seeds sessions so session endpoints can be properly tested
+-- - Rewrites random session IDs in requests to use pre-seeded sessions
 module Integration.HaskemathesisTest (tests) where
 
 import Api (api)
+
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.OpenApi (OpenApi)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Handlers (server)
 import Haskemathesis.Config (TestConfig (..), defaultTestConfig)
-import Haskemathesis.Execute.Types (ExecutorWithTimeout)
+import Haskemathesis.Execute.Types (ApiRequest (..), ExecutorWithTimeout)
 import Haskemathesis.Execute.Wai (executeWaiWithTimeout)
 import Haskemathesis.Integration.Tasty (testTreeForExecutorWithConfig, testTreeForExecutorNegative)
 import Haskemathesis.OpenApi.Loader (loadOpenApiFile)
@@ -23,7 +29,10 @@ import Log qualified
 import Middleware (supplyEmptyBody)
 import Network.Wai (Application)
 import Servant (serve)
-import State (initialStateNoProxyWithHome)
+import Session.Session qualified as Session
+import Session.Types (Session (..), SessionTime (..))
+import State (AppState (..), initialStateNoProxyWithHome)
+import Storage.Storage qualified as Storage
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
 import System.IO.Unsafe (unsafePerformIO)
@@ -56,12 +65,24 @@ storageCounter :: IORef Int
 storageCounter = unsafePerformIO $ newIORef 0
 {-# NOINLINE storageCounter #-}
 
--- | Create a test WAI application with isolated state
+-- | Known session ID that we pre-seed for testing
+knownSessionId :: Text
+knownSessionId = "ses_test_1"
+
+-- | Known session IDs that we pre-seed for testing
+knownSessionIds :: [Text]
+knownSessionIds = [knownSessionId, "ses_test_2", "ses_test_3"]
+
+
+
+-- | Create a test WAI application with isolated state and pre-seeded data
 --
 -- Each call creates a unique storage directory to avoid file lock conflicts
 -- when tests run in parallel. The storage dir is also used as the project
 -- directory AND home directory to isolate all config file access.
-createTestApp :: IO Application
+--
+-- Pre-seeds sessions so session endpoints can be properly tested.
+createTestApp :: IO (Application, AppState)
 createTestApp = do
   cwd <- getCurrentDirectory
   -- Get unique ID for this test instance
@@ -75,14 +96,66 @@ createTestApp = do
   logger <- Log.newLogger "test"
   -- Use storageDir as storage, project dir, AND home dir to fully isolate config files
   state <- initialStateNoProxyWithHome (Just storageDir) storageDir "test_project" (T.pack storageDir) logger
-  pure $ supplyEmptyBody $ serve api (server state)
 
--- | Create an executor with a unique app instance
+  -- Pre-seed sessions with known IDs
+  preSeedSessions state
+
+  let app = supplyEmptyBody $ serve api (server state)
+  pure (app, state)
+
+-- | Pre-seed sessions with known IDs for testing
+preSeedSessions :: AppState -> IO ()
+preSeedSessions state = do
+  let ctx = Session.SessionContext
+        { Session.scStorage = stStorage state
+        , Session.scBus = stBus state
+        , Session.scProjectID = stProjectID state
+        , Session.scDirectory = stDirectory state
+        , Session.scVersion = stVersion state
+        }
+  -- Create sessions with known IDs by directly writing to storage
+  -- (bypassing the ID generation in Session.create)
+  mapM_ (createSessionWithId ctx) knownSessionIds
+  where
+    createSessionWithId ctx sid = do
+      let session = Session
+            { sessionId = sid
+            , sessionSlug = "test_slug"
+            , sessionProjectID = Session.scProjectID ctx
+            , sessionDirectory = Session.scDirectory ctx
+            , sessionParentID = Nothing
+            , sessionTitle = "Test Session " <> sid
+            , sessionVersion = Session.scVersion ctx
+            , sessionTime = SessionTime 0 0 Nothing Nothing
+            , sessionSummary = Nothing
+            , sessionShare = Nothing
+            , sessionRevert = Nothing
+            }
+      Storage.write (Session.scStorage ctx) ["session", Session.scProjectID ctx, sid] session
+
+-- | Rewrite a request to use known session IDs instead of random ones
+--
+-- This intercepts requests to /session/{sessionID}/... and replaces the
+-- random sessionID with one of our known pre-seeded session IDs.
+rewriteSessionId :: ApiRequest -> ApiRequest
+rewriteSessionId req =
+  let path = reqPath req
+      segments = T.splitOn "/" path
+  in case segments of
+    -- /session/{sessionID}/... (with or without trailing path)
+    ("" : "session" : _randomSid : rest) ->
+      let newPath = T.intercalate "/" ("" : "session" : knownSessionId : rest)
+      in req { reqPath = newPath }
+    _ -> req
+
+-- | Create an executor with a unique app instance that rewrites session IDs
 -- Each executor has its own app, so different tests (properties) don't conflict
 createExecutorForOperation :: IO ExecutorWithTimeout
 createExecutorForOperation = do
-  app <- createTestApp
-  pure $ executeWaiWithTimeout app
+  (app, _state) <- createTestApp
+  pure $ \timeout req -> do
+    let req' = rewriteSessionId req
+    executeWaiWithTimeout app timeout req'
 
 -- | Test configuration for positive tests (10,000 tests)
 positiveConfig :: TestConfig

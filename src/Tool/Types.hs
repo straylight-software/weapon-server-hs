@@ -18,6 +18,8 @@ module Tool.Types (
 
     -- * Tool result
     ToolOutput (..),
+    toolSuccess,
+    toolError,
 
     -- * Context
     ToolContext (..),
@@ -255,3 +257,11 @@ data ToolContext = ToolContext
     , tcWorkdir :: FilePath
     }
     deriving (Eq, Show)
+
+-- | Smart constructor for successful tool output
+toolSuccess :: Text -> Text -> ToolOutput
+toolSuccess title output = ToolOutput title output False Nothing
+
+-- | Smart constructor for error tool output
+toolError :: Text -> Text -> ToolOutput
+toolError title output = ToolOutput title output True Nothing

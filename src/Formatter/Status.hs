@@ -13,7 +13,7 @@ import Config.Config qualified as Config
 import Config.Types qualified as CT
 import Data.Aeson (ToJSON (..), object, (.=))
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import System.Directory (findExecutable)
@@ -148,8 +148,4 @@ baseFormatters =
         ]
 
 hasExecutable :: String -> FilePath -> IO Bool
-hasExecutable exe _ = do
-    result <- findExecutable exe
-    pure $ case result of
-        Nothing -> False
-        Just _ -> True
+hasExecutable exe _ = isJust <$> findExecutable exe

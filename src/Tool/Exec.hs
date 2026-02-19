@@ -49,12 +49,12 @@ execute ctx name input = case name of
     "bash" -> parseAndRun ctx input execBash
     "glob" -> parseAndRun ctx input execGlob
     "grep" -> parseAndRun ctx input execGrep
-    _ -> pure $ ToolOutput "Error" ("Unknown tool: " <> name) True Nothing
+    _ -> pure $ toolError "Error" ("Unknown tool: " <> name)
 
 -- | Parse input and run executor
 parseAndRun :: (FromJSON a) => ToolContext -> Value -> (ToolContext -> a -> IO ToolOutput) -> IO ToolOutput
 parseAndRun ctx input exec = case eitherDecode (encode input) of
-    Left err -> pure $ ToolOutput "Parse Error" (T.pack err) True Nothing
+    Left err -> pure $ toolError "Parse Error" (T.pack err)
     Right parsed -> exec ctx parsed
 
 -- | Read file or directory
@@ -71,32 +71,21 @@ execRead ctx ReadInput{..} = do
         then do
             result <- try @SomeException $ TIO.readFile path
             case result of
-                Left e -> pure $ ToolOutput "Read Error" (T.pack $ show e) True Nothing
+                Left e -> pure $ toolError "Read Error" (T.pack $ show e)
                 Right content -> do
                     let ls = T.lines content
                     let numbered = zipWith (\n l -> T.pack (show (n :: Int)) <> ": " <> l) [1 ..] ls
                     let sliced = take limit $ drop (offset - 1) numbered
-                    pure $
-                        ToolOutput
-                            ("Read " <> riFilePath)
-                            (T.unlines sliced)
-                            False
-                            Nothing
+                    pure $ toolSuccess ("Read " <> riFilePath) (T.unlines sliced)
         else
             if isDir
                 then do
                     result <- try @SomeException $ listDirectory path
                     case result of
-                        Left e -> pure $ ToolOutput "Read Error" (T.pack $ show e) True Nothing
-                        Right entries ->
-                            pure $
-                                ToolOutput
-                                    ("List " <> riFilePath)
-                                    (T.unlines $ map T.pack entries)
-                                    False
-                                    Nothing
+                        Left e -> pure $ toolError "Read Error" (T.pack $ show e)
+                        Right entries -> pure $ toolSuccess ("List " <> riFilePath) (T.unlines $ map T.pack entries)
                 else
-                    pure $ ToolOutput "Read Error" ("Path does not exist: " <> riFilePath) True Nothing
+                    pure $ toolError "Read Error" ("Path does not exist: " <> riFilePath)
 
 -- | Write file
 execWrite :: ToolContext -> WriteInput -> IO ToolOutput
@@ -106,14 +95,8 @@ execWrite ctx WriteInput{..} = do
         createDirectoryIfMissing True (takeDirectory path)
         TIO.writeFile path wiContent
     case result of
-        Left e -> pure $ ToolOutput "Write Error" (T.pack $ show e) True Nothing
-        Right () ->
-            pure $
-                ToolOutput
-                    ("Wrote " <> wiFilePath)
-                    ("Successfully wrote " <> T.pack (show (T.length wiContent)) <> " characters")
-                    False
-                    Nothing
+        Left e -> pure $ toolError "Write Error" (T.pack $ show e)
+        Right () -> pure $ toolSuccess ("Wrote " <> wiFilePath) ("Successfully wrote " <> T.pack (show (T.length wiContent)) <> " characters")
 
 -- | Edit file
 execEdit :: ToolContext -> EditInput -> IO ToolOutput
@@ -123,36 +106,22 @@ execEdit ctx EditInput{..} = do
 
     result <- try @SomeException $ TIO.readFile path
     case result of
-        Left e -> pure $ ToolOutput "Edit Error" (T.pack $ show e) True Nothing
+        Left e -> pure $ toolError "Edit Error" (T.pack $ show e)
         Right content -> do
             let count = length $ T.breakOnAll eiOldString content
             if count == 0
-                then
-                    pure $ ToolOutput "Edit Error" "oldString not found in content" True Nothing
-                else
-                    if count > 1 && not replaceAll
-                        then
-                            pure $
-                                ToolOutput
-                                    "Edit Error"
-                                    ("Found " <> T.pack (show count) <> " matches for oldString. Provide more surrounding lines to identify the correct match or use replaceAll.")
-                                    True
-                                    Nothing
-                        else do
-                            let newContent =
-                                    if replaceAll
-                                        then T.replace eiOldString eiNewString content
-                                        else replaceFirst eiOldString eiNewString content
-                            writeResult <- try @SomeException $ TIO.writeFile path newContent
-                            case writeResult of
-                                Left e -> pure $ ToolOutput "Edit Error" (T.pack $ show e) True Nothing
-                                Right () ->
-                                    pure $
-                                        ToolOutput
-                                            ("Edited " <> eiFilePath)
-                                            ("Replaced " <> T.pack (show (if replaceAll then count else 1)) <> " occurrence(s)")
-                                            False
-                                            Nothing
+                then pure $ toolError "Edit Error" "oldString not found in content"
+                else if count > 1 && not replaceAll
+                    then pure $ toolError "Edit Error" ("Found " <> T.pack (show count) <> " matches for oldString. Provide more surrounding lines to identify the correct match or use replaceAll.")
+                    else do
+                        let newContent =
+                                if replaceAll
+                                    then T.replace eiOldString eiNewString content
+                                    else replaceFirst eiOldString eiNewString content
+                        writeResult <- try @SomeException $ TIO.writeFile path newContent
+                        case writeResult of
+                            Left e -> pure $ toolError "Edit Error" (T.pack $ show e)
+                            Right () -> pure $ toolSuccess ("Edited " <> eiFilePath) ("Replaced " <> T.pack (show (if replaceAll then count else 1)) <> " occurrence(s)")
 
 -- | Replace first occurrence
 replaceFirst :: Text -> Text -> Text -> Text
@@ -174,12 +143,12 @@ execBash ctx BashInput{..} = do
 
     result <- try @SomeException $ readProcessWithExitCode "bash" ["-c", cmd] ""
     case result of
-        Left e -> pure $ ToolOutput "Bash Error" (T.pack $ show e) True Nothing
+        Left e -> pure $ toolError "Bash Error" (T.pack $ show e)
         Right (exitCode, stdout, stderr) -> do
             let output = T.pack stdout <> (if null stderr then "" else "\n[stderr]\n" <> T.pack stderr)
-            let isErr = exitCode /= ExitSuccess
-            let title = if isErr then "Command failed" else biDescription
-            pure $ ToolOutput title output isErr Nothing
+            if exitCode /= ExitSuccess
+                then pure $ toolError "Command failed" output
+                else pure $ toolSuccess biDescription output
 
 -- | Glob file search
 execGlob :: ToolContext -> GlobInput -> IO ToolOutput
@@ -190,9 +159,8 @@ execGlob ctx GlobInput{..} = do
 
     result <- try @SomeException $ readProcessWithExitCode "bash" ["-c", cmd] ""
     case result of
-        Left e -> pure $ ToolOutput "Glob Error" (T.pack $ show e) True Nothing
-        Right (_, stdout, _) ->
-            pure $ ToolOutput ("Glob " <> giPattern) (T.pack stdout) False Nothing
+        Left e -> pure $ toolError "Glob Error" (T.pack $ show e)
+        Right (_, stdout, _) -> pure $ toolSuccess ("Glob " <> giPattern) (T.pack stdout)
 
 -- | Grep content search
 execGrep :: ToolContext -> GrepInput -> IO ToolOutput
@@ -204,9 +172,8 @@ execGrep ctx GrepInput{..} = do
 
     result <- try @SomeException $ readProcessWithExitCode "bash" ["-c", cmd] ""
     case result of
-        Left e -> pure $ ToolOutput "Grep Error" (T.pack $ show e) True Nothing
-        Right (_, stdout, _) ->
-            pure $ ToolOutput ("Grep " <> grPattern) (T.pack stdout) False Nothing
+        Left e -> pure $ toolError "Grep Error" (T.pack $ show e)
+        Right (_, stdout, _) -> pure $ toolSuccess ("Grep " <> grPattern) (T.pack stdout)
 
 -- | Resolve path relative to workdir if not absolute
 resolvePath :: ToolContext -> Text -> Text

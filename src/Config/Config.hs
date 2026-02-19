@@ -23,6 +23,7 @@ module Config.Config (
 where
 
 import Config.Types
+import Control.Applicative ((<|>))
 import Data.Aeson (eitherDecodeFileStrict)
 import System.Directory (doesFileExist, getHomeDirectory)
 import System.FilePath ((</>))
@@ -101,10 +102,6 @@ mergeConfig base override =
         , cfgInstructions = cfgInstructions override <|> cfgInstructions base
         , cfgPlugin = cfgPlugin override <|> cfgPlugin base
         }
-  where
-    (<|>) :: Maybe a -> Maybe a -> Maybe a
-    (<|>) (Just x) _ = Just x
-    (<|>) Nothing y = y
 
 -- | Get config for current project
 get :: FilePath -> IO Config

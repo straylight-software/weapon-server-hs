@@ -48,7 +48,7 @@ module Sandbox.Sandbox (
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM, void)
+import Control.Monad (void)
 import Data.Text (Text)
 import System.Directory
 import System.Exit (ExitCode (..))
@@ -58,6 +58,7 @@ import System.Process
 import Data.Text qualified as T
 
 import Sandbox.Types
+import Util.FileSystem (listDirectoryRecursive)
 
 {- | Create sandbox directories and return the bwrap args
 The actual process spawning is handled by Pty module
@@ -243,15 +244,3 @@ getChanges overlayDir = do
     if not exists
         then pure []
         else listDirectoryRecursive upperDir
-
--- | List all files recursively in a directory
-listDirectoryRecursive :: FilePath -> IO [FilePath]
-listDirectoryRecursive dir = do
-    entries <- listDirectory dir
-    paths <- forM entries $ \entry -> do
-        let path = dir </> entry
-        isDir <- doesDirectoryExist path
-        if isDir
-            then listDirectoryRecursive path
-            else pure [path]
-    pure $ concat paths

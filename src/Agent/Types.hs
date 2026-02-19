@@ -10,6 +10,8 @@ module Agent.Types (
     PermissionRuleset (..),
     PermissionRule (..),
     PermissionAction (..),
+    -- * Smart constructors
+    defaultAgent,
 ) where
 
 import Data.Aeson
@@ -136,3 +138,22 @@ instance FromJSON Agent where
             <*> v .:? "prompt"
             <*> v .:? "options" .!= Map.empty
             <*> v .:? "steps"
+
+-- | Smart constructor for Agent with sensible defaults
+defaultAgent :: Text -> AgentMode -> PermissionRuleset -> Agent
+defaultAgent name mode permission = Agent
+    { agentName = name
+    , agentDescription = Nothing
+    , agentMode = mode
+    , agentNative = Just True
+    , agentHidden = Nothing
+    , agentTopP = Nothing
+    , agentTemperature = Nothing
+    , agentColor = Nothing
+    , agentPermission = permission
+    , agentModel = Nothing
+    , agentVariant = Nothing
+    , agentPrompt = Nothing
+    , agentOptions = Map.empty
+    , agentSteps = Nothing
+    }

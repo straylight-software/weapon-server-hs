@@ -8,8 +8,8 @@ module Experimental.Worktree (
 )
 where
 
-import Control.Exception (catch)
 import Data.Aeson (Value, object, (.=))
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Storage.Storage qualified as Storage
 
@@ -18,10 +18,8 @@ worktreeKey = ["experimental", "worktree"]
 
 getInfo :: Storage.StorageConfig -> Text -> IO Value
 getInfo storage root = do
-    result <- (Just <$> Storage.read storage worktreeKey) `catch` \(Storage.NotFoundError _) -> pure Nothing
-    case result of
-        Just value -> pure value
-        Nothing -> pure $ object ["root" .= root, "ready" .= True]
+    result <- Storage.readMaybe storage worktreeKey
+    pure $ fromMaybe (object ["root" .= root, "ready" .= True]) result
 
 setInfo :: Storage.StorageConfig -> Value -> IO Value
 setInfo storage value = do
@@ -37,9 +35,6 @@ resetInfo storage root = do
 -- | Remove a worktree
 remove :: Storage.StorageConfig -> Text -> Maybe Text -> IO (Either Text ())
 remove storage _root _mDir = do
-    -- Remove worktree info from storage
-    _ <- (Storage.remove storage worktreeKey >> pure (Right ())) `catch` handler
+    -- Remove worktree info from storage (remove already ignores missing files)
+    Storage.remove storage worktreeKey
     pure (Right ())
-  where
-    handler :: Storage.NotFoundError -> IO (Either Text ())
-    handler _ = pure (Right ())

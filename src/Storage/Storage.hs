@@ -5,6 +5,7 @@ Mirrors the TypeScript Storage namespace
 -}
 module Storage.Storage (
     read,
+    readMaybe,
     write,
     update,
     remove,
@@ -15,7 +16,7 @@ module Storage.Storage (
 ) where
 
 import Control.Exception (Exception, catch, throwIO)
-import Control.Monad (forM, when)
+import Control.Monad (when)
 import Data.Aeson (FromJSON, ToJSON, eitherDecodeFileStrict, encode)
 import Data.ByteString.Lazy qualified as BL
 import Data.Text (Text)
@@ -25,6 +26,7 @@ import System.FilePath (dropExtension, splitDirectories, takeDirectory, (</>))
 import System.IO (hClose, hFlush)
 import System.IO.Error (isDoesNotExistError)
 import System.Posix.Temp (mkstemp)
+import Util.FileSystem (listDirectoryRecursive)
 import Prelude hiding (read)
 
 -- | Storage configuration
@@ -62,6 +64,11 @@ read cfg key = do
     handleNotFound target e
         | isDoesNotExistError e = throwIO (NotFoundError target)
         | otherwise = throwIO e
+
+-- | Read a JSON value from storage, returning Nothing if not found
+readMaybe :: (FromJSON a) => StorageConfig -> [Text] -> IO (Maybe a)
+readMaybe cfg key =
+    (Just <$> read cfg key) `catch` \(NotFoundError _) -> pure Nothing
 
 -- | Write a JSON value to storage using atomic write (temp file + rename)
 write :: (ToJSON a) => StorageConfig -> [Text] -> a -> IO ()
@@ -114,15 +121,3 @@ list cfg prefix = do
         let rel = drop (length base + 1) file
             parts = splitDirectories (dropExtension rel)
          in pfx ++ map T.pack parts
-
--- | Recursively list all files in a directory
-listDirectoryRecursive :: FilePath -> IO [FilePath]
-listDirectoryRecursive dir = do
-    contents <- listDirectory dir
-    paths <- forM contents $ \name -> do
-        let path = dir </> name
-        isDir <- doesDirectoryExist path
-        if isDir
-            then listDirectoryRecursive path
-            else pure [path]
-    pure (concat paths)

@@ -36,17 +36,13 @@ data AppState = AppState
     , stHomeDir :: Maybe FilePath -- Override home directory for config (tests)
     }
 
--- | Initialize a new state
-initialState :: FilePath -> Text -> Text -> Log.Logger -> IO AppState
-initialState storageDir projectID directory logger = do
+-- | Initialize a new state with optional proxy and home directory override
+mkAppState :: Maybe Proxy.ProxyServer -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
+mkAppState proxy homeDir storageDir projectID directory logger = do
     bus <- Bus.newBus
     eventChan <- newBroadcastTChanIO
     ptyManager <- Pty.newManager (Text.unpack directory)
     promptQueue <- newTQueueIO
-
-    -- Start MITM proxy for LLM traffic surveillance
-    let proxyLogDir = storageDir <> "/proxy"
-    proxy <- Proxy.start (defaultProxyConfig proxyLogDir)
 
     -- Subscribe bus to also write to event channel for SSE
     _ <- Bus.subscribeAll bus $ \event ->
@@ -61,11 +57,19 @@ initialState storageDir projectID directory logger = do
             , stVersion = "0.1.0"
             , stEventChan = eventChan
             , stPtyManager = ptyManager
-            , stProxy = Just proxy
+            , stProxy = proxy
             , stLogger = logger
             , stPromptAsyncQueue = promptQueue
-            , stHomeDir = Nothing
+            , stHomeDir = homeDir
             }
+
+-- | Initialize a new state with MITM proxy
+initialState :: FilePath -> Text -> Text -> Log.Logger -> IO AppState
+initialState storageDir projectID directory logger = do
+    -- Start MITM proxy for LLM traffic surveillance
+    let proxyLogDir = storageDir <> "/proxy"
+    proxy <- Proxy.start (defaultProxyConfig proxyLogDir)
+    mkAppState (Just proxy) Nothing storageDir projectID directory logger
 
 -- | Initialize state without starting the MITM proxy (for tests)
 -- Takes an optional home directory override for config isolation
@@ -74,27 +78,5 @@ initialStateNoProxy = initialStateNoProxyWithHome Nothing
 
 -- | Initialize state without proxy, with optional home directory override
 initialStateNoProxyWithHome :: Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
-initialStateNoProxyWithHome homeDir storageDir projectID directory logger = do
-    bus <- Bus.newBus
-    eventChan <- newBroadcastTChanIO
-    ptyManager <- Pty.newManager (Text.unpack directory)
-    promptQueue <- newTQueueIO
-
-    -- Subscribe bus to also write to event channel for SSE
-    _ <- Bus.subscribeAll bus $ \event ->
-        atomically $ writeTChan eventChan (toJSON event)
-
-    pure $
-        AppState
-            { stBus = bus
-            , stStorage = Storage.StorageConfig storageDir
-            , stProjectID = projectID
-            , stDirectory = directory
-            , stVersion = "0.1.0"
-            , stEventChan = eventChan
-            , stPtyManager = ptyManager
-            , stProxy = Nothing
-            , stLogger = logger
-            , stPromptAsyncQueue = promptQueue
-            , stHomeDir = homeDir
-            }
+initialStateNoProxyWithHome homeDir storageDir projectID directory logger =
+    mkAppState Nothing homeDir storageDir projectID directory logger

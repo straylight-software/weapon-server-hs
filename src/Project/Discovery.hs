@@ -5,6 +5,7 @@ module Project.Discovery (
 ) where
 
 import Api (Project (..))
+import Control.Monad (filterM)
 import Data.List (nubBy)
 import Project.Build qualified as ProjectBuild
 import System.Directory (doesFileExist, listDirectory)
@@ -18,9 +19,4 @@ discoverProjects root = do
     let projects = current : map (ProjectBuild.projectFromDir . (root </>)) sub
     pure $ nubBy sameWorktree projects
   where
-    filterM _ [] = pure []
-    filterM f (x : xs) = do
-        ok <- f x
-        rest <- filterM f xs
-        pure (if ok then x : rest else rest)
     sameWorktree a b = worktree a == worktree b

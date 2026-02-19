@@ -125,6 +125,9 @@ library
     Tool.Types
     -- // tui
     Tui.Store
+    -- // util
+    Util.FileSystem
+    Util.Git
     -- // vcs
     Vcs.Diff
     Vcs.Status

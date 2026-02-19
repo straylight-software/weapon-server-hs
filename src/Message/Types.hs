@@ -30,6 +30,7 @@ module Message.Types (
 ) where
 
 import Data.Aeson
+import Data.Aeson.Types (Pair)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import GHC.Generics (Generic)
@@ -201,70 +202,47 @@ data Part
     | PartSnapshot SnapshotPart
     deriving (Show, Eq, Generic)
 
+-- | Common base fields for all Part types
+baseFields :: PartBase -> [Pair]
+baseFields pb =
+    [ "id" .= pbId pb
+    , "sessionID" .= pbSessionID pb
+    , "messageID" .= pbMessageID pb
+    ]
+
 instance ToJSON Part where
     toJSON (PartText tp) =
-        object
-            [ "type" .= String "text"
-            , "id" .= pbId (tpBase tp)
-            , "sessionID" .= pbSessionID (tpBase tp)
-            , "messageID" .= pbMessageID (tpBase tp)
-            , "text" .= tpText tp
+        object $ ("type" .= String "text") : baseFields (tpBase tp) ++
+            [ "text" .= tpText tp
             , "synthetic" .= tpSynthetic tp
             , "ignored" .= tpIgnored tp
             ]
     toJSON (PartTool tp) =
-        object
-            [ "type" .= String "tool"
-            , "id" .= pbId (toolBase tp)
-            , "sessionID" .= pbSessionID (toolBase tp)
-            , "messageID" .= pbMessageID (toolBase tp)
-            , "callID" .= toolCallID tp
+        object $ ("type" .= String "tool") : baseFields (toolBase tp) ++
+            [ "callID" .= toolCallID tp
             , "tool" .= toolName tp
             , "state" .= toolState tp
             ]
     toJSON (PartFile fp) =
-        object
-            [ "type" .= String "file"
-            , "id" .= pbId (fpBase fp)
-            , "sessionID" .= pbSessionID (fpBase fp)
-            , "messageID" .= pbMessageID (fpBase fp)
-            , "mime" .= fpMime fp
+        object $ ("type" .= String "file") : baseFields (fpBase fp) ++
+            [ "mime" .= fpMime fp
             , "filename" .= fpFilename fp
             , "url" .= fpUrl fp
             ]
     toJSON (PartReasoning rp) =
-        object
-            [ "type" .= String "reasoning"
-            , "id" .= pbId (rpBase rp)
-            , "sessionID" .= pbSessionID (rpBase rp)
-            , "messageID" .= pbMessageID (rpBase rp)
-            , "text" .= rpText rp
-            ]
+        object $ ("type" .= String "reasoning") : baseFields (rpBase rp) ++
+            ["text" .= rpText rp]
     toJSON (PartStepStart ssp) =
-        object
-            [ "type" .= String "step-start"
-            , "id" .= pbId (sspBase ssp)
-            , "sessionID" .= pbSessionID (sspBase ssp)
-            , "messageID" .= pbMessageID (sspBase ssp)
-            , "snapshot" .= sspSnapshot ssp
-            ]
+        object $ ("type" .= String "step-start") : baseFields (sspBase ssp) ++
+            ["snapshot" .= sspSnapshot ssp]
     toJSON (PartStepFinish sfp) =
-        object
-            [ "type" .= String "step-finish"
-            , "id" .= pbId (sfpBase sfp)
-            , "sessionID" .= pbSessionID (sfpBase sfp)
-            , "messageID" .= pbMessageID (sfpBase sfp)
-            , "reason" .= sfpReason sfp
+        object $ ("type" .= String "step-finish") : baseFields (sfpBase sfp) ++
+            [ "reason" .= sfpReason sfp
             , "cost" .= sfpCost sfp
             ]
     toJSON (PartSnapshot snp) =
-        object
-            [ "type" .= String "snapshot"
-            , "id" .= pbId (snpBase snp)
-            , "sessionID" .= pbSessionID (snpBase snp)
-            , "messageID" .= pbMessageID (snpBase snp)
-            , "snapshot" .= snpSnapshot snp
-            ]
+        object $ ("type" .= String "snapshot") : baseFields (snpBase snp) ++
+            ["snapshot" .= snpSnapshot snp]
 
 -- | Full message with parts
 data Message = Message

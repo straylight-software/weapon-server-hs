@@ -147,7 +147,7 @@ import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
-import Control.Monad (forM)
+import Control.Monad (forM, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson qualified
@@ -226,6 +226,16 @@ sessionContext st =
         , Sess.scDirectory = stDirectory st
         , Sess.scVersion = stVersion st
         }
+
+-- | Helper for updating a session and returning the API representation
+-- Returns 404 if session not found
+withSessionUpdate :: AppState -> Text -> (ST.Session -> ST.Session) -> Handler Session
+withSessionUpdate st sid f = do
+    let ctx = sessionContext st
+    msession <- liftIO $ Sess.update ctx sid f
+    case msession of
+        Nothing -> throwError err404
+        Just session -> return $ toApiSession session
 
 -- | Convert internal Session to API Session
 toApiSession :: ST.Session -> Session
@@ -448,9 +458,7 @@ providerOauthAuthorizeHandler st pid input = liftIO $ do
 
 providerOauthCallbackHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
 providerOauthCallbackHandler st pid _mDir input = do
-    stored <- liftIO $
-        (Just <$> Storage.read (stStorage st) ["auth", "oauth", pid])
-            `catch` \(Storage.NotFoundError _) -> return Nothing
+    stored <- liftIO $ Storage.readMaybe (stStorage st) ["auth", "oauth", pid]
     let provided = extractText input "state"
     let storedState = stored >>= \val -> extractText val "state"
     case (storedState, provided) of
@@ -500,6 +508,10 @@ extractTextList (Object obj) key = case KM.lookup (K.fromText key) obj of
     collect (String t) acc = t : acc
     collect _ acc = acc
 extractTextList _ _ = []
+
+-- | Create a JSON error response object
+errorResponse :: Text -> Value
+errorResponse msg = object ["error" .= msg]
 
 configHandler :: AppState -> Handler Value
 configHandler st = liftIO $ do
@@ -564,12 +576,7 @@ sessionDeleteHandler st sid = liftIO $ do
     Sess.delete ctx sid
 
 sessionUpdateHandler :: AppState -> Text -> UpdateSessionInput -> Handler Session
-sessionUpdateHandler st sid input = do
-    let ctx = sessionContext st
-    msession <- liftIO $ Sess.update ctx sid (applyUpdate input)
-    case msession of
-        Nothing -> throwError err404
-        Just session -> return $ toApiSession session
+sessionUpdateHandler st sid input = withSessionUpdate st sid (applyUpdate input)
   where
     applyUpdate usi s =
         let title = case usiTitle usi of
@@ -601,12 +608,8 @@ sessionChildrenHandler st sid = liftIO $ do
 sessionTodoHandler :: AppState -> Text -> Handler [Value]
 sessionTodoHandler st sid = liftIO $ do
     let key = ["todo", sid]
-    result <-
-        (Just <$> Storage.read (stStorage st) key)
-            `catch` \(Storage.NotFoundError _) -> return Nothing
-    case result of
-        Nothing -> return []
-        Just todos -> return todos
+    result <- Storage.readMaybe (stStorage st) key
+    pure $ fromMaybe [] result
 
 sessionInitHandler :: AppState -> Text -> Handler Value
 sessionInitHandler st sid = liftIO $ do
@@ -635,24 +638,14 @@ sessionAbortHandler st sid _mDir = liftIO $ do
     return True
 
 sessionShareCreateHandler :: AppState -> Text -> Handler Session
-sessionShareCreateHandler st sid = do
-    let ctx = sessionContext st
-    msession <- liftIO $ Sess.update ctx sid (setShare sid)
-    case msession of
-        Nothing -> throwError err404
-        Just session -> return $ toApiSession session
-  where
-    setShare sid' s =
-        let url = "https://share.opencode.ai/session/" <> sid'
+sessionShareCreateHandler st sid =
+    withSessionUpdate st sid $ \s ->
+        let url = "https://share.opencode.ai/session/" <> sid
          in s{ST.sessionShare = Just (ST.SessionShare url)}
 
 sessionShareDeleteHandler :: AppState -> Text -> Handler Session
-sessionShareDeleteHandler st sid = do
-    let ctx = sessionContext st
-    msession <- liftIO $ Sess.update ctx sid (\s -> s{ST.sessionShare = Nothing})
-    case msession of
-        Nothing -> throwError err404
-        Just session -> return $ toApiSession session
+sessionShareDeleteHandler st sid =
+    withSessionUpdate st sid $ \s -> s{ST.sessionShare = Nothing}
 
 sessionDiffHandler :: AppState -> Text -> Maybe Text -> Handler Value
 sessionDiffHandler st sid mMessageID = liftIO $ do
@@ -679,12 +672,9 @@ sessionDiffHandler st sid mMessageID = liftIO $ do
 
 sessionSummarizeHandler :: AppState -> Text -> Handler Bool
 sessionSummarizeHandler st sid = do
-    let ctx = sessionContext st
     summary <- liftIO $ loadSummary (unpack (stDirectory st))
-    msession <- liftIO $ Sess.update ctx sid (\s -> s{ST.sessionSummary = Just summary})
-    case msession of
-        Nothing -> throwError err404
-        Just _ -> return True
+    _ <- withSessionUpdate st sid $ \s -> s{ST.sessionSummary = Just summary}
+    return True
 
 loadSummary :: FilePath -> IO ST.SessionSummary
 loadSummary root = do
@@ -732,26 +722,18 @@ sessionShellHandler st sid input = liftIO $ do
                 }
     result <- Pty.create (stPtyManager st) ptyInput
     case result of
-        Left err -> return $ object ["error" .= err]
+        Left err -> return $ errorResponse err
         Right info -> do
             Bus.publish (stBus st) "pty.created" (object ["info" .= info, "sessionID" .= sid])
             return $ Data.Aeson.toJSON info
 
 sessionRevertHandler :: AppState -> Text -> SessionRevert -> Handler Session
-sessionRevertHandler st sid input = do
-    let ctx = sessionContext st
-    msession <- liftIO $ Sess.update ctx sid (\s -> s{ST.sessionRevert = Just (toInternalRevert input)})
-    case msession of
-        Nothing -> throwError err404
-        Just session -> return $ toApiSession session
+sessionRevertHandler st sid input =
+    withSessionUpdate st sid $ \s -> s{ST.sessionRevert = Just (toInternalRevert input)}
 
 sessionUnrevertHandler :: AppState -> Text -> Handler Session
-sessionUnrevertHandler st sid = do
-    let ctx = sessionContext st
-    msession <- liftIO $ Sess.update ctx sid (\s -> s{ST.sessionRevert = Nothing})
-    case msession of
-        Nothing -> throwError err404
-        Just session -> return $ toApiSession session
+sessionUnrevertHandler st sid =
+    withSessionUpdate st sid $ \s -> s{ST.sessionRevert = Nothing}
 
 sessionPermissionHandler :: AppState -> Text -> Text -> Maybe Text -> Value -> Handler Bool
 sessionPermissionHandler st sid pid _mDir input = liftIO $ do
@@ -929,10 +911,7 @@ sessionMessageGetHandler st sid msgId = do
 sessionMessagePartDeleteHandler :: AppState -> Text -> Text -> Text -> Handler Bool
 sessionMessagePartDeleteHandler st sid msgId partId = do
     let key = ["message", sid, msgId]
-    result <-
-        liftIO $
-            (Just <$> Storage.read (stStorage st) key)
-                `catch` \(Storage.NotFoundError _) -> return Nothing
+    result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
         Nothing -> throwError err404
         Just msg -> do
@@ -957,10 +936,7 @@ sessionMessagePartUpdateHandler st sid msgId partId input = do
                 then throwError err400
                 else pure ()
         _ -> throwError err400
-    result <-
-        liftIO $
-            (Just <$> Storage.read (stStorage st) key)
-                `catch` \(Storage.NotFoundError _) -> return Nothing
+    result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
         Nothing -> throwError err404
         Just msg -> do
@@ -1034,11 +1010,9 @@ processPromptAsync st job = do
 
 appendPromptAsyncIndex :: Storage.StorageConfig -> Text -> Text -> IO ()
 appendPromptAsyncIndex storage sid reqId = do
-    result <- (Just <$> Storage.read storage (PromptAsync.promptAsyncIndexKey sid)) `catch` \(Storage.NotFoundError _) -> pure Nothing
-    let next =
-            case result of
-                Just ids -> if reqId `elem` ids then ids else ids ++ [reqId]
-                Nothing -> [reqId]
+    result <- Storage.readMaybe storage (PromptAsync.promptAsyncIndexKey sid)
+    let ids = fromMaybe [] result
+        next = if reqId `elem` ids then ids else ids ++ [reqId]
     Storage.write storage (PromptAsync.promptAsyncIndexKey sid) next
 
 -- | Extract text content from user message parts
@@ -1153,26 +1127,22 @@ questionHandler :: AppState -> Maybe Text -> Handler [Value]
 questionHandler st _mDir = liftIO $ do
     RequestStore.listRequests (stStorage st) "question"
 
-questionReplyHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-questionReplyHandler st rid _mDir input = liftIO $ do
-    let payload = object ["requestID" .= rid, "reply" .= input, "status" .= ("replied" :: Text)]
-    RequestStore.writeRequest (stStorage st) "question" rid payload
-    Bus.publish (stBus st) "question.replied" payload
+-- | Generic handler for request responses (question/permission reply/reject)
+requestResponseHandler :: Text -> Text -> Text -> Text -> AppState -> Text -> Maybe Text -> Value -> Handler Bool
+requestResponseHandler requestType responseKey status eventName st rid _mDir input = liftIO $ do
+    let payload = object ["requestID" .= rid, K.fromText responseKey .= input, "status" .= status]
+    RequestStore.writeRequest (stStorage st) requestType rid payload
+    Bus.publish (stBus st) eventName payload
     return True
+
+questionReplyHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
+questionReplyHandler = requestResponseHandler "question" "reply" "replied" "question.replied"
 
 questionRejectHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-questionRejectHandler st rid _mDir input = liftIO $ do
-    let payload = object ["requestID" .= rid, "reject" .= input, "status" .= ("rejected" :: Text)]
-    RequestStore.writeRequest (stStorage st) "question" rid payload
-    Bus.publish (stBus st) "question.rejected" payload
-    return True
+questionRejectHandler = requestResponseHandler "question" "reject" "rejected" "question.rejected"
 
 permissionReplyHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-permissionReplyHandler st rid _mDir input = liftIO $ do
-    let payload = object ["requestID" .= rid, "reply" .= input, "status" .= ("replied" :: Text)]
-    RequestStore.writeRequest (stStorage st) "permission" rid payload
-    Bus.publish (stBus st) "permission.replied" payload
-    return True
+permissionReplyHandler = requestResponseHandler "permission" "reply" "replied" "permission.replied"
 
 findHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Text -> Handler [Value]
 findHandler st mQuery mPattern mDir = liftIO $ do
@@ -1246,29 +1216,24 @@ tuiClearPromptHandler st _mDir = liftIO $ do
     Bus.publish (stBus st) "tui.clear-prompt" (object [])
     return True
 
-tuiExecuteCommandHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiExecuteCommandHandler st _mDir input = liftIO $ do
+-- | Generic TUI handler that stores input and publishes an event
+tuiGenericHandler :: Text -> AppState -> Maybe Text -> Value -> Handler Bool
+tuiGenericHandler eventName st _mDir input = liftIO $ do
     TuiStore.setLast (stStorage st) input
-    Bus.publish (stBus st) "tui.execute-command" (object ["payload" .= input])
+    Bus.publish (stBus st) eventName (object ["payload" .= input])
     return True
+
+tuiExecuteCommandHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+tuiExecuteCommandHandler = tuiGenericHandler "tui.execute-command"
 
 tuiShowToastHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiShowToastHandler st _mDir input = liftIO $ do
-    TuiStore.setLast (stStorage st) input
-    Bus.publish (stBus st) "tui.show-toast" (object ["payload" .= input])
-    return True
+tuiShowToastHandler = tuiGenericHandler "tui.show-toast"
 
 tuiPublishHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiPublishHandler st _mDir input = liftIO $ do
-    TuiStore.setLast (stStorage st) input
-    Bus.publish (stBus st) "tui.publish" (object ["payload" .= input])
-    return True
+tuiPublishHandler = tuiGenericHandler "tui.publish"
 
 tuiSelectSessionHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiSelectSessionHandler st _mDir input = liftIO $ do
-    TuiStore.setLast (stStorage st) input
-    Bus.publish (stBus st) "tui.select-session" (object ["payload" .= input])
-    return True
+tuiSelectSessionHandler = tuiGenericHandler "tui.select-session"
 
 tuiControlHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
 tuiControlHandler st name _mDir input = liftIO $ do
@@ -1363,7 +1328,7 @@ ptyCreateHandler st input = liftIO $ do
     let ptyInput = PtyParse.parseInput input
     result <- Pty.create (stPtyManager st) ptyInput
     case result of
-        Left err -> return $ object ["error" .= err]
+        Left err -> return $ errorResponse err
         Right info -> do
             -- Publish event
             Bus.publish (stBus st) "pty.created" (object ["info" .= info])
@@ -1373,7 +1338,7 @@ ptyGetHandler :: AppState -> Text -> Handler Value
 ptyGetHandler st ptyId = liftIO $ do
     mInfo <- Pty.get (stPtyManager st) ptyId
     case mInfo of
-        Nothing -> return $ object ["error" .= ("PTY not found" :: Text)]
+        Nothing -> return $ errorResponse "PTY not found"
         Just info -> return $ Data.Aeson.toJSON info
 
 ptyUpdateHandler :: AppState -> Text -> Value -> Handler Value
@@ -1383,11 +1348,11 @@ ptyUpdateHandler st ptyId input = liftIO $ do
             Data.Aeson.Error _ -> Nothing
 
     case parseInput of
-        Nothing -> return $ object ["error" .= ("Invalid input" :: Text)]
+        Nothing -> return $ errorResponse "Invalid input"
         Just updateInput -> do
             mInfo <- Pty.update (stPtyManager st) ptyId updateInput
             case mInfo of
-                Nothing -> return $ object ["error" .= ("PTY not found" :: Text)]
+                Nothing -> return $ errorResponse "PTY not found"
                 Just info -> do
                     Bus.publish (stBus st) "pty.updated" (object ["info" .= info])
                     return $ Data.Aeson.toJSON info
@@ -1398,16 +1363,13 @@ ptyDeleteHandler st ptyId = liftIO $ do
     when success $
         Bus.publish (stBus st) "pty.deleted" (object ["id" .= ptyId])
     return success
-  where
-    when True action = action
-    when False _ = return ()
 
 -- | Commit sandbox changes to real filesystem
 ptyCommitHandler :: AppState -> Text -> Handler Value
 ptyCommitHandler st ptyId = liftIO $ do
     result <- Pty.commitChanges (stPtyManager st) ptyId
     case result of
-        Left err -> return $ object ["error" .= err]
+        Left err -> return $ errorResponse err
         Right () -> do
             Bus.publish (stBus st) "pty.committed" (object ["id" .= ptyId])
             return $ object ["success" .= True, "id" .= ptyId]
@@ -1417,7 +1379,7 @@ ptyChangesHandler :: AppState -> Text -> Handler Value
 ptyChangesHandler st ptyId = liftIO $ do
     result <- Pty.getChangedFiles (stPtyManager st) ptyId
     case result of
-        Left err -> return $ object ["error" .= err]
+        Left err -> return $ errorResponse err
         Right files -> return $ object ["id" .= ptyId, "changes" .= map pack files]
 
 -- * LLM Handlers
@@ -1426,71 +1388,72 @@ ptyChangesHandler st ptyId = liftIO $ do
 chatHandler :: AppState -> ChatInput -> Handler Value
 chatHandler _st input = liftIO $ do
     let model = fromMaybe "anthropic/claude-sonnet-4-20250514" (ciModel input)
-    case "anthropic/" `T.isPrefixOf` model of
-        True -> do
-            apiKey <- lookupEnv "ANTHROPIC_API_KEY"
-            case apiKey of
-                Nothing -> return $ object ["error" .= ("ANTHROPIC_API_KEY not set" :: Text)]
-                Just key -> do
-                    client <- Anthropic.newClient (pack key)
-                    let request =
-                            LLMTypes.ChatRequest
-                                { LLMTypes.crModel = dropPrefix "anthropic/" model
-                                , LLMTypes.crMessages = [LLMTypes.Message LLMTypes.User (LLMTypes.SimpleContent (ciMessage input))]
-                                , LLMTypes.crMaxTokens = 1024
-                                , LLMTypes.crSystem = Nothing
-                                , LLMTypes.crTemperature = Nothing
-                                , LLMTypes.crTools = Nothing
-                                , LLMTypes.crStream = False
-                                }
-                    result <- Anthropic.chat client request
-                    case result of
-                        Left err -> return $ object ["error" .= err]
-                        Right resp -> do
-                            let content = case LLMTypes.respContent resp of
-                                    (LLMTypes.TextBlock t : _) -> t
-                                    _ -> ""
-                            return $
-                                object
-                                    [ "id" .= LLMTypes.respId resp
-                                    , "model" .= LLMTypes.respModel resp
-                                    , "content" .= content
-                                    , "usage" .= LLMTypes.respUsage resp
-                                    ]
-        False -> do
-            apiKey <- lookupEnv "OPENROUTER_API_KEY"
-            case apiKey of
-                Nothing -> return $ object ["error" .= ("OPENROUTER_API_KEY not set" :: Text)]
-                Just key -> do
-                    client <- OpenRouter.newClient (pack key)
-                    let request =
-                            OpenRouter.ChatRequest
-                                { OpenRouter.crModel = dropPrefix "openrouter/" model
-                                , OpenRouter.crMessages = [OpenRouter.Message OpenRouter.User (ciMessage input)]
-                                , OpenRouter.crMaxTokens = Just 1024
-                                , OpenRouter.crTemperature = Nothing
-                                , OpenRouter.crStream = False
-                                }
-                    result <- OpenRouter.chat client request
-                    case result of
-                        Left err -> return $ object ["error" .= err]
-                        Right resp -> do
-                            let content = case OpenRouter.respChoices resp of
-                                    (c : _) -> OpenRouter.msgContent (OpenRouter.choiceMessage c)
-                                    [] -> ""
-                            return $
-                                object
-                                    [ "id" .= OpenRouter.respId resp
-                                    , "model" .= OpenRouter.respModel resp
-                                    , "content" .= content
-                                    , "usage" .= OpenRouter.respUsage resp
-                                    ]
+    if "anthropic/" `T.isPrefixOf` model
+        then chatWithAnthropic model (ciMessage input)
+        else chatWithOpenRouter model (ciMessage input)
+
+-- | Chat using Anthropic API
+chatWithAnthropic :: Text -> Text -> IO Value
+chatWithAnthropic model message = do
+    apiKey <- lookupEnv "ANTHROPIC_API_KEY"
+    case apiKey of
+        Nothing -> return $ errorResponse "ANTHROPIC_API_KEY not set"
+        Just key -> do
+            client <- Anthropic.newClient (pack key)
+            let request = LLMTypes.ChatRequest
+                    { LLMTypes.crModel = dropPrefix "anthropic/" model
+                    , LLMTypes.crMessages = [LLMTypes.Message LLMTypes.User (LLMTypes.SimpleContent message)]
+                    , LLMTypes.crMaxTokens = 1024
+                    , LLMTypes.crSystem = Nothing
+                    , LLMTypes.crTemperature = Nothing
+                    , LLMTypes.crTools = Nothing
+                    , LLMTypes.crStream = False
+                    }
+            result <- Anthropic.chat client request
+            case result of
+                Left err -> return $ errorResponse err
+                Right resp ->
+                    let content = case LLMTypes.respContent resp of
+                            (LLMTypes.TextBlock t : _) -> t
+                            _ -> ""
+                    in return $ object
+                        [ "id" .= LLMTypes.respId resp
+                        , "model" .= LLMTypes.respModel resp
+                        , "content" .= content
+                        , "usage" .= LLMTypes.respUsage resp
+                        ]
+
+-- | Chat using OpenRouter API
+chatWithOpenRouter :: Text -> Text -> IO Value
+chatWithOpenRouter model message = do
+    apiKey <- lookupEnv "OPENROUTER_API_KEY"
+    case apiKey of
+        Nothing -> return $ errorResponse "OPENROUTER_API_KEY not set"
+        Just key -> do
+            client <- OpenRouter.newClient (pack key)
+            let request = OpenRouter.ChatRequest
+                    { OpenRouter.crModel = dropPrefix "openrouter/" model
+                    , OpenRouter.crMessages = [OpenRouter.Message OpenRouter.User message]
+                    , OpenRouter.crMaxTokens = Just 1024
+                    , OpenRouter.crTemperature = Nothing
+                    , OpenRouter.crStream = False
+                    }
+            result <- OpenRouter.chat client request
+            case result of
+                Left err -> return $ errorResponse err
+                Right resp ->
+                    let content = case OpenRouter.respChoices resp of
+                            (c : _) -> OpenRouter.msgContent (OpenRouter.choiceMessage c)
+                            [] -> ""
+                    in return $ object
+                        [ "id" .= OpenRouter.respId resp
+                        , "model" .= OpenRouter.respModel resp
+                        , "content" .= content
+                        , "usage" .= OpenRouter.respUsage resp
+                        ]
 
 dropPrefix :: Text -> Text -> Text
-dropPrefix prefix value =
-    case prefix `T.isPrefixOf` value of
-        True -> T.drop (T.length prefix) value
-        False -> value
+dropPrefix prefix value = fromMaybe value (T.stripPrefix prefix value)
 
 -- | Server Wiring - combines all handlers into a Servant Server
 server :: AppState -> Server OpencodeAPI

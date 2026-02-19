@@ -7,12 +7,11 @@ module Vcs.Status (
     loadStatus,
 ) where
 
+import Control.Applicative ((<|>))
 import Data.Aeson (ToJSON (..), object, (.=))
 import Data.Text (Text)
 import Data.Text qualified as T
-import System.Directory (findExecutable)
-import System.Exit (ExitCode (..))
-import System.Process (readProcessWithExitCode)
+import Util.Git (runGit, withGit)
 
 data FileStatus = FileStatus
     { fsPath :: Text
@@ -53,43 +52,19 @@ parsePorcelain input =
         | otherwise = "unknown"
 
 loadStatus :: FilePath -> IO [FileStatus]
-loadStatus root = do
-    exe <- findExecutable "git"
-    case exe of
-        Nothing -> pure []
-        Just _ -> do
-            (code, out, _) <- readProcessWithExitCode "git" ["-C", root, "status", "--porcelain"] ""
-            case code of
-                ExitSuccess -> pure (parsePorcelain (T.pack out))
-                _ -> pure []
+loadStatus root = withGit [] $ do
+    mout <- runGit root ["status", "--porcelain"]
+    pure $ maybe [] parsePorcelain mout
 
 loadBranch :: FilePath -> IO (Maybe Text)
-loadBranch root = do
-    exe <- findExecutable "git"
-    case exe of
-        Nothing -> pure Nothing
-        Just _ -> do
-            result <- readBranch root
-            case result of
-                Just name -> pure (Just name)
-                Nothing -> do
-                    (code, out, _) <- readProcessWithExitCode "git" ["-C", root, "rev-parse", "--abbrev-ref", "HEAD"] ""
-                    case code of
-                        ExitSuccess -> do
-                            let name = T.strip (T.pack out)
-                            case name of
-                                "" -> pure Nothing
-                                "HEAD" -> pure Nothing
-                                _ -> pure (Just name)
-                        _ -> pure Nothing
-
-readBranch :: FilePath -> IO (Maybe Text)
-readBranch root = do
-    (code, out, _) <- readProcessWithExitCode "git" ["-C", root, "symbolic-ref", "--short", "HEAD"] ""
-    case code of
-        ExitSuccess -> do
-            let name = T.strip (T.pack out)
-            case name of
-                "" -> pure Nothing
-                _ -> pure (Just name)
-        _ -> pure Nothing
+loadBranch root = withGit Nothing $ do
+    symbolicRef <- runGit root ["symbolic-ref", "--short", "HEAD"]
+    revParse <- runGit root ["rev-parse", "--abbrev-ref", "HEAD"]
+    let result = (symbolicRef <|> revParse) >>= parseBranchName
+    pure result
+  where
+    parseBranchName name =
+        let stripped = T.strip name
+         in if stripped == "" || stripped == "HEAD"
+                then Nothing
+                else Just stripped

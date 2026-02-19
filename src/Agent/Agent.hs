@@ -23,150 +23,38 @@ import Data.Text (Text)
 
 import Agent.Types
 
+-- | Helper to build permission rulesets
+ruleset :: [(Text, PermissionAction)] -> PermissionRuleset
+ruleset rules = PermissionRuleset $ Map.fromList [(k, [PermissionRule v Nothing]) | (k, v) <- rules]
+
 -- | Built-in agent definitions
 builtinAgents :: [Agent]
 builtinAgents =
-    [ Agent
-        { agentName = "armed"
-        , agentDescription = Just "The default agent. Executes tools based on configured permissions."
-        , agentMode = Primary
-        , agentNative = Just True
-        , agentHidden = Nothing
-        , agentTopP = Nothing
-        , agentTemperature = Nothing
-        , agentColor = Nothing
-        , agentPermission =
-            PermissionRuleset $
-                Map.fromList
-                    [ ("*", [PermissionRule Allow Nothing])
-                    , ("doom_loop", [PermissionRule Ask Nothing])
-                    , ("question", [PermissionRule Allow Nothing])
-                    , ("plan_enter", [PermissionRule Allow Nothing])
-                    ]
-        , agentModel = Nothing
-        , agentVariant = Nothing
-        , agentPrompt = Nothing
-        , agentOptions = Map.empty
-        , agentSteps = Nothing
+    [ (defaultAgent "armed" Primary (ruleset [("*", Allow), ("doom_loop", Ask), ("question", Allow), ("plan_enter", Allow)]))
+        { agentDescription = Just "The default agent. Executes tools based on configured permissions."
         }
-    , Agent
-        { agentName = "locked"
-        , agentDescription = Just "Locked mode. Disallows all edit tools."
-        , agentMode = Primary
-        , agentNative = Just True
-        , agentHidden = Nothing
-        , agentTopP = Nothing
-        , agentTemperature = Nothing
-        , agentColor = Nothing
-        , agentPermission =
-            PermissionRuleset $
-                Map.fromList
-                    [ ("*", [PermissionRule Allow Nothing])
-                    , ("edit", [PermissionRule Deny Nothing])
-                    , ("write", [PermissionRule Deny Nothing])
-                    , ("question", [PermissionRule Allow Nothing])
-                    , ("plan_exit", [PermissionRule Allow Nothing])
-                    ]
-        , agentModel = Nothing
-        , agentVariant = Nothing
-        , agentPrompt = Nothing
-        , agentOptions = Map.empty
-        , agentSteps = Nothing
+    , (defaultAgent "locked" Primary (ruleset [("*", Allow), ("edit", Deny), ("write", Deny), ("question", Allow), ("plan_exit", Allow)]))
+        { agentDescription = Just "Locked mode. Disallows all edit tools."
         }
-    , Agent
-        { agentName = "general"
-        , agentDescription = Just "General-purpose agent for researching complex questions and executing multi-step tasks."
-        , agentMode = Subagent
-        , agentNative = Just True
-        , agentHidden = Nothing
-        , agentTopP = Nothing
-        , agentTemperature = Nothing
-        , agentColor = Nothing
-        , agentPermission =
-            PermissionRuleset $
-                Map.fromList
-                    [ ("*", [PermissionRule Allow Nothing])
-                    , ("todoread", [PermissionRule Deny Nothing])
-                    , ("todowrite", [PermissionRule Deny Nothing])
-                    ]
-        , agentModel = Nothing
-        , agentVariant = Nothing
-        , agentPrompt = Nothing
-        , agentOptions = Map.empty
-        , agentSteps = Nothing
+    , (defaultAgent "general" Subagent (ruleset [("*", Allow), ("todoread", Deny), ("todowrite", Deny)]))
+        { agentDescription = Just "General-purpose agent for researching complex questions and executing multi-step tasks."
         }
-    , Agent
-        { agentName = "explore"
-        , agentDescription = Just "Fast agent specialized for exploring codebases."
-        , agentMode = Subagent
-        , agentNative = Just True
-        , agentHidden = Nothing
-        , agentTopP = Nothing
-        , agentTemperature = Nothing
-        , agentColor = Nothing
-        , agentPermission =
-            PermissionRuleset $
-                Map.fromList
-                    [ ("*", [PermissionRule Deny Nothing])
-                    , ("grep", [PermissionRule Allow Nothing])
-                    , ("glob", [PermissionRule Allow Nothing])
-                    , ("read", [PermissionRule Allow Nothing])
-                    , ("bash", [PermissionRule Allow Nothing])
-                    , ("webfetch", [PermissionRule Allow Nothing])
-                    ]
-        , agentModel = Nothing
-        , agentVariant = Nothing
+    , (defaultAgent "explore" Subagent (ruleset [("*", Deny), ("grep", Allow), ("glob", Allow), ("read", Allow), ("bash", Allow), ("webfetch", Allow)]))
+        { agentDescription = Just "Fast agent specialized for exploring codebases."
         , agentPrompt = Just "You are an explore agent. Your job is to quickly search and analyze codebases."
-        , agentOptions = Map.empty
-        , agentSteps = Nothing
         }
-    , Agent
-        { agentName = "compaction"
-        , agentDescription = Nothing
-        , agentMode = Primary
-        , agentNative = Just True
-        , agentHidden = Just True
-        , agentTopP = Nothing
-        , agentTemperature = Nothing
-        , agentColor = Nothing
-        , agentPermission = PermissionRuleset $ Map.singleton "*" [PermissionRule Deny Nothing]
-        , agentModel = Nothing
-        , agentVariant = Nothing
+    , (defaultAgent "compaction" Primary (ruleset [("*", Deny)]))
+        { agentHidden = Just True
         , agentPrompt = Just "You are a compaction agent. Summarize the conversation concisely."
-        , agentOptions = Map.empty
-        , agentSteps = Nothing
         }
-    , Agent
-        { agentName = "title"
-        , agentDescription = Nothing
-        , agentMode = Primary
-        , agentNative = Just True
-        , agentHidden = Just True
-        , agentTopP = Nothing
+    , (defaultAgent "title" Primary (ruleset [("*", Deny)]))
+        { agentHidden = Just True
         , agentTemperature = Just 0.5
-        , agentColor = Nothing
-        , agentPermission = PermissionRuleset $ Map.singleton "*" [PermissionRule Deny Nothing]
-        , agentModel = Nothing
-        , agentVariant = Nothing
         , agentPrompt = Just "Generate a concise title for this conversation."
-        , agentOptions = Map.empty
-        , agentSteps = Nothing
         }
-    , Agent
-        { agentName = "summary"
-        , agentDescription = Nothing
-        , agentMode = Primary
-        , agentNative = Just True
-        , agentHidden = Just True
-        , agentTopP = Nothing
-        , agentTemperature = Nothing
-        , agentColor = Nothing
-        , agentPermission = PermissionRuleset $ Map.singleton "*" [PermissionRule Deny Nothing]
-        , agentModel = Nothing
-        , agentVariant = Nothing
+    , (defaultAgent "summary" Primary (ruleset [("*", Deny)]))
+        { agentHidden = Just True
         , agentPrompt = Just "Summarize this session."
-        , agentOptions = Map.empty
-        , agentSteps = Nothing
         }
     ]
 

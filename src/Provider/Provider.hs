@@ -46,52 +46,22 @@ builtinProviders =
         , providerEnv = ["ANTHROPIC_API_KEY"]
         , providerModels =
             Map.fromList
-                [
-                    ( "claude-sonnet-4-20250514"
-                    , Model
-                        { modelId = "claude-sonnet-4-20250514"
-                        , modelName = "Claude Sonnet 4"
-                        , modelReleaseDate = "2025-05-14"
-                        , modelAttachment = True
-                        , modelReasoning = True
-                        , modelTemperature = True
-                        , modelToolCall = True
-                        , modelLimit = ModelLimit 200000 Nothing 16384
-                        , modelOptions = Map.empty
+                [ ( "claude-sonnet-4-20250514"
+                  , (defaultModel "claude-sonnet-4-20250514" "Claude Sonnet 4" "2025-05-14" (ModelLimit 200000 Nothing 16384))
+                        { modelReasoning = True
                         , modelFamily = Just "claude"
-                        , modelInterleaved = Nothing
                         , modelCost = Just $ ModelCost 3.0 15.0 (Just 0.3) (Just 3.75) Nothing
                         , modelModalities = Just $ ModelModalities ["text", "image", "pdf"] ["text"]
-                        , modelExperimental = Nothing
-                        , modelStatus = Nothing
-                        , modelHeaders = Nothing
-                        , modelProvider = Nothing
-                        , modelVariants = Nothing
                         }
-                    )
-                ,
-                    ( "claude-opus-4-20250514"
-                    , Model
-                        { modelId = "claude-opus-4-20250514"
-                        , modelName = "Claude Opus 4"
-                        , modelReleaseDate = "2025-05-14"
-                        , modelAttachment = True
-                        , modelReasoning = True
-                        , modelTemperature = True
-                        , modelToolCall = True
-                        , modelLimit = ModelLimit 200000 Nothing 32000
-                        , modelOptions = Map.empty
+                  )
+                , ( "claude-opus-4-20250514"
+                  , (defaultModel "claude-opus-4-20250514" "Claude Opus 4" "2025-05-14" (ModelLimit 200000 Nothing 32000))
+                        { modelReasoning = True
                         , modelFamily = Just "claude"
-                        , modelInterleaved = Nothing
                         , modelCost = Just $ ModelCost 15.0 75.0 (Just 1.5) (Just 18.75) Nothing
                         , modelModalities = Just $ ModelModalities ["text", "image", "pdf"] ["text"]
-                        , modelExperimental = Nothing
-                        , modelStatus = Nothing
-                        , modelHeaders = Nothing
-                        , modelProvider = Nothing
-                        , modelVariants = Nothing
                         }
-                    )
+                  )
                 ]
         , providerApi = Nothing
         , providerNpm = Nothing
@@ -102,52 +72,22 @@ builtinProviders =
         , providerEnv = ["OPENAI_API_KEY"]
         , providerModels =
             Map.fromList
-                [
-                    ( "gpt-4o"
-                    , Model
-                        { modelId = "gpt-4o"
-                        , modelName = "GPT-4o"
-                        , modelReleaseDate = "2024-05-13"
-                        , modelAttachment = True
-                        , modelReasoning = False
-                        , modelTemperature = True
-                        , modelToolCall = True
-                        , modelLimit = ModelLimit 128000 Nothing 16384
-                        , modelOptions = Map.empty
-                        , modelFamily = Just "gpt"
-                        , modelInterleaved = Nothing
+                [ ( "gpt-4o"
+                  , (defaultModel "gpt-4o" "GPT-4o" "2024-05-13" (ModelLimit 128000 Nothing 16384))
+                        { modelFamily = Just "gpt"
                         , modelCost = Just $ ModelCost 2.5 10.0 Nothing Nothing Nothing
                         , modelModalities = Just $ ModelModalities ["text", "image"] ["text"]
-                        , modelExperimental = Nothing
-                        , modelStatus = Nothing
-                        , modelHeaders = Nothing
-                        , modelProvider = Nothing
-                        , modelVariants = Nothing
                         }
-                    )
-                ,
-                    ( "o3"
-                    , Model
-                        { modelId = "o3"
-                        , modelName = "o3"
-                        , modelReleaseDate = "2025-01-01"
-                        , modelAttachment = True
-                        , modelReasoning = True
+                  )
+                , ( "o3"
+                  , (defaultModel "o3" "o3" "2025-01-01" (ModelLimit 200000 Nothing 100000))
+                        { modelReasoning = True
                         , modelTemperature = False
-                        , modelToolCall = True
-                        , modelLimit = ModelLimit 200000 Nothing 100000
-                        , modelOptions = Map.empty
                         , modelFamily = Just "o"
-                        , modelInterleaved = Nothing
                         , modelCost = Just $ ModelCost 10.0 40.0 Nothing Nothing Nothing
                         , modelModalities = Just $ ModelModalities ["text", "image"] ["text"]
-                        , modelExperimental = Nothing
-                        , modelStatus = Nothing
-                        , modelHeaders = Nothing
-                        , modelProvider = Nothing
-                        , modelVariants = Nothing
                         }
-                    )
+                  )
                 ]
         , providerApi = Nothing
         , providerNpm = Nothing
