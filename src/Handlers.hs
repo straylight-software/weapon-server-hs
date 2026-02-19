@@ -316,16 +316,16 @@ pathHandler st = liftIO $ do
             (pack workdir)
             (pack cwd)
 
-globalConfigHandler :: Handler Value
-globalConfigHandler = liftIO $ do
-    path <- Config.globalConfigPath
+globalConfigHandler :: AppState -> Handler Value
+globalConfigHandler st = liftIO $ do
+    path <- getGlobalConfigPath st
     cfg <- Config.loadFile path
     return $ Data.Aeson.toJSON $ fromMaybe Config.defaultConfig cfg
 
 -- | Update global configuration (PATCH /global/config)
-globalConfigUpdateHandler :: Value -> Handler Value
-globalConfigUpdateHandler input = liftIO $ do
-    path <- Config.globalConfigPath
+globalConfigUpdateHandler :: AppState -> Value -> Handler Value
+globalConfigUpdateHandler st input = liftIO $ do
+    path <- getGlobalConfigPath st
     -- Merge with existing config
     existing <- Config.loadFile path
     let merged = mergeConfigValue (maybe (Object KM.empty) Data.Aeson.toJSON existing) input
@@ -337,6 +337,12 @@ globalConfigUpdateHandler input = liftIO $ do
   where
     mergeConfigValue (Object base) (Object updates) = Object (KM.union updates base)
     mergeConfigValue _ updates = updates
+
+-- | Get global config path, using stHomeDir override if set
+getGlobalConfigPath :: AppState -> IO FilePath
+getGlobalConfigPath st = case stHomeDir st of
+    Just home -> pure $ home </> ".config" </> "weapon" </> "weapon.json"
+    Nothing -> Config.globalConfigPath
 
 -- * Project Handlers
 
@@ -695,15 +701,28 @@ sessionCommandHandler st sid input = liftIO $ do
                 , ToolT.tcMessageID = "command"
                 , ToolT.tcWorkdir = unpack (stDirectory st)
                 }
+    now <- getCurrentTime
+    let timestamp = realToFrac (utcTimeToPOSIXSeconds now) :: Double
     output <- ToolExec.execute ctx "bash" input
-    let payload =
-            object
-                [ "sessionID" .= sid
-                , "output" .= ToolT.toOutput output
-                , "error" .= ToolT.toIsError output
-                ]
-    Bus.publish (stBus st) "command.executed" payload
-    return payload
+    let isError = ToolT.toIsError output
+        outputText = ToolT.toOutput output
+        -- Build AssistantMessage (info)
+        info = object
+            [ "id" .= ("msg_cmd_" <> sid)
+            , "sessionID" .= sid
+            , "role" .= ("assistant" :: Text)
+            , "time" .= object ["created" .= timestamp, "completed" .= timestamp]
+            , "error" .= if isError then Just (object ["type" .= ("error" :: Text), "message" .= outputText]) else Nothing
+            ]
+        -- Build parts array with a text part containing the output
+        parts = [object
+            [ "id" .= ("part_cmd_" <> sid)
+            , "type" .= ("text" :: Text)
+            , "text" .= outputText
+            ]]
+        response = object ["info" .= info, "parts" .= parts]
+    Bus.publish (stBus st) "command.executed" response
+    return response
 
 sessionShellHandler :: AppState -> Text -> Value -> Handler Value
 sessionShellHandler st sid input = liftIO $ do
@@ -1478,8 +1497,8 @@ server :: AppState -> Server OpencodeAPI
 server st =
     healthHandler st
         :<|> pathHandler st
-        :<|> globalConfigHandler
-        :<|> globalConfigUpdateHandler
+        :<|> globalConfigHandler st
+        :<|> globalConfigUpdateHandler st
         :<|> projectListHandler st
         :<|> projectGetHandler st
         :<|> projectUpdateHandler st

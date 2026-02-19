@@ -98,6 +98,7 @@ withState action =
                             , stProxy = Nothing
                             , stLogger = lg
                             , stPromptAsyncQueue = queue
+                            , stHomeDir = Just dir
                             }
                 action st
 
@@ -184,7 +185,7 @@ prop_pathHandler = withTests 20 $ property $ do
 
 prop_globalConfigHandler :: Property
 prop_globalConfigHandler = withTests 20 $ property $ do
-    result <- evalIO $ runHandlerIO globalConfigHandler
+    result <- evalIO $ withState $ \st -> runHandlerIO (globalConfigHandler st)
     case result of
         Left _ -> failure
         Right val -> assert $ isObject val

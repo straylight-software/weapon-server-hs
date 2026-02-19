@@ -4,6 +4,8 @@
 module State (
     AppState (..),
     initialState,
+    initialStateNoProxy,
+    initialStateNoProxyWithHome,
 ) where
 
 import Control.Concurrent.STM
@@ -31,6 +33,7 @@ data AppState = AppState
     , stProxy :: Maybe Proxy.ProxyServer -- MITM proxy for LLM traffic
     , stLogger :: Log.Logger -- Structured logger
     , stPromptAsyncQueue :: TQueue PromptAsyncJob -- prompt_async worker queue
+    , stHomeDir :: Maybe FilePath -- Override home directory for config (tests)
     }
 
 -- | Initialize a new state
@@ -61,4 +64,37 @@ initialState storageDir projectID directory logger = do
             , stProxy = Just proxy
             , stLogger = logger
             , stPromptAsyncQueue = promptQueue
+            , stHomeDir = Nothing
+            }
+
+-- | Initialize state without starting the MITM proxy (for tests)
+-- Takes an optional home directory override for config isolation
+initialStateNoProxy :: FilePath -> Text -> Text -> Log.Logger -> IO AppState
+initialStateNoProxy = initialStateNoProxyWithHome Nothing
+
+-- | Initialize state without proxy, with optional home directory override
+initialStateNoProxyWithHome :: Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
+initialStateNoProxyWithHome homeDir storageDir projectID directory logger = do
+    bus <- Bus.newBus
+    eventChan <- newBroadcastTChanIO
+    ptyManager <- Pty.newManager (Text.unpack directory)
+    promptQueue <- newTQueueIO
+
+    -- Subscribe bus to also write to event channel for SSE
+    _ <- Bus.subscribeAll bus $ \event ->
+        atomically $ writeTChan eventChan (toJSON event)
+
+    pure $
+        AppState
+            { stBus = bus
+            , stStorage = Storage.StorageConfig storageDir
+            , stProjectID = projectID
+            , stDirectory = directory
+            , stVersion = "0.1.0"
+            , stEventChan = eventChan
+            , stPtyManager = ptyManager
+            , stProxy = Nothing
+            , stLogger = logger
+            , stPromptAsyncQueue = promptQueue
+            , stHomeDir = homeDir
             }
