@@ -135,6 +135,14 @@ lookupBool key (Object obj) = case KM.lookup (K.fromText key) obj of
     _ -> Nothing
 lookupBool _ _ = Nothing
 
+lookupArray :: Text -> Value -> Maybe [Value]
+lookupArray key (Object obj) = case KM.lookup (K.fromText key) obj of
+    Just (Array arr) -> Just (toList arr)
+    _ -> Nothing
+  where
+    toList = foldr (:) []
+lookupArray _ _ = Nothing
+
 hasKey :: Text -> Value -> Bool
 hasKey key (Object obj) = KM.member (K.fromText key) obj
 hasKey _ _ = False
@@ -280,12 +288,13 @@ prop_agentHandler = withTests 20 $ property $ do
 
 prop_sessionStatusHandler :: Property
 prop_sessionStatusHandler = withTests 20 $ property $ do
-    result <- evalIO $ withState $ \st -> runHandlerIO (sessionStatusHandler st)
+    result <- evalIO $ withState $ \st -> runHandlerIO (sessionStatusHandler st Nothing)
     case result of
         Left _ -> failure
         Right val -> do
-            assert $ hasKey "sessions" val
-            assert $ hasKey "ptys" val
+            -- Returns an empty map (object {}) when no sessions are active
+            -- The map has type Map<SessionID, SessionStatus>
+            assert $ isObject val
 
 prop_sessionLifecycleHandler :: Property
 prop_sessionLifecycleHandler = withTests 20 $ property $ do
@@ -367,7 +376,8 @@ prop_sessionInitHandler = withTests 20 $ property $ do
     case result of
         (Left _, _) -> failure
         (Right val, evt) -> do
-            lookupBool "initialized" val === Just True
+            -- Handler now returns Bool (true on success)
+            val === True
             assert $ evt /= Nothing
 
 prop_sessionForkHandler :: Property
@@ -431,15 +441,20 @@ prop_sessionDiffHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st ->
         ( do
             res <- runHandlerIO (sessionDiffHandler st sid Nothing)
-            pure (res, Nothing)
+            pure (res, Nothing :: Maybe VcsError)
         )
-            `catch` \(e :: VcsError) -> pure (Right (object []), Just e)
+            `catch` \(e :: VcsError) -> pure (Right [], Just e)
     case result of
         (_, Just e) -> do
             annotate $ show e
             failure
         (Left _, Nothing) -> failure
-        (Right val, Nothing) -> assert $ hasKey "summary" val
+        (Right diffs, Nothing) -> do
+            -- Handler now returns [FileDiff] - check it's a valid list
+            -- (can be empty if no changes in working directory)
+            assert $ all validFileDiff diffs
+  where
+    validFileDiff fd = not (T.null (fdFile fd))
 
 prop_sessionSummarizeHandler :: Property
 prop_sessionSummarizeHandler = withTests 20 $ property $ do
@@ -738,10 +753,17 @@ prop_sessionCommandHandler = withTests 20 $ property $ do
     case result of
         (Left _, _) -> failure
         (Right val, evt) -> do
-            lookupBool "error" val === Just False
-            case lookupText "output" val of
+            -- Response structure is { "info": AssistantMessage, "parts": [Part] }
+            assert $ hasKey "info" val
+            assert $ hasKey "parts" val
+            -- Check output is in parts array - first part should have "text" field
+            case lookupArray "parts" val of
                 Nothing -> failure
-                Just out -> assert $ txt `T.isInfixOf` out
+                Just parts -> case parts of
+                    [] -> failure
+                    (p:_) -> case lookupText "text" p of
+                        Nothing -> failure
+                        Just out -> assert $ txt `T.isInfixOf` out
             assert $ evt /= Nothing
 
 prop_sessionShellHandler :: Property

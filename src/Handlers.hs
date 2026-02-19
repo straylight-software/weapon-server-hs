@@ -544,11 +544,12 @@ agentHandler = liftIO $ do
 
 -- * Session Handlers
 
-sessionStatusHandler :: AppState -> Handler Value
-sessionStatusHandler _st = liftIO $ do
+sessionStatusHandler :: AppState -> Maybe Text -> Handler Value
+sessionStatusHandler _st _mDir = liftIO $ do
     -- Return empty map since we don't track per-session status yet
-    -- The spec expects Map SessionID SessionStatus
-    return $ object []
+    -- The spec expects Map<SessionID, SessionStatus>
+    -- An empty object {} is a valid empty map
+    return $ Object mempty
 
 sessionListHandler :: AppState -> Maybe Text -> Maybe Bool -> Maybe Int -> Maybe Int -> Maybe Text -> Handler [Session]
 sessionListHandler st _mDir mRoots mLimit mStart mSearch = liftIO $ do
@@ -611,10 +612,10 @@ sessionTodoHandler st sid = liftIO $ do
     result <- Storage.readMaybe (stStorage st) key
     pure $ fromMaybe [] result
 
-sessionInitHandler :: AppState -> Text -> Handler Value
+sessionInitHandler :: AppState -> Text -> Handler Bool
 sessionInitHandler st sid = liftIO $ do
     Bus.publish (stBus st) "session.initialized" (object ["sessionID" .= sid])
-    return $ object ["sessionID" .= sid, "initialized" .= True]
+    return True
 
 sessionForkHandler :: AppState -> Text -> Handler Session
 sessionForkHandler st sid = liftIO $ do
@@ -647,28 +648,25 @@ sessionShareDeleteHandler :: AppState -> Text -> Handler Session
 sessionShareDeleteHandler st sid =
     withSessionUpdate st sid $ \s -> s{ST.sessionShare = Nothing}
 
-sessionDiffHandler :: AppState -> Text -> Maybe Text -> Handler Value
-sessionDiffHandler st sid mMessageID = liftIO $ do
-    -- Load diff - when messageID is provided, we could load message-specific diff
-    -- For now, we return the current working directory diff
-    mresult <- Diff.loadDiff (unpack (stDirectory st))
-    case mresult of
-        Nothing ->
-            return $
-                object
-                    [ "sessionID" .= sid
-                    , "messageID" .= mMessageID
-                    , "diff" .= ("" :: Text)
-                    , "summary" .= toApiSummary (ST.SessionSummary 0 0 (Just 0))
-                    ]
-        Just (diff, summary) ->
-            return $
-                object
-                    [ "sessionID" .= sid
-                    , "messageID" .= mMessageID
-                    , "diff" .= diff
-                    , "summary" .= toApiSummary summary
-                    ]
+sessionDiffHandler :: AppState -> Text -> Maybe Text -> Handler [FileDiff]
+sessionDiffHandler st _sid _mMessageID = liftIO $ do
+    -- Load file-level diffs for the session
+    fileDiffs <- Diff.loadFileDiffs (unpack (stDirectory st))
+    return $ map toApiFileDiff fileDiffs
+  where
+    toApiFileDiff fd =
+        FileDiff
+            { fdFile = Diff.fdiFile fd
+            , fdBefore = ""  -- Would need full file content diff to populate
+            , fdAfter = ""   -- Would need full file content diff to populate
+            , fdAdditions = Diff.fdiAdditions fd
+            , fdDeletions = Diff.fdiDeletions fd
+            , fdStatus = Just $ inferStatus fd
+            }
+    inferStatus fd
+        | Diff.fdiAdditions fd > 0 && Diff.fdiDeletions fd == 0 = Added
+        | Diff.fdiAdditions fd == 0 && Diff.fdiDeletions fd > 0 = Deleted
+        | otherwise = Modified
 
 sessionSummarizeHandler :: AppState -> Text -> Handler Bool
 sessionSummarizeHandler st sid = do

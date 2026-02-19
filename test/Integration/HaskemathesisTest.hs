@@ -137,11 +137,14 @@ preSeedSessions state = do
 --
 -- This intercepts requests to /session/{sessionID}/... and replaces the
 -- random sessionID with one of our known pre-seeded session IDs.
+-- Does NOT rewrite special paths like /session/status
 rewriteSessionId :: ApiRequest -> ApiRequest
 rewriteSessionId req =
   let path = reqPath req
       segments = T.splitOn "/" path
   in case segments of
+    -- Skip literal paths that aren't session ID captures
+    ("" : "session" : "status" : _) -> req
     -- /session/{sessionID}/... (with or without trailing path)
     ("" : "session" : _randomSid : rest) ->
       let newPath = T.intercalate "/" ("" : "session" : knownSessionId : rest)

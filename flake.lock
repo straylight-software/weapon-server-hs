@@ -59,11 +59,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1771523545,
-        "narHash": "sha256-srAj2CyKUs0DI2HKC9ZEiPNHj1TcSZHyjHNFxZpRWRk=",
+        "lastModified": 1771530081,
+        "narHash": "sha256-yOckPJXo7BEsAT4uKp4s+FQ5UwP2iI974wXfHKfbrOs=",
         "owner": "weyl-ai",
         "repo": "haskemathesis",
-        "rev": "369cbf9a3928cbafe38ee5781195c3399cfa686f",
+        "rev": "406abb22b2f459967ec1bddef36a0ec027bbb4b3",
         "type": "github"
       },
       "original": {

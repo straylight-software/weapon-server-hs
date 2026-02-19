@@ -21,6 +21,8 @@ module Api.Session
     , Session (..)
     , UpdateSessionInput (..)
     , CreateSessionInput (..)
+    , FileDiff (..)
+    , FileDiffStatus (..)
 
       -- * Session API Endpoints
     , SessionStatusAPI
@@ -103,6 +105,57 @@ instance FromJSON SessionSummary where
             <$> v .: "additions"
             <*> v .: "deletions"
             <*> v .:? "files"
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // file diff //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+data FileDiffStatus = Added | Deleted | Modified
+    deriving (Eq, Show, Generic)
+
+instance ToJSON FileDiffStatus where
+    toJSON Added = "added"
+    toJSON Deleted = "deleted"
+    toJSON Modified = "modified"
+
+instance FromJSON FileDiffStatus where
+    parseJSON = withText "FileDiffStatus" $ \case
+        "added" -> pure Added
+        "deleted" -> pure Deleted
+        "modified" -> pure Modified
+        _ -> fail "Invalid FileDiffStatus"
+
+data FileDiff = FileDiff
+    { fdFile :: Text
+    , fdBefore :: Text
+    , fdAfter :: Text
+    , fdAdditions :: Int
+    , fdDeletions :: Int
+    , fdStatus :: Maybe FileDiffStatus
+    }
+    deriving (Eq, Show, Generic)
+
+instance ToJSON FileDiff where
+    toJSON fd =
+        object
+            [ "file" .= fdFile fd
+            , "before" .= fdBefore fd
+            , "after" .= fdAfter fd
+            , "additions" .= fdAdditions fd
+            , "deletions" .= fdDeletions fd
+            , "status" .= fdStatus fd
+            ]
+
+instance FromJSON FileDiff where
+    parseJSON = withObject "FileDiff" $ \v ->
+        FileDiff
+            <$> v .: "file"
+            <*> v .: "before"
+            <*> v .: "after"
+            <*> v .: "additions"
+            <*> v .: "deletions"
+            <*> v .:? "status"
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -257,7 +310,7 @@ instance ToJSON CreateSessionInput where
 -- // api type definitions //
 -- ═══════════════════════════════════════════════════════════════════════════
 
-type SessionStatusAPI = "session" :> "status" :> Get '[JSON] Value
+type SessionStatusAPI = "session" :> "status" :> QueryParam "directory" Text :> Get '[JSON] Value
 
 type SessionListAPI =
     "session"
@@ -291,7 +344,7 @@ type SessionTodoAPI =
     "session" :> Capture "sessionID" Text :> "todo" :> Get '[JSON] [Value]
 
 type SessionInitAPI =
-    "session" :> Capture "sessionID" Text :> "init" :> Post '[JSON] Value
+    "session" :> Capture "sessionID" Text :> "init" :> Post '[JSON] Bool
 
 type SessionForkAPI =
     "session" :> Capture "sessionID" Text :> "fork" :> Post '[JSON] Session
@@ -310,7 +363,7 @@ type SessionDiffAPI =
         :> Capture "sessionID" Text
         :> "diff"
         :> QueryParam "messageID" Text
-        :> Get '[JSON] Value
+        :> Get '[JSON] [FileDiff]
 
 type SessionSummarizeAPI =
     "session" :> Capture "sessionID" Text :> "summarize" :> Post '[JSON] Bool
