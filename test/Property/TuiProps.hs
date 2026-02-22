@@ -8,41 +8,33 @@ import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Storage.Storage qualified as Storage
-import System.Directory (removeDirectoryRecursive)
-import System.IO.Temp (createTempDirectory)
+import Test.Fixture (propertyWithTempDir)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Tui.Store qualified as TuiStore
 
-withStore :: (Storage.StorageConfig -> IO a) -> IO a
-withStore action = do
-    tmpDir <- createTempDirectory "/tmp" "tui-test"
-    result <- Storage.withStorage tmpDir action
-    removeDirectoryRecursive tmpDir
-    pure result
-
 prop_appendPrompt :: Property
-prop_appendPrompt = property $ do
+prop_appendPrompt = propertyWithTempDir $ \tmpDir -> do
     a <- forAll genText
     b <- forAll genText
-    result <- evalIO $ withStore $ \store -> do
+    result <- evalIO $ Storage.withStorage tmpDir $ \store -> do
         _ <- TuiStore.appendPrompt store a
         TuiStore.appendPrompt store b
     result === (a <> b)
 
 prop_clearPrompt :: Property
-prop_clearPrompt = property $ do
+prop_clearPrompt = propertyWithTempDir $ \tmpDir -> do
     text <- forAll genText
-    result <- evalIO $ withStore $ \store -> do
+    result <- evalIO $ Storage.withStorage tmpDir $ \store -> do
         _ <- TuiStore.appendPrompt store text
         TuiStore.clearPrompt store
         TuiStore.getPrompt store
     result === ""
 
 prop_submitPrompt :: Property
-prop_submitPrompt = property $ do
+prop_submitPrompt = propertyWithTempDir $ \tmpDir -> do
     text <- forAll genText
-    (submitted, remaining) <- evalIO $ withStore $ \store -> do
+    (submitted, remaining) <- evalIO $ Storage.withStorage tmpDir $ \store -> do
         _ <- TuiStore.appendPrompt store text
         submitted <- TuiStore.submitPrompt store
         remaining <- TuiStore.getPrompt store
@@ -51,19 +43,19 @@ prop_submitPrompt = property $ do
     remaining === ""
 
 prop_submitStoresLast :: Property
-prop_submitStoresLast = property $ do
+prop_submitStoresLast = propertyWithTempDir $ \tmpDir -> do
     text <- forAll genText
-    result <- evalIO $ withStore $ \store -> do
+    result <- evalIO $ Storage.withStorage tmpDir $ \store -> do
         _ <- TuiStore.appendPrompt store text
         _ <- TuiStore.submitPrompt store
         Storage.read store ["tui", "submitted"]
     result === object ["prompt" .= text]
 
 prop_setLastRoundtrip :: Property
-prop_setLastRoundtrip = property $ do
+prop_setLastRoundtrip = propertyWithTempDir $ \tmpDir -> do
     key <- forAll genText
     val <- forAll genText
-    result <- evalIO $ withStore $ \store -> do
+    result <- evalIO $ Storage.withStorage tmpDir $ \store -> do
         let payload = object ["key" .= key, "value" .= val]
         TuiStore.setLast store payload
         TuiStore.getLast store

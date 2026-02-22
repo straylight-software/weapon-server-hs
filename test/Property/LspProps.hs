@@ -9,32 +9,26 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Lsp.Store qualified as LspStore
 import Storage.Storage qualified as Storage
-import System.Directory (canonicalizePath, createDirectoryIfMissing, removeDirectoryRecursive)
+import System.Directory (canonicalizePath, createDirectoryIfMissing)
 import System.FilePath (takeDirectory, (</>))
-import System.IO.Temp (createTempDirectory)
+import Test.Fixture (propertyWithTempDir)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
-withStore :: (Storage.StorageConfig -> IO a) -> IO a
-withStore action = do
-    tmpDir <- createTempDirectory "/tmp" "lsp-test"
-    let storageDir = tmpDir </> ".opencode" </> "storage"
-    result <- Storage.withStorage storageDir action
-    removeDirectoryRecursive tmpDir
-    pure result
-
 prop_setGetDiagnostics :: Property
-prop_setGetDiagnostics = property $ do
+prop_setGetDiagnostics = propertyWithTempDir $ \tmpDir -> do
     values <- forAll $ Gen.list (Range.linear 0 5) genValue
-    result <- evalIO $ withStore $ \store -> do
+    let storageDir = tmpDir </> ".opencode" </> "storage"
+    result <- evalIO $ Storage.withStorage storageDir $ \store -> do
         LspStore.setDiagnostics store values
         LspStore.getDiagnostics store
     result === values
 
 prop_getDiagnosticsFileFallback :: Property
-prop_getDiagnosticsFileFallback = property $ do
+prop_getDiagnosticsFileFallback = propertyWithTempDir $ \tmpDir -> do
     values <- forAll $ Gen.list (Range.linear 1 5) genValue
-    result <- evalIO $ withStore $ \store -> do
+    let storageDir = tmpDir </> ".opencode" </> "storage"
+    result <- evalIO $ Storage.withStorage storageDir $ \store -> do
         -- Canonicalize to resolve symlinks (important in nix sandbox)
         base <- canonicalizePath (takeDirectory (Storage.storageDir store))
         let path = base </> "lsp" </> "diagnostics.json"

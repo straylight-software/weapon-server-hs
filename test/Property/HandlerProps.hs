@@ -41,13 +41,13 @@ import Servant (Tagged (..))
 import Servant.Server (Handler, ServerError, runHandler)
 import State
 import Storage.Storage qualified as Storage
-import System.Directory (createDirectory, findExecutable, removeDirectoryRecursive)
+import System.Directory (createDirectory, findExecutable)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
-import System.IO.Temp (createTempDirectory)
 import System.Posix.Signals qualified as Sig
 import System.Process (readProcessWithExitCode)
+import Test.Fixture (withTempDir)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Test.Tasty.Runners (NumThreads (..))
@@ -110,9 +110,11 @@ data SessionLifecycleResult = SessionLifecycleResult
     , slrFetched2 :: !(Either ServerError Session)
     }
 
+{- | Create a temporary directory for testing
+Uses /dev/shm for faster in-memory operations
+-}
 withTmp :: (FilePath -> IO a) -> IO a
-withTmp =
-    bracket (createTempDirectory "/tmp" "handler-test") removeDirectoryRecursive
+withTmp = withTempDir
 
 {- | Run an IO action with SIGTERM and SIGHUP ignored to prevent signal
 propagation from child processes (PTYs) terminating during tests.

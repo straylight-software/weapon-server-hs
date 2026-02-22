@@ -16,22 +16,14 @@ import Data.Text.IO qualified as TIO
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
-import System.Directory (canonicalizePath, doesFileExist, removeDirectoryRecursive)
+import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath ((</>))
-import System.IO.Temp (createTempDirectory)
+import Test.Fixture (propertyWithTempDir, withTempDir)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Tool.Defs qualified as Tool
 import Tool.Exec (execute)
 import Tool.Types
-
--- | Create a temporary directory for testing
-withTempDir :: (FilePath -> IO a) -> IO a
-withTempDir action = do
-    tmpDir <- createTempDirectory "/tmp" "tool-test"
-    result <- action tmpDir
-    removeDirectoryRecursive tmpDir
-    pure result
 
 -- | Create a test context
 testContext :: FilePath -> ToolContext
@@ -44,11 +36,11 @@ testContext workdir =
 
 -- | Property: read tool returns file content
 prop_readTool :: Property
-prop_readTool = property $ do
+prop_readTool = propertyWithTempDir $ \tmpDir -> do
     content <- forAll $ Gen.text (Range.linear 1 500) Gen.unicode
     filename <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
 
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let path = tmpDir </> T.unpack filename
         TIO.writeFile path content
         let input =
@@ -64,11 +56,11 @@ prop_readTool = property $ do
 
 -- | Property: write tool creates file
 prop_writeTool :: Property
-prop_writeTool = property $ do
+prop_writeTool = propertyWithTempDir $ \tmpDir -> do
     content <- forAll $ Gen.text (Range.linear 0 500) Gen.unicode
     filename <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
 
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let path = tmpDir </> T.unpack filename
         let input =
                 object
@@ -84,10 +76,10 @@ prop_writeTool = property $ do
     assert exists
 
 prop_writeReadToolRoundtrip :: Property
-prop_writeReadToolRoundtrip = property $ do
+prop_writeReadToolRoundtrip = propertyWithTempDir $ \tmpDir -> do
     content <- forAll $ Gen.text (Range.linear 1 200) Gen.unicode
     filename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let path = tmpDir </> T.unpack filename
         let writeInput =
                 object
@@ -106,18 +98,19 @@ prop_writeReadToolRoundtrip = property $ do
 
 -- | Property: edit tool modifies file
 prop_editTool :: Property
-prop_editTool = property $ do
+prop_editTool = propertyWithTempDir $ \tmpDir -> do
     oldText <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
     newText <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
     prefix <- forAll $ Gen.text (Range.linear 0 50) Gen.alphaNum
     suffix <- forAll $ Gen.text (Range.linear 0 50) Gen.alphaNum
+    filename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
 
     -- Ensure oldText doesn't appear in prefix or suffix to avoid ambiguity
     let uniqueOldText = "OLDTEXT_" <> oldText
     let originalContent = prefix <> uniqueOldText <> suffix
 
-    result <- evalIO $ withTempDir $ \tmpDir -> do
-        let path = tmpDir </> "test.txt"
+    result <- evalIO $ do
+        let path = tmpDir </> T.unpack filename
         TIO.writeFile path originalContent
         let input =
                 object
@@ -136,10 +129,11 @@ prop_editTool = property $ do
     assert $ not (T.isInfixOf "OLDTEXT_" editedContent)
 
 prop_editToolMissingOldString :: Property
-prop_editToolMissingOldString = property $ do
+prop_editToolMissingOldString = propertyWithTempDir $ \tmpDir -> do
     content <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
-    result <- evalIO $ withTempDir $ \tmpDir -> do
-        let path = tmpDir </> "test.txt"
+    filename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    result <- evalIO $ do
+        let path = tmpDir </> T.unpack filename
         TIO.writeFile path content
         let input =
                 object
@@ -152,10 +146,11 @@ prop_editToolMissingOldString = property $ do
     assert $ toIsError result
 
 prop_editToolMultipleMatchesError :: Property
-prop_editToolMultipleMatchesError = property $ do
+prop_editToolMultipleMatchesError = propertyWithTempDir $ \tmpDir -> do
     let content = "dup dup"
-    result <- evalIO $ withTempDir $ \tmpDir -> do
-        let path = tmpDir </> "test.txt"
+    filename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    result <- evalIO $ do
+        let path = tmpDir </> T.unpack filename
         TIO.writeFile path content
         let input =
                 object
@@ -169,10 +164,10 @@ prop_editToolMultipleMatchesError = property $ do
 
 -- | Property: bash tool executes commands
 prop_bashTool :: Property
-prop_bashTool = property $ do
+prop_bashTool = propertyWithTempDir $ \tmpDir -> do
     cmd <- forAll $ Gen.element ["echo hello" :: Text, "pwd", "whoami"]
 
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let input =
                 object
                     [ "command" .= (cmd :: Text)
@@ -185,8 +180,8 @@ prop_bashTool = property $ do
     assert $ not (T.null (toOutput result))
 
 prop_bashToolUsesWorkdir :: Property
-prop_bashToolUsesWorkdir = property $ do
-    (result, dir) <- evalIO $ withTempDir $ \tmpDir -> do
+prop_bashToolUsesWorkdir = propertyWithTempDir $ \tmpDir -> do
+    (result, dir) <- evalIO $ do
         -- Canonicalize the path to resolve symlinks (e.g., /tmp -> /run/user/...)
         canonicalDir <- canonicalizePath tmpDir
         let input =
@@ -211,8 +206,8 @@ prop_bashToolUsesWorkdir = property $ do
     assert $ T.strip (toOutput result) == T.pack dir
 
 prop_bashToolTimeout :: Property
-prop_bashToolTimeout = property $ do
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+prop_bashToolTimeout = propertyWithTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let input =
                 object
                     [ "command" .= ("sleep 2" :: Text)
@@ -222,6 +217,7 @@ prop_bashToolTimeout = property $ do
         execute (testContext tmpDir) "bash" input
     assert $ toIsError result
 
+-- This test creates 150 files, so it needs a fresh directory each time
 prop_globToolLimitsResults :: Property
 prop_globToolLimitsResults = property $ do
     lineCount <- evalIO $ withTempDir $ \tmpDir -> do
@@ -244,9 +240,10 @@ prop_globToolLimitsResults = property $ do
     assert $ lineCount <= 100
 
 prop_grepToolNoMatchesNotError :: Property
-prop_grepToolNoMatchesNotError = property $ do
-    result <- evalIO $ withTempDir $ \tmpDir -> do
-        let path = tmpDir </> "sample.txt"
+prop_grepToolNoMatchesNotError = propertyWithTempDir $ \tmpDir -> do
+    filename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    result <- evalIO $ do
+        let path = tmpDir </> T.unpack filename
         TIO.writeFile path "hello world"
         let input =
                 object
@@ -367,9 +364,9 @@ prop_toolRequiredParamsValid = property $ do
 
 -- | Property: read tool returns error for nonexistent file
 prop_readNonexistentFile :: Property
-prop_readNonexistentFile = property $ do
+prop_readNonexistentFile = propertyWithTempDir $ \tmpDir -> do
     filename <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let path = tmpDir </> T.unpack filename </> "nonexistent.txt"
         let input =
                 object
@@ -382,9 +379,9 @@ prop_readNonexistentFile = property $ do
 
 -- | Property: edit tool returns error for nonexistent file
 prop_editNonexistentFile :: Property
-prop_editNonexistentFile = property $ do
+prop_editNonexistentFile = propertyWithTempDir $ \tmpDir -> do
     filename <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let path = tmpDir </> T.unpack filename </> "nonexistent.txt"
         let input =
                 object
@@ -397,8 +394,8 @@ prop_editNonexistentFile = property $ do
 
 -- | Property: bash tool with invalid command returns error
 prop_bashInvalidCommand :: Property
-prop_bashInvalidCommand = property $ do
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+prop_bashInvalidCommand = propertyWithTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let input =
                 object
                     [ "command" .= ("nonexistent_command_xyz123" :: Text)
@@ -412,8 +409,8 @@ prop_bashInvalidCommand = property $ do
 
 -- | Property: glob tool returns empty for nonexistent pattern
 prop_globEmptyForNonexistent :: Property
-prop_globEmptyForNonexistent = property $ do
-    result <- evalIO $ withTempDir $ \tmpDir -> do
+prop_globEmptyForNonexistent = propertyWithTempDir $ \tmpDir -> do
+    result <- evalIO $ do
         let input =
                 object
                     [ "pattern" .= ("**/*.nonexistent_extension_xyz" :: Text)

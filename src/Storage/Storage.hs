@@ -7,6 +7,7 @@ module Storage.Storage (
     read,
     readMaybe,
     write,
+    writeAtomic,
     update,
     remove,
     list,
@@ -82,9 +83,23 @@ readMaybe cfg key =
     )
         `catch` \(StorageDecodeError _ _) -> pure Nothing
 
--- | Write a JSON value to storage using atomic write (temp file + rename)
+{- | Write a JSON value to storage
+Uses direct write for performance. For crash-safe atomic writes,
+use writeAtomic instead.
+-}
 write :: (ToJSON a) => StorageConfig -> [Text] -> a -> IO ()
 write cfg key content = do
+    let target = keyPath cfg key
+        dir = takeDirectory target
+        encoded = encode content
+    createDirectoryIfMissing True dir
+    BL.writeFile target encoded
+
+{- | Write a JSON value to storage using atomic write (temp file + rename)
+This ensures the file is never partially written, but has more overhead.
+-}
+writeAtomic :: (ToJSON a) => StorageConfig -> [Text] -> a -> IO ()
+writeAtomic cfg key content = do
     let target = keyPath cfg key
         dir = takeDirectory target
         encoded = encode content

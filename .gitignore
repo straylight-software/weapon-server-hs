@@ -3,3 +3,4 @@ dist-newstyle
 .opencode-test
 result
 .hie
+*.prof

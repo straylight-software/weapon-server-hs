@@ -91,62 +91,97 @@ formattersFor cfg = case CT.cfgFormatter cfg of
         Just cmd -> not (null cmd)
         Nothing -> False
 
+{- | Base formatters list - defined at top level for sharing
+Uses NOINLINE to ensure the list is shared as a CAF
+-}
 baseFormatters :: [FormatterInfo]
 baseFormatters =
-    [ FormatterInfo "gofmt" [".go"] (hasExecutable "gofmt")
-    , FormatterInfo "mix" [".ex", ".exs", ".eex", ".heex", ".leex", ".neex", ".sface"] (hasExecutable "mix")
+    [ FormatterInfo "gofmt" goExtensions (hasExecutable "gofmt")
+    , FormatterInfo "mix" mixExtensions (hasExecutable "mix")
     , FormatterInfo "prettier" prettierExtensions (hasExecutable "prettier")
-    , FormatterInfo "oxfmt" [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"] (hasExecutable "oxfmt")
+    , FormatterInfo "oxfmt" jsExtensions (hasExecutable "oxfmt")
     , FormatterInfo "biome" prettierExtensions (hasExecutable "biome")
-    , FormatterInfo "zig" [".zig", ".zon"] (hasExecutable "zig")
+    , FormatterInfo "zig" zigExtensions (hasExecutable "zig")
     , FormatterInfo "clang-format" clangExtensions (hasExecutable "clang-format")
-    , FormatterInfo "ktlint" [".kt", ".kts"] (hasExecutable "ktlint")
-    , FormatterInfo "ruff" [".py", ".pyi"] (hasExecutable "ruff")
+    , FormatterInfo "ktlint" kotlinExtensions (hasExecutable "ktlint")
+    , FormatterInfo "ruff" pythonExtensions (hasExecutable "ruff")
     ]
-  where
-    prettierExtensions =
-        [ ".js"
-        , ".jsx"
-        , ".mjs"
-        , ".cjs"
-        , ".ts"
-        , ".tsx"
-        , ".mts"
-        , ".cts"
-        , ".html"
-        , ".htm"
-        , ".css"
-        , ".scss"
-        , ".sass"
-        , ".less"
-        , ".vue"
-        , ".svelte"
-        , ".json"
-        , ".jsonc"
-        , ".yaml"
-        , ".yml"
-        , ".toml"
-        , ".xml"
-        , ".md"
-        , ".mdx"
-        , ".graphql"
-        , ".gql"
-        ]
-    clangExtensions =
-        [ ".c"
-        , ".cc"
-        , ".cpp"
-        , ".cxx"
-        , ".c++"
-        , ".h"
-        , ".hh"
-        , ".hpp"
-        , ".hxx"
-        , ".h++"
-        , ".ino"
-        , ".C"
-        , ".H"
-        ]
+{-# NOINLINE baseFormatters #-}
 
+-- Extension lists as top-level CAFs for sharing
+goExtensions :: [Text]
+goExtensions = [".go"]
+{-# NOINLINE goExtensions #-}
+
+mixExtensions :: [Text]
+mixExtensions = [".ex", ".exs", ".eex", ".heex", ".leex", ".neex", ".sface"]
+{-# NOINLINE mixExtensions #-}
+
+jsExtensions :: [Text]
+jsExtensions = [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]
+{-# NOINLINE jsExtensions #-}
+
+zigExtensions :: [Text]
+zigExtensions = [".zig", ".zon"]
+{-# NOINLINE zigExtensions #-}
+
+kotlinExtensions :: [Text]
+kotlinExtensions = [".kt", ".kts"]
+{-# NOINLINE kotlinExtensions #-}
+
+pythonExtensions :: [Text]
+pythonExtensions = [".py", ".pyi"]
+{-# NOINLINE pythonExtensions #-}
+
+prettierExtensions :: [Text]
+prettierExtensions =
+    [ ".js"
+    , ".jsx"
+    , ".mjs"
+    , ".cjs"
+    , ".ts"
+    , ".tsx"
+    , ".mts"
+    , ".cts"
+    , ".html"
+    , ".htm"
+    , ".css"
+    , ".scss"
+    , ".sass"
+    , ".less"
+    , ".vue"
+    , ".svelte"
+    , ".json"
+    , ".jsonc"
+    , ".yaml"
+    , ".yml"
+    , ".toml"
+    , ".xml"
+    , ".md"
+    , ".mdx"
+    , ".graphql"
+    , ".gql"
+    ]
+{-# NOINLINE prettierExtensions #-}
+
+clangExtensions :: [Text]
+clangExtensions =
+    [ ".c"
+    , ".cc"
+    , ".cpp"
+    , ".cxx"
+    , ".c++"
+    , ".h"
+    , ".hh"
+    , ".hpp"
+    , ".hxx"
+    , ".h++"
+    , ".ino"
+    , ".C"
+    , ".H"
+    ]
+{-# NOINLINE clangExtensions #-}
+
+-- | Check if an executable exists
 hasExecutable :: String -> FilePath -> IO Bool
 hasExecutable exe _ = isJust <$> findExecutable exe
