@@ -8,7 +8,7 @@
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
+    inputs@{ flake-parts, self, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -21,8 +21,18 @@
         ./nix/formatter.nix
       ];
 
+      flake = {
+        nixosModules.default = import ./nix/module.nix;
+        nixosModules.weapon-server = import ./nix/module.nix;
+      };
+
       perSystem =
-        { pkgs, inputs', ... }:
+        {
+          pkgs,
+          inputs',
+          system,
+          ...
+        }:
         let
           hsPkgs = pkgs.haskellPackages.override {
             overrides = self: _super: {
