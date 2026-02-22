@@ -24,6 +24,7 @@
   network,
   openapi3,
   posix-pty,
+  primitive,
   process,
   random,
   regex-pcre,
@@ -42,6 +43,8 @@
   unix,
   unliftio-core,
   unordered-containers,
+  vault,
+  vector,
   wai,
   wai-extra,
   wai-websockets,
@@ -73,6 +76,7 @@ mkDerivation {
     mtl
     network
     posix-pty
+    primitive
     process
     random
     servant
@@ -83,11 +87,14 @@ mkDerivation {
     tls
     unix
     unliftio-core
+    vault
+    vector
     wai
     wai-websockets
     warp
     websockets
   ];
+  librarySystemDepends = [ pkgs.liburing ];
   executableHaskellDepends = [
     aeson
     base
