@@ -4,6 +4,7 @@
 module Property.ToolTypesProps where
 
 import Data.Aeson (decode, encode)
+import Data.List qualified as List
 import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -25,7 +26,10 @@ genNonEmptyText = Gen.text (Range.linear 1 100) Gen.alphaNum
 genFilePath :: Gen Text
 genFilePath = do
     segments <- Gen.list (Range.linear 1 5) (Gen.text (Range.linear 1 20) Gen.alphaNum)
-    pure $ "/" <> mconcat (map (<> "/") (init segments)) <> last segments
+    pure $ case List.unsnoc segments of
+        Nothing -> "/" -- Should not happen with Range.linear 1 5
+        Just ([], lastSeg) -> "/" <> lastSeg
+        Just (initSegs, lastSeg) -> "/" <> mconcat (map (<> "/") initSegs) <> lastSeg
 
 genToolID :: Gen ToolID
 genToolID =

@@ -4,6 +4,7 @@
 module Property.SandboxTypesProps where
 
 import Data.Aeson (decode, encode)
+import Data.List qualified as List
 import Data.Text (Text)
 import Data.Word ()
 import Hedgehog
@@ -23,7 +24,10 @@ genText = Gen.text (Range.linear 0 100) Gen.alphaNum
 genFilePath :: Gen FilePath
 genFilePath = do
     segments <- Gen.list (Range.linear 1 5) (Gen.list (Range.linear 1 20) Gen.alphaNum)
-    pure $ "/" <> mconcat (map (<> "/") (init segments)) <> last segments
+    pure $ case List.unsnoc segments of
+        Nothing -> "/" -- Should not happen with Range.linear 1 5
+        Just ([], lastSeg) -> "/" <> lastSeg
+        Just (initSegs, lastSeg) -> "/" <> mconcat (map (<> "/") initSegs) <> lastSeg
 
 genNetworkMode :: Gen NetworkMode
 genNetworkMode = Gen.element [NetworkNone, NetworkHost, NetworkSlirp]

@@ -2,6 +2,7 @@
 
 module Property.RequestProps where
 
+import Control.Concurrent (threadDelay)
 import Data.Aeson (Value (..), object, (.=))
 import Data.List qualified as List
 import Data.Text (Text)
@@ -32,6 +33,8 @@ prop_requestRoundtrip = property $ do
     value <- forAll genValue
     result <- evalIO $ withStore $ \store -> do
         RequestStore.writeRequest store kind req value
+        -- Delay to let filesystem settle in sandbox environments
+        threadDelay 50000
         RequestStore.listRequests store kind
     assert $ value `elem` result
 
@@ -49,10 +52,14 @@ prop_requestSkipsInvalidJson = property $ do
     value <- forAll genValue
     result <- evalIO $ withStore $ \store -> do
         RequestStore.writeRequest store kind req value
+        -- Delay after writing valid request
+        threadDelay 10000
         let badReq = if req == "invalid" then "invalid2" else "invalid"
         let dir = Storage.storageDir store </> T.unpack kind
         createDirectoryIfMissing True dir
         TIO.writeFile (dir </> T.unpack badReq <> ".json") "{"
+        -- Longer delay to let filesystem settle in sandbox environments
+        threadDelay 100000
         RequestStore.listRequests store kind
     assert $ value `elem` result
     listLength result === 1

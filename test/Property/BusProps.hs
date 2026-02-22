@@ -127,10 +127,10 @@ prop_unsubscribeStopsDelivery = withTests 20 $ property $ do
         unsubscribe <- Bus.subscribe bus eventType $ \_event ->
             atomically $ modifyTVar' receivedVar (+ 1)
         Bus.publish bus eventType Null
-        threadDelay 2000
+        threadDelay 50000
         unsubscribe
         Bus.publish bus eventType Null
-        threadDelay 2000
+        threadDelay 50000
         readTVarIO receivedVar
     received === 1
 

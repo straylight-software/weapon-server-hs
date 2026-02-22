@@ -17,124 +17,124 @@ import Test.Tasty.Hedgehog
 
 prop_promptAsyncKey :: Property
 prop_promptAsyncKey = property $ do
-  sid <- forAll genNonEmptyText
-  reqId <- forAll genNonEmptyText
-  PromptAsync.promptAsyncKey sid reqId === ["prompt_async", sid, reqId]
+    sid <- forAll genNonEmptyText
+    reqId <- forAll genNonEmptyText
+    PromptAsync.promptAsyncKey sid reqId === ["prompt_async", sid, reqId]
 
 prop_queuedPayloadFields :: Property
 prop_queuedPayloadFields = property $ do
-  sid <- forAll genNonEmptyText
-  reqId <- forAll genNonEmptyText
-  parts <- forAll $ Gen.list (Range.linear 0 5) genPart
-  let payload = PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing parts Nothing Nothing)
-  case payload of
-    Object obj -> do
-      lookupText "requestID" obj === Just reqId
-      lookupText "sessionID" obj === Just sid
-      lookupText "status" obj === Just "queued"
-    _otherValue -> failure
+    sid <- forAll genNonEmptyText
+    reqId <- forAll genNonEmptyText
+    parts <- forAll $ Gen.list (Range.linear 0 5) genPart
+    let payload = PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing parts Nothing Nothing)
+    case payload of
+        Object obj -> do
+            lookupText "requestID" obj === Just reqId
+            lookupText "sessionID" obj === Just sid
+            lookupText "status" obj === Just "queued"
+        _otherValue -> failure
 
 prop_completedPayloadIncludesMessage :: Property
 prop_completedPayloadIncludesMessage = property $ do
-  sid <- forAll genNonEmptyText
-  reqId <- forAll genNonEmptyText
-  msgId <- forAll genNonEmptyText
-  let payload = PromptAsync.completedPayload sid reqId msgId
-  case payload of
-    Object obj -> do
-      lookupText "requestID" obj === Just reqId
-      lookupText "sessionID" obj === Just sid
-      lookupText "status" obj === Just "completed"
-      lookupText "messageID" obj === Just msgId
-    _otherValue -> failure
+    sid <- forAll genNonEmptyText
+    reqId <- forAll genNonEmptyText
+    msgId <- forAll genNonEmptyText
+    let payload = PromptAsync.completedPayload sid reqId msgId
+    case payload of
+        Object obj -> do
+            lookupText "requestID" obj === Just reqId
+            lookupText "sessionID" obj === Just sid
+            lookupText "status" obj === Just "completed"
+            lookupText "messageID" obj === Just msgId
+        _otherValue -> failure
 
 prop_startedPayloadFields :: Property
 prop_startedPayloadFields = property $ do
-  sid <- forAll genNonEmptyText
-  reqId <- forAll genNonEmptyText
-  let payload = PromptAsync.startedPayload sid reqId
-  case payload of
-    Object obj -> do
-      lookupText "requestID" obj === Just reqId
-      lookupText "sessionID" obj === Just sid
-      lookupText "status" obj === Just "started"
-    _otherValue -> failure
+    sid <- forAll genNonEmptyText
+    reqId <- forAll genNonEmptyText
+    let payload = PromptAsync.startedPayload sid reqId
+    case payload of
+        Object obj -> do
+            lookupText "requestID" obj === Just reqId
+            lookupText "sessionID" obj === Just sid
+            lookupText "status" obj === Just "started"
+        _otherValue -> failure
 
 prop_failedPayloadIncludesError :: Property
 prop_failedPayloadIncludesError = property $ do
-  sid <- forAll genNonEmptyText
-  reqId <- forAll genNonEmptyText
-  err <- forAll genNonEmptyText
-  let payload = PromptAsync.failedPayload sid reqId err
-  case payload of
-    Object obj -> do
-      lookupText "requestID" obj === Just reqId
-      lookupText "sessionID" obj === Just sid
-      lookupText "status" obj === Just "failed"
-      lookupText "error" obj === Just err
-    _otherValue -> failure
+    sid <- forAll genNonEmptyText
+    reqId <- forAll genNonEmptyText
+    err <- forAll genNonEmptyText
+    let payload = PromptAsync.failedPayload sid reqId err
+    case payload of
+        Object obj -> do
+            lookupText "requestID" obj === Just reqId
+            lookupText "sessionID" obj === Just sid
+            lookupText "status" obj === Just "failed"
+            lookupText "error" obj === Just err
+        _otherValue -> failure
 
 prop_statusValuesValid :: Property
 prop_statusValuesValid = property $ do
-  sid <- forAll genNonEmptyText
-  reqId <- forAll genNonEmptyText
-  msgId <- forAll genNonEmptyText
-  err <- forAll genNonEmptyText
-  let payloads =
-        [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing [] Nothing Nothing),
-          PromptAsync.startedPayload sid reqId,
-          PromptAsync.completedPayload sid reqId msgId,
-          PromptAsync.failedPayload sid reqId err
-        ]
-  let statuses = map extractStatus payloads
-  assert $ all (\s -> s `elem` ["queued", "started", "completed", "failed"]) statuses
+    sid <- forAll genNonEmptyText
+    reqId <- forAll genNonEmptyText
+    msgId <- forAll genNonEmptyText
+    err <- forAll genNonEmptyText
+    let payloads =
+            [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing [] Nothing Nothing)
+            , PromptAsync.startedPayload sid reqId
+            , PromptAsync.completedPayload sid reqId msgId
+            , PromptAsync.failedPayload sid reqId err
+            ]
+    let statuses = map extractStatus payloads
+    assert $ all (\s -> s `elem` ["queued", "started", "completed", "failed"]) statuses
   where
     extractStatus = promptStatus
 
 prop_lifecycleOrder :: Property
 prop_lifecycleOrder = property $ do
-  sid <- forAll genNonEmptyText
-  reqId <- forAll genNonEmptyText
-  msgId <- forAll genNonEmptyText
-  let payloads =
-        [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing [] Nothing Nothing),
-          PromptAsync.startedPayload sid reqId,
-          PromptAsync.completedPayload sid reqId msgId
-        ]
-  let statuses = map promptStatus payloads
-  statuses === ["queued", "started", "completed"]
+    sid <- forAll genNonEmptyText
+    reqId <- forAll genNonEmptyText
+    msgId <- forAll genNonEmptyText
+    let payloads =
+            [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing [] Nothing Nothing)
+            , PromptAsync.startedPayload sid reqId
+            , PromptAsync.completedPayload sid reqId msgId
+            ]
+    let statuses = map promptStatus payloads
+    statuses === ["queued", "started", "completed"]
 
 promptStatus :: Value -> Text
 promptStatus payload = case payload of
-  Object obj -> fromMaybe "" (lookupText "status" obj)
-  _otherValue -> ""
+    Object obj -> fromMaybe "" (lookupText "status" obj)
+    _otherValue -> ""
 
 lookupText :: Text -> KM.KeyMap Value -> Maybe Text
 lookupText key obj = case KM.lookup (Key.fromText key) obj of
-  Just (String txt) -> Just txt
-  Just _otherValue -> Nothing
-  Nothing -> Nothing
+    Just (String txt) -> Just txt
+    Just _otherValue -> Nothing
+    Nothing -> Nothing
 
 genPart :: Gen Value
 genPart = do
-  content <- Gen.text (Range.linear 0 20) Gen.alphaNum
-  Gen.element
-    [ object ["type" .= ("text" :: Text), "text" .= content],
-      object ["type" .= ("code" :: Text), "code" .= content]
-    ]
+    content <- Gen.text (Range.linear 0 20) Gen.alphaNum
+    Gen.element
+        [ object ["type" .= ("text" :: Text), "text" .= content]
+        , object ["type" .= ("code" :: Text), "code" .= content]
+        ]
 
 genNonEmptyText :: Gen Text
 genNonEmptyText = Gen.text (Range.linear 1 30) Gen.alphaNum
 
 tests :: TestTree
 tests =
-  testGroup
-    "Prompt Async Property Tests"
-    [ testProperty "key includes session/request" prop_promptAsyncKey,
-      testProperty "queued payload fields" prop_queuedPayloadFields,
-      testProperty "completed payload includes message" prop_completedPayloadIncludesMessage,
-      testProperty "started payload fields" prop_startedPayloadFields,
-      testProperty "failed payload includes error" prop_failedPayloadIncludesError,
-      testProperty "status values valid" prop_statusValuesValid,
-      testProperty "lifecycle order" prop_lifecycleOrder
-    ]
+    testGroup
+        "Prompt Async Property Tests"
+        [ testProperty "key includes session/request" prop_promptAsyncKey
+        , testProperty "queued payload fields" prop_queuedPayloadFields
+        , testProperty "completed payload includes message" prop_completedPayloadIncludesMessage
+        , testProperty "started payload fields" prop_startedPayloadFields
+        , testProperty "failed payload includes error" prop_failedPayloadIncludesError
+        , testProperty "status values valid" prop_statusValuesValid
+        , testProperty "lifecycle order" prop_lifecycleOrder
+        ]

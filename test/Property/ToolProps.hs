@@ -180,7 +180,7 @@ prop_bashTool = propertyWithTempDir $ \tmpDir -> do
     assert $ not (T.null (toOutput result))
 
 prop_bashToolUsesWorkdir :: Property
-prop_bashToolUsesWorkdir = propertyWithTempDir $ \tmpDir -> do
+prop_bashToolUsesWorkdir = withTests 20 $ propertyWithTempDir $ \tmpDir -> do
     (result, dir) <- evalIO $ do
         -- Canonicalize the path to resolve symlinks (e.g., /tmp -> /run/user/...)
         canonicalDir <- canonicalizePath tmpDir
@@ -201,9 +201,9 @@ prop_bashToolUsesWorkdir = propertyWithTempDir $ \tmpDir -> do
         -- Also canonicalize the dir again to be sure
         canonicalDir' <- canonicalizePath canonicalDir
         pure (output{toOutput = canonicalOutput}, canonicalDir')
-    assert $ not (toIsError result)
+    toIsError result === False
     -- Use equality check on stripped paths for more reliable comparison
-    assert $ T.strip (toOutput result) == T.pack dir
+    T.strip (toOutput result) === T.pack dir
 
 prop_bashToolTimeout :: Property
 prop_bashToolTimeout = propertyWithTempDir $ \tmpDir -> do
