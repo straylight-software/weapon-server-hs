@@ -11,6 +11,7 @@ where
 
 import Control.Exception (SomeException, try)
 import Data.Aeson (FromJSON, Value, eitherDecode, encode)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -102,7 +103,7 @@ execWrite ctx WriteInput{..} = do
 execEdit :: ToolContext -> EditInput -> IO ToolOutput
 execEdit ctx EditInput{..} = do
     let path = T.unpack (resolvePath ctx eiFilePath)
-    let replaceAll = maybe False id eiReplaceAll
+    let replaceAll = fromMaybe False eiReplaceAll
 
     result <- try @SomeException $ TIO.readFile path
     case result of

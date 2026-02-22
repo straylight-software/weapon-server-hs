@@ -10,12 +10,19 @@ module Vcs.Diff (
 
 import Control.Exception (Exception, throwIO)
 import Data.Char (isDigit)
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Session.Types qualified as ST
 import System.Directory (findExecutable)
+import Text.Read (readMaybe)
 import Util.Git (runGit)
+
+-- | Parse text as Int, defaulting to 0 for non-numeric values
+readInt :: Text -> Int
+readInt txt
+    | T.all isDigit txt = fromMaybe 0 $ readMaybe (T.unpack txt)
+    | otherwise = 0
 
 -- | Error when git is not available
 data VcsError = GitNotFound
@@ -39,12 +46,6 @@ parseNumstat input =
     toStat fields = case fields of
         (addTxt : delTxt : _) -> (readInt addTxt, readInt delTxt)
         _ -> (0, 0)
-    readInt txt =
-        if T.all isDigit txt
-            then case reads (T.unpack txt) of
-                [(n, "")] -> n
-                _ -> 0
-            else 0
 
 loadDiff :: FilePath -> IO (Maybe (Text, ST.SessionSummary))
 loadDiff root = do
@@ -77,12 +78,6 @@ parseNumstatFiles input =
         (addTxt : delTxt : file : _) ->
             FileDiffInternal file (readInt addTxt) (readInt delTxt)
         _ -> FileDiffInternal "" 0 0
-    readInt txt =
-        if T.all isDigit txt
-            then case reads (T.unpack txt) of
-                [(n, "")] -> n
-                _ -> 0
-            else 0
 
 -- | Load file-level diffs for the session
 loadFileDiffs :: FilePath -> IO [FileDiffInternal]

@@ -38,25 +38,10 @@ import System.Process (StdStream (..), createProcess, proc, std_err, std_out, wa
 import Data.ByteString.Char8 qualified as C8
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as T
+import LLM.Types (Role (..))
 import Network.HTTP.Client qualified as HC
 import Network.HTTP.Client.TLS qualified as HCT
 import Network.HTTP.Types qualified as HT
-
--- | Message role
-data Role = User | Assistant | System
-    deriving (Eq, Show, Generic)
-
-instance ToJSON Role where
-    toJSON User = "user"
-    toJSON Assistant = "assistant"
-    toJSON System = "system"
-
-instance FromJSON Role where
-    parseJSON = withText "Role" $ \case
-        "user" -> pure User
-        "assistant" -> pure Assistant
-        "system" -> pure System
-        _ -> fail "Unknown role"
 
 -- | A chat message (OpenAI format)
 data Message = Message

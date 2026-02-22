@@ -160,7 +160,7 @@ createExecutorForOperation = do
     let req' = rewriteSessionId req
     executeWaiWithTimeout app timeout req'
 
--- | Test configuration for positive tests (10,000 tests)
+-- | Test configuration for positive tests (100 tests)
 positiveConfig :: TestConfig
 positiveConfig =
   defaultTestConfig
@@ -169,7 +169,7 @@ positiveConfig =
       tcOperationFilter = operationFilter
     }
 
--- | Test configuration for negative tests (10,000 tests)
+-- | Test configuration for negative tests (100 tests)
 negativeConfig :: TestConfig
 negativeConfig =
   defaultTestConfig

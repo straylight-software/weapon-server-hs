@@ -387,7 +387,7 @@ prop_sessionForkHandler = withTests 20 $ property $ do
         parent <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just title) Nothing))
         forked <- case parent of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionForkHandler st (sesId ses))
+            Right ses -> runHandlerIO (sessionForkHandler st (sesId ses) (ForkSessionInput Nothing))
         pure (parent, forked)
     case result of
         (Left _, _) -> failure

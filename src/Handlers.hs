@@ -128,14 +128,6 @@ module Handlers
 
       -- * Session Helpers
     , sessionContext
-    , toApiSession
-    , toApiSummary
-    , toApiShare
-    , toApiRevert
-    , toInternalSummary
-    , toInternalShare
-    , toInternalRevert
-    , toInternalInput
     ) where
 
 import Agent.Agent qualified as Agent
@@ -205,6 +197,10 @@ import Tui.Store qualified as TuiStore
 import Vcs.Diff qualified as Diff
 import Vcs.Status qualified as VcsStatus
 
+-- | Resolve optional directory, defaulting to app state directory
+resolveDir :: AppState -> Maybe Text -> FilePath
+resolveDir st mDir = maybe (unpack (stDirectory st)) unpack mDir
+
 -- Helper to resolve paths
 resolvePath :: Maybe Text -> Text -> IO FilePath
 resolvePath mDir path = do
@@ -227,84 +223,15 @@ sessionContext st =
         , Sess.scVersion = stVersion st
         }
 
--- | Helper for updating a session and returning the API representation
+-- | Helper for updating a session and returning it
 -- Returns 404 if session not found
-withSessionUpdate :: AppState -> Text -> (ST.Session -> ST.Session) -> Handler Session
+withSessionUpdate :: AppState -> Text -> (Session -> Session) -> Handler Session
 withSessionUpdate st sid f = do
     let ctx = sessionContext st
     msession <- liftIO $ Sess.update ctx sid f
     case msession of
         Nothing -> throwError err404
-        Just session -> return $ toApiSession session
-
--- | Convert internal Session to API Session
-toApiSession :: ST.Session -> Session
-toApiSession s =
-    Session
-        { sesId = ST.sessionId s
-        , sesSlug = ST.sessionSlug s
-        , sesProjectId = ST.sessionProjectID s
-        , sesDirectory = ST.sessionDirectory s
-        , sesTitle = ST.sessionTitle s
-        , sesVersion = ST.sessionVersion s
-        , sesTime =
-            SessionTime
-                (ST.stCreated (ST.sessionTime s))
-                (ST.stUpdated (ST.sessionTime s))
-                (ST.stArchived (ST.sessionTime s))
-        , sesParentId = ST.sessionParentID s
-        , sesSummary = toApiSummary <$> ST.sessionSummary s
-        , sesShare = toApiShare <$> ST.sessionShare s
-        , sesRevert = toApiRevert <$> ST.sessionRevert s
-        }
-
-toApiSummary :: ST.SessionSummary -> SessionSummary
-toApiSummary s =
-    SessionSummary
-        { ssAdditions = ST.ssAdditions s
-        , ssDeletions = ST.ssDeletions s
-        , ssFiles = ST.ssFiles s
-        }
-
-toApiShare :: ST.SessionShare -> SessionShare
-toApiShare s = SessionShare{shareUrl = ST.shareUrl s}
-
-toApiRevert :: ST.SessionRevert -> SessionRevert
-toApiRevert r =
-    SessionRevert
-        { srMessageId = ST.revertMessageID r
-        , srPartId = ST.revertPartID r
-        , srSnapshot = ST.revertSnapshot r
-        , srDiff = ST.revertDiff r
-        }
-
-toInternalSummary :: SessionSummary -> ST.SessionSummary
-toInternalSummary s =
-    ST.SessionSummary
-        { ST.ssAdditions = ssAdditions s
-        , ST.ssDeletions = ssDeletions s
-        , ST.ssFiles = ssFiles s
-        }
-
-toInternalShare :: SessionShare -> ST.SessionShare
-toInternalShare s = ST.SessionShare{ST.shareUrl = shareUrl s}
-
-toInternalRevert :: SessionRevert -> ST.SessionRevert
-toInternalRevert r =
-    ST.SessionRevert
-        { ST.revertMessageID = srMessageId r
-        , ST.revertPartID = srPartId r
-        , ST.revertSnapshot = srSnapshot r
-        , ST.revertDiff = srDiff r
-        }
-
--- | Convert API CreateSessionInput to internal
-toInternalInput :: CreateSessionInput -> ST.CreateSessionInput
-toInternalInput csi =
-    ST.CreateSessionInput
-        { ST.csiTitle = csiTitle csi
-        , ST.csiParentID = csiParentId csi
-        }
+        Just session -> return session
 
 -- * Global Handlers
 
@@ -362,8 +289,7 @@ projectListHandler st = liftIO $ do
 
 projectCurrentHandler :: AppState -> Maybe Text -> Handler Project
 projectCurrentHandler st mDir = liftIO $ do
-    let dir = maybe (unpack (stDirectory st)) unpack mDir
-    full <- makeAbsolute dir
+    full <- makeAbsolute (resolveDir st mDir)
     return $ ProjectBuild.projectFromDir full
 
 projectGetHandler :: AppState -> Text -> Handler Project
@@ -539,7 +465,7 @@ agentHandler :: Handler [Value]
 agentHandler = liftIO $ do
     agents <- Agent.list
     -- Filter out hidden agents
-    let visible = filter (not . maybe False Prelude.id . AT.agentHidden) agents
+    let visible = filter (not . fromMaybe False . AT.agentHidden) agents
     return $ map Data.Aeson.toJSON visible
 
 -- * Session Handlers
@@ -554,14 +480,12 @@ sessionStatusHandler _st _mDir = liftIO $ do
 sessionListHandler :: AppState -> Maybe Text -> Maybe Bool -> Maybe Int -> Maybe Int -> Maybe Text -> Handler [Session]
 sessionListHandler st _mDir mRoots mLimit mStart mSearch = liftIO $ do
     let ctx = sessionContext st
-    sessions <- Sess.list ctx mRoots mLimit mStart mSearch
-    return $ map toApiSession sessions
+    Sess.list ctx mRoots mLimit mStart mSearch
 
 sessionCreateHandler :: AppState -> Maybe Text -> CreateSessionInput -> Handler Session
 sessionCreateHandler st _mDir input = liftIO $ do
     let ctx = sessionContext st
-    session <- Sess.create ctx (toInternalInput input)
-    return $ toApiSession session
+    Sess.create ctx input
 
 sessionGetHandler :: AppState -> Text -> Handler Session
 sessionGetHandler st sid = do
@@ -569,7 +493,7 @@ sessionGetHandler st sid = do
     msession <- liftIO $ Sess.get ctx sid
     case msession of
         Nothing -> throwError err404
-        Just session -> return $ toApiSession session
+        Just session -> return session
 
 sessionDeleteHandler :: AppState -> Text -> Handler Bool
 sessionDeleteHandler st sid = liftIO $ do
@@ -582,29 +506,28 @@ sessionUpdateHandler st sid input = withSessionUpdate st sid (applyUpdate input)
     applyUpdate usi s =
         let title = case usiTitle usi of
                 Just t -> t
-                Nothing -> ST.sessionTitle s
+                Nothing -> sessionTitle s
             summary = case usiSummary usi of
-                Just v -> Just (toInternalSummary v)
-                Nothing -> ST.sessionSummary s
+                Just v -> Just v
+                Nothing -> sessionSummary s
             share = case usiShare usi of
-                Just v -> Just (toInternalShare v)
-                Nothing -> ST.sessionShare s
+                Just v -> Just v
+                Nothing -> sessionShare s
             revert = case usiRevert usi of
-                Just v -> Just (toInternalRevert v)
-                Nothing -> ST.sessionRevert s
+                Just v -> Just v
+                Nothing -> sessionRevert s
          in s
-                { ST.sessionTitle = title
-                , ST.sessionSummary = summary
-                , ST.sessionShare = share
-                , ST.sessionRevert = revert
+                { sessionTitle = title
+                , sessionSummary = summary
+                , sessionShare = share
+                , sessionRevert = revert
                 }
 
 sessionChildrenHandler :: AppState -> Text -> Handler [Session]
 sessionChildrenHandler st sid = liftIO $ do
     let ctx = sessionContext st
     sessions <- Sess.list ctx Nothing Nothing Nothing Nothing
-    let children = filter (\s -> ST.sessionParentID s == Just sid) sessions
-    return $ map toApiSession children
+    return $ filter (\s -> sessionParentID s == Just sid) sessions
 
 sessionTodoHandler :: AppState -> Text -> Handler [Value]
 sessionTodoHandler st sid = liftIO $ do
@@ -617,21 +540,19 @@ sessionInitHandler st sid = liftIO $ do
     Bus.publish (stBus st) "session.initialized" (object ["sessionID" .= sid])
     return True
 
-sessionForkHandler :: AppState -> Text -> Handler Session
-sessionForkHandler st sid = liftIO $ do
+sessionForkHandler :: AppState -> Text -> ForkSessionInput -> Handler Session
+sessionForkHandler st sid _input = liftIO $ do
     let ctx = sessionContext st
     parent <- Sess.get ctx sid
     let title = case parent of
-            Just p -> Just ("Fork of " <> ST.sessionTitle p)
+            Just p -> Just ("Fork of " <> sessionTitle p)
             Nothing -> Just "Forked session"
-    session <-
-        Sess.create
-            ctx
-            ST.CreateSessionInput
-                { ST.csiTitle = title
-                , ST.csiParentID = Just sid
-                }
-    return $ toApiSession session
+    Sess.create
+        ctx
+        CreateSessionInput
+            { csiTitle = title
+            , csiParentID = Just sid
+            }
 
 sessionAbortHandler :: AppState -> Text -> Maybe Text -> Handler Bool
 sessionAbortHandler st sid _mDir = liftIO $ do
@@ -642,11 +563,11 @@ sessionShareCreateHandler :: AppState -> Text -> Handler Session
 sessionShareCreateHandler st sid =
     withSessionUpdate st sid $ \s ->
         let url = "https://share.opencode.ai/session/" <> sid
-         in s{ST.sessionShare = Just (ST.SessionShare url)}
+         in s{sessionShare = Just (SessionShare url)}
 
 sessionShareDeleteHandler :: AppState -> Text -> Handler Session
 sessionShareDeleteHandler st sid =
-    withSessionUpdate st sid $ \s -> s{ST.sessionShare = Nothing}
+    withSessionUpdate st sid $ \s -> s{sessionShare = Nothing}
 
 sessionDiffHandler :: AppState -> Text -> Maybe Text -> Handler [FileDiff]
 sessionDiffHandler st _sid _mMessageID = liftIO $ do
@@ -727,11 +648,11 @@ sessionShellHandler st sid input = liftIO $ do
 
 sessionRevertHandler :: AppState -> Text -> SessionRevert -> Handler Session
 sessionRevertHandler st sid input =
-    withSessionUpdate st sid $ \s -> s{ST.sessionRevert = Just (toInternalRevert input)}
+    withSessionUpdate st sid $ \s -> s{sessionRevert = Just input}
 
 sessionUnrevertHandler :: AppState -> Text -> Handler Session
 sessionUnrevertHandler st sid =
-    withSessionUpdate st sid $ \s -> s{ST.sessionRevert = Nothing}
+    withSessionUpdate st sid $ \s -> s{sessionRevert = Nothing}
 
 sessionPermissionHandler :: AppState -> Text -> Text -> Maybe Text -> Value -> Handler Bool
 sessionPermissionHandler st sid pid _mDir input = liftIO $ do
@@ -759,7 +680,7 @@ createMessageIO st sid input = do
 
     now <- getCurrentTime
     let t = realToFrac (utcTimeToPOSIXSeconds now) * 1000
-    let msgTime = SessionTime t t Nothing
+    let msgTime = SessionTime t t Nothing Nothing
 
     -- Extract user text for logging
     let userText = extractUserText (cmiParts input)
@@ -1144,7 +1065,7 @@ permissionReplyHandler = requestResponseHandler "permission" "reply" "replied" "
 
 findHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Text -> Handler [Value]
 findHandler st mQuery mPattern mDir = liftIO $ do
-    let root = maybe (unpack (stDirectory st)) unpack mDir
+    let root = resolveDir st mDir
     case (mQuery, mPattern) of
         (Just q, _) -> FindSearch.findText root q
         (Nothing, Just p) -> FindSearch.findText root p
@@ -1152,7 +1073,7 @@ findHandler st mQuery mPattern mDir = liftIO $ do
 
 findFileHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Bool -> Maybe Text -> Maybe Int -> Handler [Value]
 findFileHandler st mPattern mDir mDirs mType mLimit = liftIO $ do
-    let root = maybe (unpack (stDirectory st)) unpack mDir
+    let root = resolveDir st mDir
     let opts = FindSearch.FindFileOptions
             { FindSearch.ffoIncludeDirs = fromMaybe False mDirs
             , FindSearch.ffoFileType = mType
@@ -1164,14 +1085,14 @@ findFileHandler st mPattern mDir mDirs mType mLimit = liftIO $ do
 
 findSymbolHandler :: AppState -> Maybe Text -> Maybe Text -> Handler [Value]
 findSymbolHandler st mQuery mDir = liftIO $ do
-    let root = maybe (unpack (stDirectory st)) unpack mDir
+    let root = resolveDir st mDir
     case mQuery of
         Nothing -> pure []
         Just q -> FindSearch.findSymbol root q
 
 fileStatusHandler :: AppState -> Maybe Text -> Maybe Text -> Handler [Value]
 fileStatusHandler st mDir mPath = liftIO $ do
-    let base = maybe (unpack (stDirectory st)) unpack mDir
+    let base = resolveDir st mDir
     statuses <- VcsStatus.loadStatus base
     case mPath of
         Nothing -> return $ map Data.Aeson.toJSON statuses
@@ -1263,14 +1184,10 @@ logHandler st _mDir input = liftIO $ do
     return True
 
 skillHandler :: AppState -> Maybe Text -> Handler [Skill.SkillInfo]
-skillHandler st mDir = liftIO $ do
-    let dir = maybe (unpack (stDirectory st)) unpack mDir
-    Skill.listSkills dir
+skillHandler st mDir = liftIO $ Skill.listSkills (resolveDir st mDir)
 
 formatterHandler :: AppState -> Maybe Text -> Handler [Formatter.FormatterStatus]
-formatterHandler st mDir = liftIO $ do
-    let dir = maybe (unpack (stDirectory st)) unpack mDir
-    Formatter.statusFor dir
+formatterHandler st mDir = liftIO $ Formatter.statusFor (resolveDir st mDir)
 
 experimentalToolIdsHandler :: Handler [Text]
 experimentalToolIdsHandler = return $ map ToolT.tdName Tool.allTools

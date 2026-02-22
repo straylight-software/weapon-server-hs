@@ -13,14 +13,17 @@
 {-# LANGUAGE TypeOperators #-}
 
 module Api.Session
-    ( -- * Session Types
-      SessionTime (..)
+    ( -- * Session Types (re-exported from Session.Types)
+      Session (..)
+    , SessionTime (..)
     , SessionSummary (..)
     , SessionShare (..)
     , SessionRevert (..)
-    , Session (..)
-    , UpdateSessionInput (..)
     , CreateSessionInput (..)
+
+      -- * API-specific Types
+    , UpdateSessionInput (..)
+    , ForkSessionInput (..)
     , FileDiff (..)
     , FileDiffStatus (..)
 
@@ -52,59 +55,15 @@ import Data.Text (Text)
 import GHC.Generics
 import Servant
 
-
--- ═══════════════════════════════════════════════════════════════════════════
--- // session time //
--- ═══════════════════════════════════════════════════════════════════════════
-
-data SessionTime = SessionTime
-    { stCreated :: Double
-    , stUpdated :: Double
-    , stArchived :: Maybe Double
-    }
-    deriving (Eq, Show, Generic)
-
-instance ToJSON SessionTime where
-    toJSON sessionTime =
-        object
-            [ "created" .= stCreated sessionTime
-            , "updated" .= stUpdated sessionTime
-            , "archived" .= stArchived sessionTime
-            ]
-
-instance FromJSON SessionTime where
-    parseJSON = withObject "SessionTime" $ \v ->
-        SessionTime
-            <$> v .: "created"
-            <*> v .: "updated"
-            <*> v .:? "archived"
-
-
--- ═══════════════════════════════════════════════════════════════════════════
--- // session summary //
--- ═══════════════════════════════════════════════════════════════════════════
-
-data SessionSummary = SessionSummary
-    { ssAdditions :: Int
-    , ssDeletions :: Int
-    , ssFiles :: Maybe Int
-    }
-    deriving (Eq, Show, Generic)
-
-instance ToJSON SessionSummary where
-    toJSON summary =
-        object
-            [ "additions" .= ssAdditions summary
-            , "deletions" .= ssDeletions summary
-            , "files" .= ssFiles summary
-            ]
-
-instance FromJSON SessionSummary where
-    parseJSON = withObject "SessionSummary" $ \v ->
-        SessionSummary
-            <$> v .: "additions"
-            <*> v .: "deletions"
-            <*> v .:? "files"
+-- Re-export canonical session types from Session.Types
+import Session.Types
+    ( Session (..)
+    , SessionTime (..)
+    , SessionSummary (..)
+    , SessionShare (..)
+    , SessionRevert (..)
+    , CreateSessionInput (..)
+    )
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -159,105 +118,6 @@ instance FromJSON FileDiff where
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- // session share //
--- ═══════════════════════════════════════════════════════════════════════════
-
-newtype SessionShare = SessionShare
-    { shareUrl :: Text
-    }
-    deriving (Eq, Show, Generic)
-
-instance ToJSON SessionShare where
-    toJSON share = object ["url" .= shareUrl share]
-
-instance FromJSON SessionShare where
-    parseJSON = withObject "SessionShare" $ \v ->
-        SessionShare
-            <$> v .: "url"
-
-
--- ═══════════════════════════════════════════════════════════════════════════
--- // session revert //
--- ═══════════════════════════════════════════════════════════════════════════
-
-data SessionRevert = SessionRevert
-    { srMessageId :: Text
-    , srPartId :: Maybe Text
-    , srSnapshot :: Maybe Text
-    , srDiff :: Maybe Text
-    }
-    deriving (Eq, Show, Generic)
-
-instance ToJSON SessionRevert where
-    toJSON revert =
-        object
-            [ "messageID" .= srMessageId revert
-            , "partID" .= srPartId revert
-            , "snapshot" .= srSnapshot revert
-            , "diff" .= srDiff revert
-            ]
-
-instance FromJSON SessionRevert where
-    parseJSON = withObject "SessionRevert" $ \v ->
-        SessionRevert
-            <$> v .: "messageID"
-            <*> v .:? "partID"
-            <*> v .:? "snapshot"
-            <*> v .:? "diff"
-
-
--- ═══════════════════════════════════════════════════════════════════════════
--- // session //
--- ═══════════════════════════════════════════════════════════════════════════
-
-data Session = Session
-    { sesId :: Text
-    , sesSlug :: Text
-    , sesProjectId :: Text
-    , sesDirectory :: Text
-    , sesTitle :: Text
-    , sesVersion :: Text
-    , sesTime :: SessionTime
-    , sesParentId :: Maybe Text
-    , sesSummary :: Maybe SessionSummary
-    , sesShare :: Maybe SessionShare
-    , sesRevert :: Maybe SessionRevert
-    }
-    deriving (Eq, Show, Generic)
-
-instance ToJSON Session where
-    toJSON session =
-        object
-            [ "id" .= sesId session
-            , "slug" .= sesSlug session
-            , "projectID" .= sesProjectId session
-            , "directory" .= sesDirectory session
-            , "title" .= sesTitle session
-            , "version" .= sesVersion session
-            , "time" .= sesTime session
-            , "parentID" .= sesParentId session
-            , "summary" .= sesSummary session
-            , "share" .= sesShare session
-            , "revert" .= sesRevert session
-            ]
-
-instance FromJSON Session where
-    parseJSON = withObject "Session" $ \v ->
-        Session
-            <$> v .: "id"
-            <*> v .: "slug"
-            <*> v .: "projectID"
-            <*> v .: "directory"
-            <*> v .: "title"
-            <*> v .: "version"
-            <*> v .: "time"
-            <*> v .:? "parentID"
-            <*> v .:? "summary"
-            <*> v .:? "share"
-            <*> v .:? "revert"
-
-
--- ═══════════════════════════════════════════════════════════════════════════
 -- // session input //
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -284,25 +144,6 @@ instance ToJSON UpdateSessionInput where
             , "summary" .= usiSummary input
             , "share" .= usiShare input
             , "revert" .= usiRevert input
-            ]
-
-data CreateSessionInput = CreateSessionInput
-    { csiTitle :: Maybe Text
-    , csiParentId :: Maybe Text
-    }
-    deriving (Eq, Show, Generic)
-
-instance FromJSON CreateSessionInput where
-    parseJSON = withObject "CreateSessionInput" $ \v ->
-        CreateSessionInput
-            <$> v .:? "title"
-            <*> v .:? "parentID"
-
-instance ToJSON CreateSessionInput where
-    toJSON input =
-        object
-            [ "title" .= csiTitle input
-            , "parentID" .= csiParentId input
             ]
 
 
@@ -346,8 +187,21 @@ type SessionTodoAPI =
 type SessionInitAPI =
     "session" :> Capture "sessionID" Text :> "init" :> Post '[JSON] Bool
 
+-- | Input for forking a session
+data ForkSessionInput = ForkSessionInput
+    { fsiMessageId :: Maybe Text
+    }
+    deriving (Eq, Show, Generic)
+
+instance FromJSON ForkSessionInput where
+    parseJSON = withObject "ForkSessionInput" $ \v ->
+        ForkSessionInput <$> v .:? "messageID"
+
+instance ToJSON ForkSessionInput where
+    toJSON fsi = object ["messageID" .= fsiMessageId fsi]
+
 type SessionForkAPI =
-    "session" :> Capture "sessionID" Text :> "fork" :> Post '[JSON] Session
+    "session" :> Capture "sessionID" Text :> "fork" :> ReqBody '[JSON] ForkSessionInput :> Post '[JSON] Session
 
 type SessionAbortAPI =
     "session" :> Capture "sessionID" Text :> "abort" :> QueryParam "directory" Text :> Post '[JSON] Bool
