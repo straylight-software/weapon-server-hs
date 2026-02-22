@@ -32,14 +32,15 @@ prop_supplyEmptyBodyPost = property $ do
             body <- strictRequestBody req
             writeIORef bodyRef True
             respond $ responseLBS status200 [] body
-    
+
     -- Apply middleware and run
     result <- evalIO $ do
-        let req = defaultRequest
-                { requestMethod = methodPost
-                , requestBodyLength = KnownLength 0
-                , requestHeaders = []
-                }
+        let req =
+                defaultRequest
+                    { requestMethod = methodPost
+                    , requestBodyLength = KnownLength 0
+                    , requestHeaders = []
+                    }
         responseRef <- newEmptyMVar
         let respond resp = do
                 body <- extractBody resp
@@ -47,7 +48,7 @@ prop_supplyEmptyBodyPost = property $ do
                 pure ResponseReceived
         _ <- supplyEmptyBody captureApp req respond
         takeMVar responseRef
-    
+
     -- The body should be "{}"
     result === "{}"
 
@@ -56,7 +57,7 @@ prop_supplyEmptyBodyWithBody :: Property
 prop_supplyEmptyBodyWithBody = property $ do
     -- Generate some body content
     bodyContent <- forAll $ Gen.utf8 (Range.linear 1 100) Gen.alphaNum
-    
+
     result <- evalIO $ do
         bodyReadRef <- newIORef False
         let bodyChunks = do
@@ -69,13 +70,14 @@ prop_supplyEmptyBodyWithBody = property $ do
         let captureApp req respond = do
                 body <- strictRequestBody req
                 respond $ responseLBS status200 [] body
-        let reqBase = defaultRequest
-                { requestMethod = methodPost
-                , requestBodyLength = KnownLength (fromIntegral $ BS.length bodyContent)
-                , requestHeaders = [(hContentType, "application/json")]
-                }
+        let reqBase =
+                defaultRequest
+                    { requestMethod = methodPost
+                    , requestBodyLength = KnownLength (fromIntegral $ BS.length bodyContent)
+                    , requestHeaders = [(hContentType, "application/json")]
+                    }
         let req = setRequestBodyChunks bodyChunks reqBase
-        
+
         responseRef <- newEmptyMVar
         let respond resp = do
                 body <- extractBody resp
@@ -83,7 +85,7 @@ prop_supplyEmptyBodyWithBody = property $ do
                 pure ResponseReceived
         _ <- supplyEmptyBody captureApp req respond
         takeMVar responseRef
-    
+
     -- The body should be unchanged
     result === LBS.fromStrict bodyContent
 
@@ -94,13 +96,14 @@ prop_supplyEmptyBodyGet = property $ do
         let captureApp req respond = do
                 body <- strictRequestBody req
                 respond $ responseLBS status200 [] body
-        
-        let req = defaultRequest
-                { requestMethod = methodGet
-                , requestBodyLength = KnownLength 0
-                , requestHeaders = []
-                }
-        
+
+        let req =
+                defaultRequest
+                    { requestMethod = methodGet
+                    , requestBodyLength = KnownLength 0
+                    , requestHeaders = []
+                    }
+
         responseRef <- newEmptyMVar
         let respond resp = do
                 body <- extractBody resp
@@ -108,7 +111,7 @@ prop_supplyEmptyBodyGet = property $ do
                 pure ResponseReceived
         _ <- supplyEmptyBody captureApp req respond
         takeMVar responseRef
-    
+
     -- GET with no body should remain empty (middleware only applies to POST/PUT/PATCH/DELETE)
     result === ""
 
@@ -119,13 +122,14 @@ prop_supplyEmptyBodyDelete = property $ do
         let captureApp req respond = do
                 body <- strictRequestBody req
                 respond $ responseLBS status200 [] body
-        
-        let req = defaultRequest
-                { requestMethod = methodDelete
-                , requestBodyLength = KnownLength 0
-                , requestHeaders = []
-                }
-        
+
+        let req =
+                defaultRequest
+                    { requestMethod = methodDelete
+                    , requestBodyLength = KnownLength 0
+                    , requestHeaders = []
+                    }
+
         responseRef <- newEmptyMVar
         let respond resp = do
                 body <- extractBody resp
@@ -133,7 +137,7 @@ prop_supplyEmptyBodyDelete = property $ do
                 pure ResponseReceived
         _ <- supplyEmptyBody captureApp req respond
         takeMVar responseRef
-    
+
     result === "{}"
 
 -- ═══════════════════════════════════════════════════════════════════════════

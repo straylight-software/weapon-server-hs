@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module Pty.Parse (
     parseInput,
 ) where

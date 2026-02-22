@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Bus property tests
@@ -37,7 +38,7 @@ prop_publishSubscribe = withTests 20 $ property $ do
         -- Wait for all events to be processed
         threadDelay 2000
 
-        atomically $ readTVar receivedVar
+        readTVarIO receivedVar
 
     -- All events should have been received
     length received === eventCount
@@ -61,7 +62,7 @@ prop_subscribeAll = withTests 20 $ property $ do
         mapM_ (\et -> Bus.publish bus et Null) eventTypes
 
         threadDelay 5000
-        atomically $ readTVar receivedVar
+        readTVarIO receivedVar
 
     -- Should receive all events
     length received === length eventTypes
@@ -90,10 +91,10 @@ prop_multipleSubscribers = withTests 20 $ property $ do
 
     -- All subscribers should have received the event
     all (\r -> length r == 1) results === True
-    all (\r -> case r of [x] -> x == eventType; _ -> False) results === True
+    all (\case [x] -> x == eventType; _ -> False) results === True
   where
     waitForAll vars attempts = do
-        results <- mapM (atomically . readTVar) vars
+        results <- mapM readTVarIO vars
         if all (\r -> length r == 1) results
             then pure results
             else do
@@ -113,7 +114,7 @@ prop_subscribeAllOrder = withTests 20 $ property $ do
             atomically $ modifyTVar' receivedVar (Bus.beType event :)
         mapM_ (\et -> Bus.publish bus et Null) eventTypes
         threadDelay 5000
-        atomically $ readTVar receivedVar
+        readTVarIO receivedVar
     reverse received === eventTypes
 
 prop_unsubscribeStopsDelivery :: Property
@@ -129,7 +130,7 @@ prop_unsubscribeStopsDelivery = withTests 20 $ property $ do
         unsubscribe
         Bus.publish bus eventType Null
         threadDelay 2000
-        atomically $ readTVar receivedVar
+        readTVarIO receivedVar
     received === 1
 
 -- Generators

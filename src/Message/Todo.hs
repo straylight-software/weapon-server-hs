@@ -9,7 +9,7 @@ import Data.Aeson.KeyMap qualified as KM
 import Data.Foldable (toList)
 
 extractTodos :: [Value] -> [Value]
-extractTodos parts = concatMap extract parts
+extractTodos = concatMap extract
   where
     extract (Object obj) = case KM.lookup "type" obj of
         Just (String "todo") -> case KM.lookup "items" obj of

@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -28,6 +27,7 @@ module Log (
 ) where
 
 import Control.Exception (bracket)
+import Control.Monad (void)
 import Data.Text (Text)
 import Katip hiding (logMsg)
 import System.IO (stdout)
@@ -60,7 +60,7 @@ newLoggerWithLevel appName level = do
 
 -- | Close the logger
 closeLogger :: Logger -> IO ()
-closeLogger lg = closeScribes (lgEnv lg) >> pure ()
+closeLogger lg = void (closeScribes (lgEnv lg))
 
 -- | Bracket for logger lifecycle
 withLogger :: Text -> (Logger -> IO a) -> IO a
@@ -72,19 +72,19 @@ withLoggerLevel appName level = bracket (newLoggerWithLevel appName level) close
 
 -- | Log at INFO level with payload
 logInfo :: (LogItem a) => Logger -> Text -> a -> IO ()
-logInfo lg msg payload = runLog lg InfoS msg payload
+logInfo lg = runLog lg InfoS
 
 -- | Log at WARNING level with payload
 logWarn :: (LogItem a) => Logger -> Text -> a -> IO ()
-logWarn lg msg payload = runLog lg WarningS msg payload
+logWarn lg = runLog lg WarningS
 
 -- | Log at ERROR level with payload
 logError :: (LogItem a) => Logger -> Text -> a -> IO ()
-logError lg msg payload = runLog lg ErrorS msg payload
+logError lg = runLog lg ErrorS
 
 -- | Log at DEBUG level with payload
 logDebug :: (LogItem a) => Logger -> Text -> a -> IO ()
-logDebug lg msg payload = runLog lg DebugS msg payload
+logDebug lg = runLog lg DebugS
 
 -- | Simple message logging (no structured payload)
 logMsg :: Logger -> Severity -> Text -> IO ()

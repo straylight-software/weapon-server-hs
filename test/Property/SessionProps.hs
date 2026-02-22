@@ -4,7 +4,7 @@
 module Property.SessionProps where
 
 import Bus.Bus qualified as Bus
-import Control.Monad (replicateM, void)
+import Control.Monad (replicateM, replicateM_, void)
 import Data.List (sortOn)
 import Data.Ord (Down (..))
 import Data.Text qualified as T
@@ -98,7 +98,7 @@ prop_listReturnsCreated = property $ do
 
     sessions <- evalIO $ withTestContext $ \ctx -> do
         -- Create multiple sessions
-        void $ replicateM count $ do
+        replicateM_ count $ do
             let input =
                     ST.CreateSessionInput
                         { ST.csiTitle = Just "test"
@@ -183,7 +183,7 @@ prop_listLimitFilter = property $ do
     limitVal <- forAll $ Gen.int (Range.linear 1 3)
     sessions <- evalIO $ withTestContext $ \ctx -> do
         -- Create 5 sessions
-        void $ replicateM 5 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        replicateM_ 5 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
         -- List with limit
         Session.list ctx Nothing (Just limitVal) Nothing Nothing
     -- Should return at most limitVal sessions
@@ -239,7 +239,7 @@ prop_listRootsFilter = property $ do
         -- Create a parent session
         parent <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "parent", ST.csiParentID = Nothing}
         -- Create some root sessions
-        void $ replicateM 2 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "root", ST.csiParentID = Nothing}
+        replicateM_ 2 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "root", ST.csiParentID = Nothing}
         -- Create a child session
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "child", ST.csiParentID = Just (ST.sessionId parent)}
         -- List roots only
@@ -282,8 +282,8 @@ tests =
         , testProperty "list search filter" prop_listSearchFilter
         , testProperty "list limit filter" prop_listLimitFilter
         , testProperty "list sorted by updated" prop_listSortedByUpdated
-        -- Edge cases
-        , testProperty "update nonexistent returns Nothing" prop_updateNonexistent
+        , -- Edge cases
+          testProperty "update nonexistent returns Nothing" prop_updateNonexistent
         , testProperty "delete nonexistent returns False" prop_deleteNonexistent
         , testProperty "list with roots filter" prop_listRootsFilter
         , testProperty "touch updates timestamp" prop_touchUpdatesTimestamp

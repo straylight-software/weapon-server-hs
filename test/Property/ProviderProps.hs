@@ -116,7 +116,7 @@ prop_authStatusCorruptJson = property $ do
     assert $ not (null result)
     -- OpenAI should be marked as not authenticated due to corrupt file
     let openaiAuth = filter (\a -> paProviderID a == "openai") result
-    assert $ all (not . paAuthenticated) openaiAuth
+    assert $ not (any paAuthenticated openaiAuth)
 
 -- Generators
 genText :: Gen Text
@@ -131,11 +131,11 @@ genDouble = Gen.double (Range.linearFrac 0 1000)
 genModelCost :: Gen ModelCost
 genModelCost =
     ModelCost
-        <$> genDouble                  -- mcInput
-        <*> genDouble                  -- mcOutput
-        <*> Gen.maybe genDouble        -- mcCacheRead
-        <*> Gen.maybe genDouble        -- mcCacheWrite
-        <*> pure Nothing               -- mcContextOver200k (don't recurse)
+        <$> genDouble -- mcInput
+        <*> genDouble -- mcOutput
+        <*> Gen.maybe genDouble -- mcCacheRead
+        <*> Gen.maybe genDouble -- mcCacheWrite
+        <*> pure Nothing -- mcContextOver200k (don't recurse)
 
 genModelLimit :: Gen ModelLimit
 genModelLimit =
@@ -166,24 +166,24 @@ genModelProvider =
 genModel :: Gen Model
 genModel =
     Model
-        <$> genNonEmptyText             -- modelId
-        <*> genNonEmptyText             -- modelName
-        <*> genNonEmptyText             -- modelReleaseDate
-        <*> Gen.bool                    -- modelAttachment
-        <*> Gen.bool                    -- modelReasoning
-        <*> Gen.bool                    -- modelTemperature
-        <*> Gen.bool                    -- modelToolCall
-        <*> genModelLimit               -- modelLimit
-        <*> pure Map.empty              -- modelOptions
-        <*> Gen.maybe genNonEmptyText   -- modelFamily
-        <*> Gen.maybe genModelInterleaved  -- modelInterleaved
-        <*> Gen.maybe genModelCost      -- modelCost
-        <*> Gen.maybe genModelModalities   -- modelModalities
-        <*> Gen.maybe Gen.bool          -- modelExperimental
-        <*> Gen.maybe (Gen.element ["alpha", "beta", "deprecated"])  -- modelStatus
-        <*> pure Nothing                -- modelHeaders
-        <*> pure Nothing                -- modelProvider
-        <*> pure Nothing                -- modelVariants
+        <$> genNonEmptyText -- modelId
+        <*> genNonEmptyText -- modelName
+        <*> genNonEmptyText -- modelReleaseDate
+        <*> Gen.bool -- modelAttachment
+        <*> Gen.bool -- modelReasoning
+        <*> Gen.bool -- modelTemperature
+        <*> Gen.bool -- modelToolCall
+        <*> genModelLimit -- modelLimit
+        <*> pure Map.empty -- modelOptions
+        <*> Gen.maybe genNonEmptyText -- modelFamily
+        <*> Gen.maybe genModelInterleaved -- modelInterleaved
+        <*> Gen.maybe genModelCost -- modelCost
+        <*> Gen.maybe genModelModalities -- modelModalities
+        <*> Gen.maybe Gen.bool -- modelExperimental
+        <*> Gen.maybe (Gen.element ["alpha", "beta", "deprecated"]) -- modelStatus
+        <*> pure Nothing -- modelHeaders
+        <*> pure Nothing -- modelProvider
+        <*> pure Nothing -- modelVariants
 
 genProviderAuth :: Gen ProviderAuth
 genProviderAuth =

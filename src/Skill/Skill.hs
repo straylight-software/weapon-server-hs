@@ -74,7 +74,7 @@ parseSkill path content = do
             , skillContent = T.unlines body
             }
 
-data SkillIndex = SkillIndex
+newtype SkillIndex = SkillIndex
     { siSkills :: [SkillIndexEntry]
     }
     deriving (Show, Eq, Generic)
@@ -161,7 +161,7 @@ parseFrontmatter lines' = case lines' of
         [] -> Nothing
         (line : more)
             | T.strip line == "---" ->
-                let meta = Map.fromList (mapMaybe parseMeta (reverse acc))
+                let meta = Map.fromList (reverse (mapMaybe parseMeta acc))
                  in Just (meta, more)
             | otherwise -> go more (line : acc)
 
@@ -177,8 +177,8 @@ skillDirsFromConfig cfg root home = do
     let paths = case CT.cfgSkills cfg of
             Nothing -> []
             Just skills -> fromMaybe [] (CT.scPaths skills)
-    fmap concat $
-        mapM
+    concat
+        <$> mapM
             ( \path -> do
                 let expanded = expandPath home root (T.unpack path)
                 exists <- doesDirectoryExist expanded
@@ -191,7 +191,7 @@ skillDirsFromUrls cfg = do
     let urls = case CT.cfgSkills cfg of
             Nothing -> []
             Just skills -> fromMaybe [] (CT.scUrls skills)
-    fmap concat $ mapM (pullSkills . T.unpack) urls
+    concat <$> mapM (pullSkills . T.unpack) urls
 
 expandPath :: FilePath -> FilePath -> FilePath -> FilePath
 expandPath home root path
@@ -220,7 +220,7 @@ downloadSkill manager cache base entry = do
     let skillName = sieName entry
     let root = cache </> T.unpack skillName
     createDirectoryIfMissing True root
-    _ <- mapM (downloadFile manager base root skillName) (sieFiles entry)
+    mapM_ (downloadFile manager base root skillName) (sieFiles entry)
     let md = root </> "SKILL.md"
     exists <- doesFileExist md
     if exists then pure [root] else pure []

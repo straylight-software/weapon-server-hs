@@ -6,63 +6,62 @@
 -- paths, projects, providers, and VCS that form the foundation of the API.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Api.Types
-    ( -- * Core Types
-      Health (..)
-    , PathInfo (..)
-    , Project (..)
-    , ProviderList (..)
-    , ConfigProviderList (..)
-    , VcsInfo (..)
-    , ChatInput (..)
+module Api.Types (
+    -- * Core Types
+    Health (..),
+    PathInfo (..),
+    Project (..),
+    ProviderList (..),
+    ConfigProviderList (..),
+    VcsInfo (..),
+    ChatInput (..),
 
-      -- * Core API Endpoints
-    , HealthAPI
-    , PathAPI
-    , GlobalConfigAPI
-    , GlobalConfigUpdateAPI
-    , ProjectListAPI
-    , ProjectGetAPI
-    , ProjectUpdateAPI
-    , ProjectCurrentAPI
-    , ProviderListAPI
-    , ProviderAuthAPI
-    , ProviderAPI
-    , ProviderOauthAuthorizeAPI
-    , ProviderOauthCallbackAPI
-    , AuthCreateAPI
-    , AuthUpdateAPI
-    , AuthDeleteAPI
-    , AgentAPI
-    , ConfigAPI
-    , ConfigUpdateAPI
-    , CommandAPI
-    , LspAPI
-    , VcsAPI
-    , PermissionAPI
-    , PermissionReplyAPI
-    , QuestionAPI
-    , QuestionReplyAPI
-    , QuestionRejectAPI
-    , FindAPI
-    , FindFileAPI
-    , FindSymbolAPI
-    , GlobalEventAPI
-    , EventAPI
-    , InstanceDisposeAPI
-    , GlobalDisposeAPI
-    , LogAPI
-    , SkillAPI
-    , FormatterAPI
-    , ChatAPI
-    ) where
+    -- * Core API Endpoints
+    HealthAPI,
+    PathAPI,
+    GlobalConfigAPI,
+    GlobalConfigUpdateAPI,
+    ProjectListAPI,
+    ProjectGetAPI,
+    ProjectUpdateAPI,
+    ProjectCurrentAPI,
+    ProviderListAPI,
+    ProviderAuthAPI,
+    ProviderAPI,
+    ProviderOauthAuthorizeAPI,
+    ProviderOauthCallbackAPI,
+    AuthCreateAPI,
+    AuthUpdateAPI,
+    AuthDeleteAPI,
+    AgentAPI,
+    ConfigAPI,
+    ConfigUpdateAPI,
+    CommandAPI,
+    LspAPI,
+    VcsAPI,
+    PermissionAPI,
+    PermissionReplyAPI,
+    QuestionAPI,
+    QuestionReplyAPI,
+    QuestionRejectAPI,
+    FindAPI,
+    FindFileAPI,
+    FindSymbolAPI,
+    GlobalEventAPI,
+    EventAPI,
+    InstanceDisposeAPI,
+    GlobalDisposeAPI,
+    LogAPI,
+    SkillAPI,
+    FormatterAPI,
+    ChatAPI,
+) where
 
 import Data.Aeson
 import Data.Text (Text)
@@ -70,7 +69,6 @@ import Formatter.Status (FormatterStatus)
 import GHC.Generics
 import Servant
 import Skill.Skill (SkillInfo)
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // health //
@@ -85,7 +83,6 @@ data Health = Health
 instance ToJSON Health
 
 instance FromJSON Health
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // path //
@@ -104,7 +101,6 @@ instance ToJSON PathInfo
 
 instance FromJSON PathInfo
 
-
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // project //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -120,17 +116,20 @@ instance ToJSON Project
 
 instance FromJSON Project
 
-
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // provider //
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- | Provider list response matching OpenAPI spec
--- Returns all providers, default model selection, and connected provider IDs
+{- | Provider list response matching OpenAPI spec
+Returns all providers, default model selection, and connected provider IDs
+-}
 data ProviderList = ProviderList
-    { plAll :: [Value]           -- ^ All available providers
-    , plDefault :: Value         -- ^ Default model selection (map of provider -> model)
-    , plConnected :: [Text]      -- ^ List of connected provider IDs
+    { plAll :: [Value]
+    -- ^ All available providers
+    , plDefault :: Value
+    -- ^ Default model selection (map of provider -> model)
+    , plConnected :: [Text]
+    -- ^ List of connected provider IDs
     }
     deriving (Eq, Show, Generic)
 
@@ -149,11 +148,14 @@ instance FromJSON ProviderList where
             <*> v .: "default"
             <*> v .: "connected"
 
--- | Config providers response type (for /config/providers endpoint)
--- Uses "providers" key per the OpenAPI spec for config.providers
+{- | Config providers response type (for /config/providers endpoint)
+Uses "providers" key per the OpenAPI spec for config.providers
+-}
 data ConfigProviderList = ConfigProviderList
-    { cplProviders :: [Value]     -- ^ All available providers
-    , cplDefault :: Value         -- ^ Default model selection (map of provider -> model)
+    { cplProviders :: [Value]
+    -- ^ All available providers
+    , cplDefault :: Value
+    -- ^ Default model selection (map of provider -> model)
     }
     deriving (Eq, Show, Generic)
 
@@ -174,7 +176,7 @@ instance FromJSON ConfigProviderList where
 -- // vcs //
 -- ═══════════════════════════════════════════════════════════════════════════
 
-data VcsInfo = VcsInfo
+newtype VcsInfo = VcsInfo
     { branch :: Maybe Text
     }
     deriving (Eq, Show, Generic)
@@ -185,7 +187,6 @@ instance FromJSON VcsInfo where
     parseJSON = withObject "VcsInfo" $ \v ->
         VcsInfo
             <$> v .:? "branch"
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // chat //
@@ -202,7 +203,6 @@ instance FromJSON ChatInput where
         ChatInput
             <$> v .: "message"
             <*> v .:? "model"
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //

@@ -193,7 +193,7 @@ prop_bashToolUsesWorkdir = property $ do
                     [ "command" .= ("pwd -P" :: Text) -- -P to get physical path
                     , "description" .= ("test workdir" :: Text)
                     , "timeout" .= (5000 :: Int)
-                    , "workdir" .= (T.pack canonicalDir)
+                    , "workdir" .= T.pack canonicalDir
                     ]
         output <- execute (testContext canonicalDir) "bash" input
         -- Also canonicalize what pwd returned for comparison
@@ -230,7 +230,7 @@ prop_globToolLimitsResults = property $ do
         let input =
                 object
                     [ "pattern" .= ("*.txt" :: Text)
-                    , "path" .= (T.pack tmpDir)
+                    , "path" .= T.pack tmpDir
                     ]
         result <- execute (testContext tmpDir) "glob" input
         let ls = T.lines (toOutput result)
@@ -245,7 +245,7 @@ prop_grepToolNoMatchesNotError = property $ do
         let input =
                 object
                     [ "pattern" .= ("missing_pattern" :: Text)
-                    , "path" .= (T.pack tmpDir)
+                    , "path" .= T.pack tmpDir
                     ]
         execute (testContext tmpDir) "grep" input
     assert $ not (toIsError result)
@@ -405,7 +405,7 @@ prop_globEmptyForNonexistent = property $ do
         let input =
                 object
                     [ "pattern" .= ("**/*.nonexistent_extension_xyz" :: Text)
-                    , "path" .= (T.pack tmpDir)
+                    , "path" .= T.pack tmpDir
                     ]
         execute (testContext tmpDir) "glob" input
     assert $ not (toIsError result)
@@ -420,7 +420,7 @@ genMaybeValue :: Gen (Maybe Value)
 genMaybeValue =
     Gen.choice
         [ pure Nothing
-        , Just <$> (object <$> Gen.list (Range.linear 0 3) genPair)
+        , Just . object <$> Gen.list (Range.linear 0 3) genPair
         ]
   where
     genPair = do
@@ -455,8 +455,8 @@ tests =
         , testProperty "tool list contains bash" prop_toolListContainsBash
         , testProperty "tool schemas have type" prop_toolSchemasHaveType
         , testProperty "tool required params valid" prop_toolRequiredParamsValid
-        -- Edge cases
-        , testProperty "read nonexistent file" prop_readNonexistentFile
+        , -- Edge cases
+          testProperty "read nonexistent file" prop_readNonexistentFile
         , testProperty "edit nonexistent file" prop_editNonexistentFile
         , testProperty "bash invalid command" prop_bashInvalidCommand
         , testProperty "glob empty for nonexistent" prop_globEmptyForNonexistent

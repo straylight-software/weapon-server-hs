@@ -71,12 +71,12 @@ initialState storageDir projectID directory logger = do
     proxy <- Proxy.start (defaultProxyConfig proxyLogDir)
     mkAppState (Just proxy) Nothing storageDir projectID directory logger
 
--- | Initialize state without starting the MITM proxy (for tests)
--- Takes an optional home directory override for config isolation
+{- | Initialize state without starting the MITM proxy (for tests)
+Takes an optional home directory override for config isolation
+-}
 initialStateNoProxy :: FilePath -> Text -> Text -> Log.Logger -> IO AppState
 initialStateNoProxy = initialStateNoProxyWithHome Nothing
 
 -- | Initialize state without proxy, with optional home directory override
 initialStateNoProxyWithHome :: Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
-initialStateNoProxyWithHome homeDir storageDir projectID directory logger =
-    mkAppState Nothing homeDir storageDir projectID directory logger
+initialStateNoProxyWithHome = mkAppState Nothing

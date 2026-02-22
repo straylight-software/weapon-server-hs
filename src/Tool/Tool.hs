@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 -- | Tool module - tool execution and definitions
 module Tool.Tool (
     -- * Types

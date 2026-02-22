@@ -70,17 +70,14 @@ testEndpoint config endpoint = do
 
 -- | Compare responses between two servers
 compareEndpoints :: ServerConfig -> ServerConfig -> [Endpoint] -> IO [(Endpoint, Bool)]
-compareEndpoints server1 server2 endpoints = do
-    results <-
-        mapM
-            ( \ep -> do
-                (status1, _) <- testEndpoint server1 ep
-                (status2, _) <- testEndpoint server2 ep
-                let match = (status1 == status2) || (status1 >= 200 && status1 < 300 && status2 >= 200 && status2 < 300)
-                return (ep, match)
-            )
-            endpoints
-    return results
+compareEndpoints server1 server2 =
+    mapM
+        ( \ep -> do
+            (status1, _) <- testEndpoint server1 ep
+            (status2, _) <- testEndpoint server2 ep
+            let match = (status1 == status2) || (status1 >= 200 && status1 < 300 && status2 >= 200 && status2 < 300)
+            return (ep, match)
+        )
 
 -- | Property: All endpoints should have valid paths
 prop_validPaths :: Property
@@ -99,7 +96,7 @@ prop_extractPathParams :: Property
 prop_extractPathParams = property $ do
     endpoint <- forAll $ Gen.element haskellEndpoints
     let params = extractPathParams (path endpoint)
-    assert $ all (not . T.null) params
+    assert $ not (any T.null params)
   where
     extractPathParams p =
         let parts = T.splitOn "{" p
@@ -131,17 +128,14 @@ runPropertyTests = do
     putStrLn "\nRunning Property Tests..."
     putStrLn "========================\n"
 
-    result1 <-
-        checkSequential $
-            Group
-                "Endpoint Properties"
-                [ ("validPaths", prop_validPaths)
-                , ("validMethods", prop_validMethods)
-                , ("extractPathParams", prop_extractPathParams)
-                , ("generateValidRequests", prop_generateValidRequests)
-                ]
-
-    return result1
+    checkSequential $
+        Group
+            "Endpoint Properties"
+            [ ("validPaths", prop_validPaths)
+            , ("validMethods", prop_validMethods)
+            , ("extractPathParams", prop_extractPathParams)
+            , ("generateValidRequests", prop_generateValidRequests)
+            ]
 
 -- | Test spec for HSpec integration
 spec :: Spec

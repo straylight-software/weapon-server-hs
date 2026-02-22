@@ -67,7 +67,7 @@ instance FromJSON SessionSummary where
             <*> v .:? "files"
 
 -- | Session share info
-data SessionShare = SessionShare
+newtype SessionShare = SessionShare
     { shareUrl :: Text
     }
     deriving (Show, Eq, Generic)

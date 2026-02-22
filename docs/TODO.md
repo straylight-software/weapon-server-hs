@@ -36,35 +36,42 @@ This document tracks the missing endpoints and functionality gaps identified dur
 ### High Priority
 
 - [x] `PATCH /global/config` - Update global configuration
+
   - ✅ Implemented in Handlers.hs: `globalConfigUpdateHandler`
   - Merges input with existing config and writes to file
 
 - [x] `PATCH /project/{projectID}` - Update project properties
+
   - ✅ Implemented in Handlers.hs: `projectUpdateHandler`
   - Returns current project (placeholder for full implementation)
 
 - [x] `PATCH /config` - Update configuration
+
   - ✅ Implemented in Handlers.hs: `configUpdateHandler`
   - Merges input with existing config and writes to file
 
 ### Medium Priority
 
 - [x] `GET /experimental/tool` - List tools with JSON schema parameters
+
   - ✅ Implemented in Handlers.hs: `experimentalToolListHandler`
   - Returns tool definitions with JSON schemas
 
 - [x] `DELETE /experimental/worktree` - Remove a worktree and delete its branch
+
   - ✅ Implemented in Handlers.hs: `experimentalWorktreeDeleteHandler`
   - Added `remove` function to Experimental.Worktree module
 
 ### Low Priority (Route Path Differences)
 
 - [x] `POST /global/dispose` vs current `/instance/dispose`
+
   - ✅ Both routes exist in the spec (verified in openapi.json)
   - `/global/dispose` at line 131 and `/instance/dispose` at line 5292
   - No changes needed
 
 - [x] `GET /event` vs current `/global/event`
+
   - ✅ Both routes exist in the spec (verified in openapi.json)
   - `/global/event` at line 44 and `/event` at line 5327
   - Implemented `eventHandler` for `/event` with optional `directory` query param filtering
@@ -73,17 +80,20 @@ This document tracks the missing endpoints and functionality gaps identified dur
 ## Missing Query Parameters
 
 - [x] `GET /session` - Add missing query params:
+
   - ✅ `start` - Filter sessions updated on or after timestamp
   - ✅ `search` - Filter sessions by title (case-insensitive)
   - Implemented in Session.list and sessionListHandler
 
 - [x] `GET /find/file` - Add missing query params:
+
   - ✅ `dirs` - Include directories in search ("true"/"false")
   - ✅ `type` - Filter by type ("file"/"directory")
   - ✅ `limit` - Maximum results (1-200)
   - Implemented via FindFileOptions in Find.Search and findFileHandler
 
 - [x] `GET /session/{sessionID}/diff` - Add missing query param:
+
   - ✅ `messageID` - Get diff for specific message
   - Implemented in sessionDiffHandler (included in response)
 
@@ -92,22 +102,27 @@ This document tracks the missing endpoints and functionality gaps identified dur
 All endpoints now match the OpenAPI specification:
 
 - [x] `POST /session/{sessionID}/summarize`
+
   - ✅ Returns `Bool` as per spec
   - File: Handlers.hs sessionSummarizeHandler
 
 - [x] `POST /session/{sessionID}/revert`
+
   - ✅ Returns `Session` object as per spec
   - File: Handlers.hs sessionRevertHandler
 
 - [x] `POST /session/{sessionID}/unrevert`
+
   - ✅ Returns `Session` object as per spec
   - File: Handlers.hs sessionUnrevertHandler
 
 - [x] `POST /session/{sessionID}/share`
+
   - ✅ Returns `Session` object as per spec
   - File: Handlers.hs sessionShareCreateHandler
 
 - [x] `DELETE /session/{sessionID}/share` (unshare)
+
   - ✅ Returns `Session` object as per spec
   - File: Handlers.hs sessionShareDeleteHandler
 

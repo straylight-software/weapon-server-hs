@@ -5,6 +5,7 @@ module Property.StorageProps where
 
 import Control.Exception (catch)
 import Data.Aeson (object, (.=))
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Hedgehog
@@ -40,7 +41,7 @@ prop_updateModifies = withTests 50 $ property $ do
 
     result <- evalIO $ withTempStorage $ \storage -> do
         Storage.write storage keyParts initial
-        Storage.update storage keyParts (\_ -> newContent)
+        Storage.update storage keyParts (const newContent)
 
     result === newContent
   where
@@ -85,7 +86,7 @@ prop_removeDeletes = withTests 50 $ property $ do
         pure (before :: Maybe Text, afterValue :: Maybe Text)
 
     -- Value should exist before removal
-    assert $ foundBefore /= Nothing
+    assert $ isJust foundBefore
     -- Value should not exist after removal
     foundAfter === Nothing
   where

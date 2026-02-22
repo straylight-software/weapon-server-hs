@@ -11,12 +11,12 @@ import Data.Text (Text)
 -- | Session status type matching OpenAPI spec
 data SessionStatusType
     = StatusIdle
-    | StatusRetry Int Text Int  -- attempt, message, next
-    | StatusActive Text  -- stepID
+    | StatusRetry Int Text Int -- attempt, message, next
+    | StatusActive Text -- stepID
     deriving (Eq, Show)
 
 -- | Session status for a single session
-data SessionStatus = SessionStatus
+newtype SessionStatus = SessionStatus
     { ssType :: SessionStatusType
     }
     deriving (Eq, Show)

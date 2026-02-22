@@ -6,49 +6,48 @@
 -- of conversation state, tracking messages, diffs, and sharing status.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Api.Session
-    ( -- * Session Types (re-exported from Session.Types)
-      Session (..)
-    , SessionTime (..)
-    , SessionSummary (..)
-    , SessionShare (..)
-    , SessionRevert (..)
-    , CreateSessionInput (..)
+module Api.Session (
+    -- * Session Types (re-exported from Session.Types)
+    Session (..),
+    SessionTime (..),
+    SessionSummary (..),
+    SessionShare (..),
+    SessionRevert (..),
+    CreateSessionInput (..),
 
-      -- * API-specific Types
-    , UpdateSessionInput (..)
-    , ForkSessionInput (..)
-    , FileDiff (..)
-    , FileDiffStatus (..)
+    -- * API-specific Types
+    UpdateSessionInput (..),
+    ForkSessionInput (..),
+    FileDiff (..),
+    FileDiffStatus (..),
 
-      -- * Session API Endpoints
-    , SessionStatusAPI
-    , SessionListAPI
-    , SessionCreateAPI
-    , SessionGetAPI
-    , SessionDeleteAPI
-    , SessionUpdateAPI
-    , SessionChildrenAPI
-    , SessionTodoAPI
-    , SessionInitAPI
-    , SessionForkAPI
-    , SessionAbortAPI
-    , SessionShareCreateAPI
-    , SessionShareDeleteAPI
-    , SessionDiffAPI
-    , SessionSummarizeAPI
-    , SessionCommandAPI
-    , SessionShellAPI
-    , SessionRevertAPI
-    , SessionUnrevertAPI
-    , SessionPermissionAPI
-    ) where
+    -- * Session API Endpoints
+    SessionStatusAPI,
+    SessionListAPI,
+    SessionCreateAPI,
+    SessionGetAPI,
+    SessionDeleteAPI,
+    SessionUpdateAPI,
+    SessionChildrenAPI,
+    SessionTodoAPI,
+    SessionInitAPI,
+    SessionForkAPI,
+    SessionAbortAPI,
+    SessionShareCreateAPI,
+    SessionShareDeleteAPI,
+    SessionDiffAPI,
+    SessionSummarizeAPI,
+    SessionCommandAPI,
+    SessionShellAPI,
+    SessionRevertAPI,
+    SessionUnrevertAPI,
+    SessionPermissionAPI,
+) where
 
 import Data.Aeson
 import Data.Text (Text)
@@ -56,15 +55,14 @@ import GHC.Generics
 import Servant
 
 -- Re-export canonical session types from Session.Types
-import Session.Types
-    ( Session (..)
-    , SessionTime (..)
-    , SessionSummary (..)
-    , SessionShare (..)
-    , SessionRevert (..)
-    , CreateSessionInput (..)
-    )
-
+import Session.Types (
+    CreateSessionInput (..),
+    Session (..),
+    SessionRevert (..),
+    SessionShare (..),
+    SessionSummary (..),
+    SessionTime (..),
+ )
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // file diff //
@@ -116,7 +114,6 @@ instance FromJSON FileDiff where
             <*> v .: "deletions"
             <*> v .:? "status"
 
-
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // session input //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -145,7 +142,6 @@ instance ToJSON UpdateSessionInput where
             , "share" .= usiShare input
             , "revert" .= usiRevert input
             ]
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //
@@ -188,7 +184,7 @@ type SessionInitAPI =
     "session" :> Capture "sessionID" Text :> "init" :> Post '[JSON] Bool
 
 -- | Input for forking a session
-data ForkSessionInput = ForkSessionInput
+newtype ForkSessionInput = ForkSessionInput
     { fsiMessageId :: Maybe Text
     }
     deriving (Eq, Show, Generic)

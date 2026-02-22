@@ -12,7 +12,7 @@ import Data.List (find)
 import Data.Text (Text)
 
 findPart :: Text -> [Value] -> Maybe Value
-findPart pid parts = find (\part -> partId part == Just pid) parts
+findPart pid = find (\part -> partId part == Just pid)
 
 updatePart :: Text -> Value -> [Value] -> Maybe [Value]
 updatePart pid patch parts =

@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 -- | Shared filesystem utilities
 module Util.FileSystem (
     listDirectoryRecursive,

@@ -58,8 +58,9 @@ submitPrompt storage = do
     pure current
 
 setLast :: Storage.StorageConfig -> Value -> IO ()
-setLast storage value = Storage.write storage lastKey value
+setLast storage = Storage.write storage lastKey
 
 getLast :: Storage.StorageConfig -> IO (Maybe Value)
-getLast storage = retryWithDelay 3 1000 Nothing $
-    try @SomeException (Just <$> Storage.read storage lastKey)
+getLast storage =
+    retryWithDelay 3 1000 Nothing $
+        try @SomeException (Just <$> Storage.read storage lastKey)

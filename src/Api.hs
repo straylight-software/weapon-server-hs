@@ -17,24 +17,23 @@
 -- See docs/API.md for endpoint documentation.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Api
-    ( -- * Combined API
-      OpencodeAPI
-    , api
+module Api (
+    -- * Combined API
+    OpencodeAPI,
+    api,
 
-      -- * Re-exported Domain Types
-    , module Api.Types
-    , module Api.Session
-    , module Api.Message
-    , module Api.File
-    , module Api.Pty
-    , module Api.Tui
-    , module Api.Experimental
-    ) where
+    -- * Re-exported Domain Types
+    module Api.Types,
+    module Api.Session,
+    module Api.Message,
+    module Api.File,
+    module Api.Pty,
+    module Api.Tui,
+    module Api.Experimental,
+) where
 
 import Data.Proxy
 import Servant
@@ -47,7 +46,6 @@ import Api.Pty
 import Api.Session
 import Api.Tui
 import Api.Types
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // combined api //
@@ -164,7 +162,6 @@ type OpencodeAPI =
         :<|> ExperimentalWorktreeDeleteAPI
         -- llm
         :<|> ChatAPI
-
 
 api :: Proxy OpencodeAPI
 api = Proxy

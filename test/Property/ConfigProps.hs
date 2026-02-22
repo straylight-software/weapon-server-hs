@@ -321,8 +321,8 @@ tests =
         , testProperty "config file atomic write" prop_configFileAtomicWrite
         , testProperty "config nested merge" prop_configNestedMerge
         , testProperty "config theme persistence" prop_configThemePersistence
-        -- Additional edge cases
-        , testProperty "merge right overrides left" prop_mergeRightOverridesLeft
+        , -- Additional edge cases
+          testProperty "merge right overrides left" prop_mergeRightOverridesLeft
         , testProperty "merge preserves providers" prop_mergePreservesProviders
         , testProperty "empty config identity" prop_emptyConfigIdentity
         ]

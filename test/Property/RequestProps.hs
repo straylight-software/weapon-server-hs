@@ -5,12 +5,12 @@ module Property.RequestProps where
 import Data.Aeson (Value (..), object, (.=))
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.IO qualified as TIO
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Request.Store qualified as RequestStore
 import Storage.Storage qualified as Storage
-import Data.Text.IO qualified as TIO
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import System.IO.Temp (createTempDirectory)

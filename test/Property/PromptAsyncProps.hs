@@ -6,6 +6,7 @@ import Api (CreateMessageInput (..))
 import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -105,9 +106,7 @@ prop_lifecycleOrder = property $ do
 
 promptStatus :: Value -> Text
 promptStatus payload = case payload of
-    Object obj -> case lookupText "status" obj of
-        Just txt -> txt
-        Nothing -> ""
+    Object obj -> fromMaybe "" (lookupText "status" obj)
     _ -> ""
 
 lookupText :: Text -> KM.KeyMap Value -> Maybe Text

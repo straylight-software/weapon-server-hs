@@ -128,7 +128,7 @@ instance FromJSON AgentConfig where
             <*> v .:? "permission"
 
 -- | Permission configuration
-data PermissionConfig = PermissionConfig
+newtype PermissionConfig = PermissionConfig
     { permRules :: Map.Map Text Value
     }
     deriving (Show, Eq, Generic)

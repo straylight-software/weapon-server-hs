@@ -85,7 +85,7 @@ spec = do
             state <- initialState storageDir "test_project" (T.pack cwd) logger
             let app = serve api (server state)
 
-            let waiReq = defaultRequest { requestMethod = "GET", rawPathInfo = "/global/health", pathInfo = ["global", "health"] }
+            let waiReq = defaultRequest{requestMethod = "GET", rawPathInfo = "/global/health", pathInfo = ["global", "health"]}
             let req = SRequest waiReq ""
             response <- runSession (srequest req) app
             simpleStatus response `shouldBe` status200

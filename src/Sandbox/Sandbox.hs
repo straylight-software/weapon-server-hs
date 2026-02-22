@@ -129,7 +129,7 @@ buildBwrapArgs SandboxConfig{..} =
         , concatMap envToArgs scEnv
         , defaultEnv
         , -- Session (helps with signal handling)
-          if scSeccomp then ["--new-session"] else []
+          ["--new-session" | scSeccomp]
         , -- No new privileges / drop caps
           if rlNoNewPrivs scLimits then ["--cap-drop", "ALL"] else []
         , -- The command to run (shell)
@@ -228,8 +228,7 @@ commit overlayDir workdir = do
 
             result <- try @SomeException $ do
                 (_, _, _, ph) <- createProcess (proc "rsync" rsyncArgs)
-                exitCode <- waitForProcess ph
-                pure exitCode
+                waitForProcess ph
 
             case result of
                 Left e -> pure $ Left $ "rsync failed: " <> T.pack (show e)

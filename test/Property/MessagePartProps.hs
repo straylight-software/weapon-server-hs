@@ -87,7 +87,7 @@ prop_updatePartIdempotent = property $ do
     pid <- forAll genNonEmptyText
     part <- forAll (genPart pid)
     -- Update with the same content
-    let patch = part  -- Use the same value as patch
+    let patch = part -- Use the same value as patch
     case Parts.updatePart pid patch [part] of
         Nothing -> failure
         Just updated1 -> do
@@ -112,13 +112,15 @@ prop_findPartInNestedStructure = property $ do
     pid <- forAll genNonEmptyText
     content <- forAll genText
     -- Create a deeply nested part structure
-    let nestedPart = object 
-            [ "id" .= pid
-            , "type" .= ("nested" :: Text)
-            , "data" .= object 
-                [ "inner" .= object ["value" .= content]
+    let nestedPart =
+            object
+                [ "id" .= pid
+                , "type" .= ("nested" :: Text)
+                , "data"
+                    .= object
+                        [ "inner" .= object ["value" .= content]
+                        ]
                 ]
-            ]
     otherParts <- forAll $ Gen.list (Range.linear 0 3) genPartAny
     let allParts = nestedPart : otherParts
     -- findPart should still locate by top-level id
@@ -171,8 +173,8 @@ tests =
         , testProperty "update missing part" prop_updateMissingPart
         , testProperty "delete missing part" prop_deleteMissingPart
         , testProperty "update preserves other parts" prop_updatePreservesOtherParts
-        -- Additional edge cases
-        , testProperty "update part is idempotent" prop_updatePartIdempotent
+        , -- Additional edge cases
+          testProperty "update part is idempotent" prop_updatePartIdempotent
         , testProperty "delete part twice" prop_deletePartTwice
         , testProperty "find part in nested structure" prop_findPartInNestedStructure
         , testProperty "empty parts operations" prop_emptyPartsOperations

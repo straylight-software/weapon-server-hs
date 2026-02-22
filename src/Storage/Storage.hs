@@ -17,7 +17,7 @@ module Storage.Storage (
 ) where
 
 import Control.Exception (Exception, catch, throwIO)
-import Control.Monad (when)
+import Control.Monad (unless)
 import Data.Aeson (FromJSON, ToJSON, eitherDecodeFileStrict, encode)
 import Data.ByteString.Lazy qualified as BL
 import Data.Text (Text)
@@ -31,7 +31,7 @@ import Util.FileSystem (listDirectoryRecursive)
 import Prelude hiding (read)
 
 -- | Storage configuration
-data StorageConfig = StorageConfig
+newtype StorageConfig = StorageConfig
     { storageDir :: FilePath
     }
     deriving (Show, Eq)
@@ -57,7 +57,7 @@ withStorage dir action = do
 
 -- | Build the full path for a key
 keyPath :: StorageConfig -> [Text] -> FilePath
-keyPath cfg key = storageDir cfg </> foldr (</>) "" (map T.unpack key) <> ".json"
+keyPath cfg key = storageDir cfg </> foldr ((</>) . T.unpack) "" key <> ".json"
 
 -- | Read a JSON value from storage
 read :: (FromJSON a) => StorageConfig -> [Text] -> IO a
@@ -110,12 +110,12 @@ remove :: StorageConfig -> [Text] -> IO ()
 remove cfg key = do
     let target = keyPath cfg key
     removeFile target `catch` \e ->
-        when (not $ isDoesNotExistError e) $ throwIO e
+        unless (isDoesNotExistError e) $ throwIO e
 
 -- | List all keys with a given prefix
 list :: StorageConfig -> [Text] -> IO [[Text]]
 list cfg prefix = do
-    let dir = storageDir cfg </> foldr (</>) "" (map T.unpack prefix)
+    let dir = storageDir cfg </> foldr ((</>) . T.unpack) "" prefix
     exists <- doesDirectoryExist dir
     if not exists
         then pure []

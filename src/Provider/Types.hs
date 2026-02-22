@@ -15,6 +15,7 @@ module Provider.Types (
     ModelProvider (..),
     ProviderAuth (..),
     AuthMethod (..),
+
     -- * Smart constructors
     defaultModel,
 )
@@ -28,17 +29,18 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 
 -- | Helper for optional JSON fields: converts Maybe value to optional key-value pair
-optField :: ToJSON v => Key -> Maybe v -> Maybe Pair
+optField :: (ToJSON v) => Key -> Maybe v -> Maybe Pair
 optField k = fmap (k .=)
 
--- | Model cost information (per million tokens)
--- Flat structure with cache_read/cache_write per provider.list schema
+{- | Model cost information (per million tokens)
+Flat structure with cache_read/cache_write per provider.list schema
+-}
 data ModelCost = ModelCost
     { mcInput :: Double
     , mcOutput :: Double
     , mcCacheRead :: Maybe Double
     , mcCacheWrite :: Maybe Double
-    , mcContextOver200k :: Maybe ModelCost  -- recursive for nested cost
+    , mcContextOver200k :: Maybe ModelCost -- recursive for nested cost
     }
     deriving (Show, Eq, Generic)
 
@@ -47,11 +49,12 @@ instance ToJSON ModelCost where
         object $
             [ "input" .= mcInput mc
             , "output" .= mcOutput mc
-            ] ++ catMaybes
-                [ optField "cache_read" (mcCacheRead mc)
-                , optField "cache_write" (mcCacheWrite mc)
-                , optField "context_over_200k" (mcContextOver200k mc)
-                ]
+            ]
+                ++ catMaybes
+                    [ optField "cache_read" (mcCacheRead mc)
+                    , optField "cache_write" (mcCacheWrite mc)
+                    , optField "context_over_200k" (mcContextOver200k mc)
+                    ]
 
 instance FromJSON ModelCost where
     parseJSON = withObject "ModelCost" $ \v ->
@@ -75,7 +78,8 @@ instance ToJSON ModelLimit where
         object $
             [ "context" .= mlContext ml
             , "output" .= mlOutput ml
-            ] ++ catMaybes [optField "input" (mlInput ml)]
+            ]
+                ++ catMaybes [optField "input" (mlInput ml)]
 
 instance FromJSON ModelLimit where
     parseJSON = withObject "ModelLimit" $ \v ->
@@ -87,7 +91,7 @@ instance FromJSON ModelLimit where
 -- | Interleaved can be bool or object with field
 data ModelInterleaved
     = InterleavedBool Bool
-    | InterleavedField Text  -- "reasoning_content" or "reasoning_details"
+    | InterleavedField Text -- "reasoning_content" or "reasoning_details"
     deriving (Show, Eq, Generic)
 
 instance ToJSON ModelInterleaved where
@@ -100,7 +104,7 @@ instance FromJSON ModelInterleaved where
 
 -- | Model modalities
 data ModelModalities = ModelModalities
-    { mmInput :: [Text]   -- ["text", "audio", "image", "video", "pdf"]
+    { mmInput :: [Text] -- ["text", "audio", "image", "video", "pdf"]
     , mmOutput :: [Text]
     }
     deriving (Show, Eq, Generic)
@@ -127,10 +131,11 @@ data ModelProvider = ModelProvider
 
 instance ToJSON ModelProvider where
     toJSON p =
-        object $ catMaybes
-            [ optField "npm" (mpNpm p)
-            , optField "api" (mpApi p)
-            ]
+        object $
+            catMaybes
+                [ optField "npm" (mpNpm p)
+                , optField "api" (mpApi p)
+                ]
 
 instance FromJSON ModelProvider where
     parseJSON = withObject "ModelProvider" $ \v ->
@@ -140,22 +145,22 @@ instance FromJSON ModelProvider where
 
 -- | Model information (matching provider.list inline schema)
 data Model = Model
-    { modelId :: Text                             -- required
-    , modelName :: Text                           -- required
-    , modelReleaseDate :: Text                    -- required
-    , modelAttachment :: Bool                     -- required
-    , modelReasoning :: Bool                      -- required
-    , modelTemperature :: Bool                    -- required
-    , modelToolCall :: Bool                       -- required
-    , modelLimit :: ModelLimit                    -- required
-    , modelOptions :: Map.Map Text Value          -- required (can be empty)
+    { modelId :: Text -- required
+    , modelName :: Text -- required
+    , modelReleaseDate :: Text -- required
+    , modelAttachment :: Bool -- required
+    , modelReasoning :: Bool -- required
+    , modelTemperature :: Bool -- required
+    , modelToolCall :: Bool -- required
+    , modelLimit :: ModelLimit -- required
+    , modelOptions :: Map.Map Text Value -- required (can be empty)
     -- Optional fields below
     , modelFamily :: Maybe Text
     , modelInterleaved :: Maybe ModelInterleaved
     , modelCost :: Maybe ModelCost
     , modelModalities :: Maybe ModelModalities
     , modelExperimental :: Maybe Bool
-    , modelStatus :: Maybe Text                   -- "alpha" | "beta" | "deprecated"
+    , modelStatus :: Maybe Text -- "alpha" | "beta" | "deprecated"
     , modelHeaders :: Maybe (Map.Map Text Text)
     , modelProvider :: Maybe ModelProvider
     , modelVariants :: Maybe (Map.Map Text (Map.Map Text Value))
@@ -174,17 +179,18 @@ instance ToJSON Model where
             , "tool_call" .= modelToolCall m
             , "limit" .= modelLimit m
             , "options" .= modelOptions m
-            ] ++ catMaybes
-                [ optField "family" (modelFamily m)
-                , optField "interleaved" (modelInterleaved m)
-                , optField "cost" (modelCost m)
-                , optField "modalities" (modelModalities m)
-                , optField "experimental" (modelExperimental m)
-                , optField "status" (modelStatus m)
-                , optField "headers" (modelHeaders m)
-                , optField "provider" (modelProvider m)
-                , optField "variants" (modelVariants m)
-                ]
+            ]
+                ++ catMaybes
+                    [ optField "family" (modelFamily m)
+                    , optField "interleaved" (modelInterleaved m)
+                    , optField "cost" (modelCost m)
+                    , optField "modalities" (modelModalities m)
+                    , optField "experimental" (modelExperimental m)
+                    , optField "status" (modelStatus m)
+                    , optField "headers" (modelHeaders m)
+                    , optField "provider" (modelProvider m)
+                    , optField "variants" (modelVariants m)
+                    ]
 
 instance FromJSON Model where
     parseJSON = withObject "Model" $ \v ->
@@ -231,15 +237,16 @@ instance FromJSON AuthMethod where
             <*> v .:? "envVars" .!= []
             <*> v .:? "url"
 
--- | Provider information (matching provider.list inline schema)
--- Required: name, env, id, models
+{- | Provider information (matching provider.list inline schema)
+Required: name, env, id, models
+-}
 data Provider = Provider
     { providerId :: Text
     , providerName :: Text
     , providerEnv :: [Text]
     , providerModels :: Map.Map Text Model
-    -- Optional fields
-    , providerApi :: Maybe Text
+    , -- Optional fields
+      providerApi :: Maybe Text
     , providerNpm :: Maybe Text
     }
     deriving (Show, Eq, Generic)
@@ -251,10 +258,11 @@ instance ToJSON Provider where
             , "name" .= providerName p
             , "env" .= providerEnv p
             , "models" .= providerModels p
-            ] ++ catMaybes
-                [ optField "api" (providerApi p)
-                , optField "npm" (providerNpm p)
-                ]
+            ]
+                ++ catMaybes
+                    [ optField "api" (providerApi p)
+                    , optField "npm" (providerNpm p)
+                    ]
 
 instance FromJSON Provider where
     parseJSON = withObject "Provider" $ \v ->
@@ -289,27 +297,29 @@ instance FromJSON ProviderAuth where
             <*> v .: "authenticated"
             <*> v .:? "method"
 
--- | Smart constructor for Model with sensible defaults for optional fields
--- Required: id, name, releaseDate, limit
--- Defaults: attachment=True, reasoning=False, temperature=True, toolCall=True
+{- | Smart constructor for Model with sensible defaults for optional fields
+Required: id, name, releaseDate, limit
+Defaults: attachment=True, reasoning=False, temperature=True, toolCall=True
+-}
 defaultModel :: Text -> Text -> Text -> ModelLimit -> Model
-defaultModel mid name releaseDate limit = Model
-    { modelId = mid
-    , modelName = name
-    , modelReleaseDate = releaseDate
-    , modelAttachment = True
-    , modelReasoning = False
-    , modelTemperature = True
-    , modelToolCall = True
-    , modelLimit = limit
-    , modelOptions = Map.empty
-    , modelFamily = Nothing
-    , modelInterleaved = Nothing
-    , modelCost = Nothing
-    , modelModalities = Nothing
-    , modelExperimental = Nothing
-    , modelStatus = Nothing
-    , modelHeaders = Nothing
-    , modelProvider = Nothing
-    , modelVariants = Nothing
-    }
+defaultModel mid name releaseDate limit =
+    Model
+        { modelId = mid
+        , modelName = name
+        , modelReleaseDate = releaseDate
+        , modelAttachment = True
+        , modelReasoning = False
+        , modelTemperature = True
+        , modelToolCall = True
+        , modelLimit = limit
+        , modelOptions = Map.empty
+        , modelFamily = Nothing
+        , modelInterleaved = Nothing
+        , modelCost = Nothing
+        , modelModalities = Nothing
+        , modelExperimental = Nothing
+        , modelStatus = Nothing
+        , modelHeaders = Nothing
+        , modelProvider = Nothing
+        , modelVariants = Nothing
+        }

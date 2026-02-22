@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -49,12 +48,12 @@ data Parameter = Parameter
     }
     deriving (Show)
 
-data OpenApiRequestBody = OpenApiRequestBody
+newtype OpenApiRequestBody = OpenApiRequestBody
     { rbContent :: HM.HashMap T.Text MediaType
     }
     deriving (Show)
 
-data MediaType = MediaType
+newtype MediaType = MediaType
     { mtSchema :: Maybe Value
     }
     deriving (Show)
@@ -65,7 +64,7 @@ data OpenApiResponse = OpenApiResponse
     }
     deriving (Show)
 
-data Components = Components
+newtype Components = Components
     { compSchemas :: Maybe (HM.HashMap T.Text Value)
     }
     deriving (Show)
@@ -164,7 +163,7 @@ prop_extractPathParams = property $ do
     endpoint <- forAll $ Gen.element haskellEndpoints
     let params = extractPathParams (path endpoint)
     -- All params should be non-empty when in braces
-    assert $ all (not . T.null) params
+    assert $ not (any T.null params)
   where
     extractPathParams p =
         let parts = T.splitOn "{" p
@@ -192,19 +191,16 @@ runPropertyTests = do
     putStrLn "\nRunning Property Tests..."
     putStrLn "========================\n"
 
-    result1 <-
-        checkSequential $
-            Group
-                "Path Properties"
-                [ ("validPaths", prop_validPaths)
-                , ("validMethods", prop_validMethods)
-                , ("extractPathParams", prop_extractPathParams)
-                , ("noQueryInPaths", prop_noQueryInPaths)
-                , ("methodUppercase", prop_methodUppercase)
-                , ("uniqueMethodPaths", prop_uniqueMethodPaths)
-                ]
-
-    return result1
+    checkSequential $
+        Group
+            "Path Properties"
+            [ ("validPaths", prop_validPaths)
+            , ("validMethods", prop_validMethods)
+            , ("extractPathParams", prop_extractPathParams)
+            , ("noQueryInPaths", prop_noQueryInPaths)
+            , ("methodUppercase", prop_methodUppercase)
+            , ("uniqueMethodPaths", prop_uniqueMethodPaths)
+            ]
 
 -- | Main entry point
 main :: IO ()

@@ -35,7 +35,7 @@ prop_getReturnsBuiltin :: Property
 prop_getReturnsBuiltin = withTests 1 $ property $ do
     let agents = Agent.builtinAgents
     -- Test each builtin agent can be retrieved
-    results <- evalIO $ mapM (\a -> Agent.get (agentName a)) agents
+    results <- evalIO $ mapM (Agent.get . agentName) agents
     -- All results should be Just with matching names
     forM_ (zip agents results) $ \(agent, mResult) -> do
         case mResult of

@@ -70,7 +70,7 @@ prop_sandboxStatusToJSON = property $ do
 prop_buildBwrapArgsNetworkNone :: Property
 prop_buildBwrapArgsNetworkNone = property $ do
     workdir <- forAll genFilePath
-    let config = (defaultConfig workdir) { scNetwork = NetworkNone }
+    let config = (defaultConfig workdir){scNetwork = NetworkNone}
     let args = buildBwrapArgs config
     assert $ "--unshare-net" `elem` args
 
@@ -78,7 +78,7 @@ prop_buildBwrapArgsNetworkNone = property $ do
 prop_buildBwrapArgsNetworkHost :: Property
 prop_buildBwrapArgsNetworkHost = property $ do
     workdir <- forAll genFilePath
-    let config = (defaultConfig workdir) { scNetwork = NetworkHost }
+    let config = (defaultConfig workdir){scNetwork = NetworkHost}
     let args = buildBwrapArgs config
     assert $ "--unshare-net" `notElem` args
 
@@ -98,7 +98,7 @@ prop_buildBwrapArgsMounts :: Property
 prop_buildBwrapArgsMounts = property $ do
     workdir <- forAll genFilePath
     mounts <- forAll $ Gen.list (Range.linear 0 5) genMountSpec
-    let config = (defaultConfig workdir) { scMounts = mounts }
+    let config = (defaultConfig workdir){scMounts = mounts}
     let args = buildBwrapArgs config
     -- Each mount should produce either --bind or --ro-bind
     forM_ mounts $ \mount -> do
@@ -170,16 +170,16 @@ genSandboxStatus =
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- | Check if a list is a sublist (contiguous) of another list
-isSublistOf :: Eq a => [a] -> [a] -> Bool
+isSublistOf :: (Eq a) => [a] -> [a] -> Bool
 isSublistOf [] _ = True
 isSublistOf _ [] = False
-isSublistOf sub@(x:xs) (y:ys)
+isSublistOf sub@(x : xs) (y : ys)
     | x == y && xs `isPrefixOf'` ys = True
     | otherwise = sub `isSublistOf` ys
   where
     isPrefixOf' [] _ = True
     isPrefixOf' _ [] = False
-    isPrefixOf' (a:as) (b:bs) = a == b && isPrefixOf' as bs
+    isPrefixOf' (a : as) (b : bs) = a == b && isPrefixOf' as bs
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Test Tree
@@ -189,14 +189,16 @@ tests :: TestTree
 tests =
     testGroup
         "Sandbox Property Tests"
-        [ testGroup "Type Round-trips"
+        [ testGroup
+            "Type Round-trips"
             [ testProperty "NetworkMode round-trip" prop_networkModeRoundtrip
             , testProperty "ResourceLimits round-trip" prop_resourceLimitsRoundtrip
             , testProperty "Coeffects round-trip" prop_coeffectsRoundtrip
             , testProperty "SandboxConfig round-trip" prop_sandboxConfigRoundtrip
             , testProperty "SandboxStatus ToJSON" prop_sandboxStatusToJSON
             ]
-        , testGroup "buildBwrapArgs Logic"
+        , testGroup
+            "buildBwrapArgs Logic"
             [ testProperty "NetworkNone includes --unshare-net" prop_buildBwrapArgsNetworkNone
             , testProperty "NetworkHost excludes --unshare-net" prop_buildBwrapArgsNetworkHost
             , testProperty "Workdir in --chdir and --bind" prop_buildBwrapArgsWorkdir

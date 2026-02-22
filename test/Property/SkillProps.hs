@@ -60,7 +60,7 @@ prop_skillDiscoveryFromConfigPath = property $ do
                 object
                     [ "skills"
                         .= object
-                            [ "paths" .= [("skills" :: Text)]
+                            [ "paths" .= ["skills" :: Text]
                             ]
                     ]
         BSL.writeFile (tmp </> "weapon.json") (encode cfg)

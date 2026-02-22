@@ -289,7 +289,7 @@ connect :: PtyManager -> PtyId -> IO (Maybe PtyConnection)
 resize :: PtyManager -> PtyId -> Int -> Int -> IO ()
 ```
 
-WebSocket bridge enables bidirectional PTY <-> browser communication.
+WebSocket bridge enables bidirectional PTY \<-> browser communication.
 
 ### `// Sandbox/`
 
@@ -481,22 +481,22 @@ getSession storage sessionId = do
 ### adding a new tool
 
 1. add input type to `Tool/Types.hs`
-2. add `FromJSON` instance for parsing
-3. add tool definition to `Tool/Defs.hs` with JSON schema
-4. add executor to `Tool/Exec.hs`
-5. wire into `execute` dispatcher
+1. add `FromJSON` instance for parsing
+1. add tool definition to `Tool/Defs.hs` with JSON schema
+1. add executor to `Tool/Exec.hs`
+1. wire into `execute` dispatcher
 
 ### adding a new endpoint
 
 1. add route type to `Api.hs`
-2. add handler to `Handlers.hs`
-3. wire handler into `server` function
+1. add handler to `Handlers.hs`
+1. wire handler into `server` function
 
 ### adding a new event type
 
 1. add constructor to `Event` type in `Bus/Event.hs`
-2. add JSON serialization
-3. publish from relevant handlers
+1. add JSON serialization
+1. publish from relevant handlers
 
 ```
 ────────────────────────────────────────────────────────────────────────────────

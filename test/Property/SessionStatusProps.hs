@@ -5,6 +5,7 @@ module Property.SessionStatusProps where
 import Data.Aeson (Value (..), decode, encode)
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
+import Data.Maybe (fromMaybe)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
@@ -24,9 +25,7 @@ prop_idleStatusJson = property $ do
                 _ -> failure
         _ -> failure
   where
-    decodeValue bytes = case decode bytes of
-        Nothing -> Null
-        Just v -> v
+    decodeValue bytes = fromMaybe Null (decode bytes)
 
 -- | Test that retry status includes all required fields
 prop_retryStatusJson :: Property
@@ -42,9 +41,7 @@ prop_retryStatusJson = property $ do
             assert $ KM.member (Key.fromText "next") obj
         _ -> failure
   where
-    decodeValue bytes = case decode bytes of
-        Nothing -> Null
-        Just v -> v
+    decodeValue bytes = fromMaybe Null (decode bytes)
 
 -- | Test that active status includes stepID
 prop_activeStatusJson :: Property
@@ -56,9 +53,7 @@ prop_activeStatusJson = property $ do
             assert $ KM.member (Key.fromText "stepID") obj
         _ -> failure
   where
-    decodeValue bytes = case decode bytes of
-        Nothing -> Null
-        Just v -> v
+    decodeValue bytes = fromMaybe Null (decode bytes)
 
 tests :: TestTree
 tests =

@@ -1,7 +1,7 @@
-cabal-version: 3.0
-name:          weapon-server
-version:       0.1.0.0
-synopsis:      Haskell server for Weapon AI coding agent
+cabal-version:   3.0
+name:            weapon-server
+version:         0.1.0.0
+synopsis:        Haskell server for Weapon AI coding agent
 description:
   Haskell implementation of the Weapon AI coding agent server backend.
   .
@@ -15,21 +15,22 @@ description:
   * SSE event streaming
   * Sandboxed execution via bubblewrap
 
-license:       MIT
-license-file:  LICENSE
-author:        Straylight Software
-maintainer:    dev@straylight.ai
-copyright:     2026 Straylight Software
-category:      Web, AI
-build-type:    Simple
-homepage:      https://github.com/straylight-software/weapon-server-hs
-bug-reports:   https://github.com/straylight-software/weapon-server-hs/issues
+license:         MIT
+license-file:    LICENSE
+author:          Straylight Software
+maintainer:      dev@straylight.ai
+copyright:       2026 Straylight Software
+category:        Web, AI
+build-type:      Simple
+homepage:        https://github.com/straylight-software/weapon-server-hs
+bug-reports:
+  https://github.com/straylight-software/weapon-server-hs/issues
 
 extra-doc-files:
-  README.md
   CONTRIBUTING.md
   docs/API.md
   docs/ARCHITECTURE.md
+  README.md
 
 source-repository head
   type:     git
@@ -41,10 +42,8 @@ source-repository head
 
 library
   exposed-modules:
-    -- // agent
     Agent.Agent
     Agent.Types
-    -- // api
     Api
     Api.Experimental
     Api.File
@@ -53,102 +52,96 @@ library
     Api.Session
     Api.Tui
     Api.Types
-    Handlers
-    State
-    -- // bus
     Bus.Bus
     Bus.Event
-    -- // config
     Config.Config
     Config.Types
-    -- // experimental
     Experimental.Worktree
-    -- // find
     Find.Parse
     Find.Search
-    -- // formatter
     Formatter.Status
-    -- // global
     Global.Event
-    -- // health
+    Handlers
     Health.Build
-    -- // llm
     LLM.Anthropic
     LLM.OpenRouter
     LLM.Types
-    -- // log
     Log
-    Server.ErrorFormatters
-    -- // middleware
-    Middleware
-    -- // lsp
     Lsp.Store
-    -- // message
     Message.Parts
     Message.Todo
     Message.Types
-    -- // path
+    Middleware
     Path.Build
-    -- // project
     Project.Build
     Project.Discovery
-    -- // prompt
     Prompt.Async
-    -- // provider
     Provider.OAuth
     Provider.Provider
     Provider.Types
-    -- // proxy
     Proxy.Proxy
     Proxy.Types
-    -- // pty
     Pty.Connect
     Pty.Parse
     Pty.Pty
     Pty.Types
-    -- // request
     Request.Store
-    -- // sandbox
     Sandbox.Sandbox
     Sandbox.Types
-    -- // session
+    Server.ErrorFormatters
     Session.Session
     Session.Status
     Session.Types
-    -- // skill
     Skill.Skill
-    -- // storage
+    State
     Storage.Storage
-    -- // tool
     Tool.Defs
     Tool.Exec
     Tool.Tool
     Tool.Types
-    -- // tui
     Tui.Store
-    -- // util
     Util.FileSystem
     Util.Git
     Util.StorageKeys
-    -- // vcs
     Vcs.Diff
     Vcs.Status
 
+  -- // agent
+  -- // api
+  -- // bus
+  -- // config
+  -- // experimental
+  -- // find
+  -- // formatter
+  -- // global
+  -- // health
+  -- // llm
+  -- // log
+  -- // middleware
+  -- // lsp
+  -- // message
+  -- // path
+  -- // project
+  -- // prompt
+  -- // provider
+  -- // proxy
+  -- // pty
+  -- // request
+  -- // sandbox
+  -- // session
+  -- // skill
+  -- // storage
+  -- // tool
+  -- // tui
+  -- // util
+  -- // vcs
   hs-source-dirs:     src
   default-language:   GHC2021
-
   ghc-options:
-    -Wall
-    -Wcompat
-    -Widentities
-    -Wincomplete-record-updates
-    -Wincomplete-uni-patterns
-    -Wmissing-export-lists
-    -Wmissing-home-modules
-    -Wpartial-fields
-    -Wredundant-constraints
-    -Werror
-    -O2
+    -Wall -Wcompat -Widentities -Wincomplete-record-updates
+    -Wincomplete-uni-patterns -Wmissing-export-lists
+    -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+    -Werror -O2
 
   build-depends:
     , aeson               >=2.0
@@ -200,22 +193,15 @@ library
 -- ════════════════════════════════════════════════════════════════════════════
 
 executable weapon-server
-  main-is:          Main.hs
-  hs-source-dirs:   app
-  default-language: GHC2021
-
+  main-is:            Main.hs
+  hs-source-dirs:     app
+  default-language:   GHC2021
   ghc-options:
-    -Wall
-    -Wcompat
-    -Werror
-    -O2
-    -threaded
-    -rtsopts
-    "-with-rtsopts=-N -T"
+    -Wall -Wcompat -Werror -O2 -threaded -rtsopts "-with-rtsopts=-N -T"
 
   build-depends:
     , aeson
-    , base             >=4.17 && <5
+    , base            >=4.17 && <5
     , bytestring
     , containers
     , directory
@@ -246,22 +232,13 @@ test-suite weapon-server-test
   main-is:            Spec.hs
   hs-source-dirs:     test
   default-language:   GHC2021
-
   ghc-options:
-    -Wall
-    -Wcompat
-    -Werror
-    -threaded
-    -rtsopts
-    "-with-rtsopts=-N"
+    -Wall -Wcompat -Werror -threaded -rtsopts -with-rtsopts=-N
 
   other-modules:
-    -- // compatibility
     ApiCompatibilitySpec
-    -- // integration
     Integration.ApiComplianceTest
     Integration.HaskemathesisTest
-    -- // property tests
     Property.AgentLogicProps
     Property.BusProps
     Property.ConfigProps
@@ -296,9 +273,12 @@ test-suite weapon-server-test
     Property.ToolProps
     Property.TuiProps
     Property.VcsStatusProps
-    -- // unit tests
     Unit.ApiSpec
 
+  -- // compatibility
+  -- // integration
+  -- // property tests
+  -- // unit tests
   build-depends:
     , aeson                 >=2.0
     , base                  >=4.17 && <5

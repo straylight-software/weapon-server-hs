@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -132,7 +131,7 @@ prop_extractPathParams = property $ do
     endpoint <- forAll $ Gen.element haskellEndpoints
     let params = extractPathParams (epPath endpoint)
     -- All params should be non-empty when in braces
-    assert $ all (not . T.null) params
+    assert $ not (any T.null params)
   where
     extractPathParams p =
         let parts = T.splitOn "{" p
@@ -145,16 +144,13 @@ runPropertyTests = do
     putStrLn "\nRunning Property Tests..."
     putStrLn "========================\n"
 
-    result1 <-
-        checkSequential $
-            Group
-                "Path Properties"
-                [ ("validPaths", prop_validPaths)
-                , ("validMethods", prop_validMethods)
-                , ("extractPathParams", prop_extractPathParams)
-                ]
-
-    return result1
+    checkSequential $
+        Group
+            "Path Properties"
+            [ ("validPaths", prop_validPaths)
+            , ("validMethods", prop_validMethods)
+            , ("extractPathParams", prop_extractPathParams)
+            ]
 
 -- | Main entry point
 main :: IO ()

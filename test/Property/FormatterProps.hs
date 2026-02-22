@@ -20,7 +20,7 @@ prop_uniqueNames = withTests 10 $ property $ do
 prop_extensionsNonEmpty :: Property
 prop_extensionsNonEmpty = withTests 10 $ property $ do
     statuses <- evalIO $ statusFor "."
-    assert $ all (not . null) (map fsExtensions statuses)
+    assert $ not (any (null . fsExtensions) statuses)
 
 prop_formatterDisabled :: Property
 prop_formatterDisabled = withTests 10 $ property $ do

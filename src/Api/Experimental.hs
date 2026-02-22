@@ -6,25 +6,23 @@
 -- management, and other capabilities under active development.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Api.Experimental
-    ( -- * Experimental API Endpoints
-      ExperimentalToolIdsAPI
-    , ExperimentalToolAPI
-    , ExperimentalToolListAPI
-    , ExperimentalWorktreeGetAPI
-    , ExperimentalWorktreePostAPI
-    , ExperimentalWorktreeResetAPI
-    , ExperimentalWorktreeDeleteAPI
-    ) where
+module Api.Experimental (
+    -- * Experimental API Endpoints
+    ExperimentalToolIdsAPI,
+    ExperimentalToolAPI,
+    ExperimentalToolListAPI,
+    ExperimentalWorktreeGetAPI,
+    ExperimentalWorktreePostAPI,
+    ExperimentalWorktreeResetAPI,
+    ExperimentalWorktreeDeleteAPI,
+) where
 
 import Data.Aeson (Value)
 import Data.Text (Text)
 import Servant
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //
@@ -48,7 +46,6 @@ type ExperimentalToolListAPI =
         :> QueryParam' '[Required] "model" Text
         :> QueryParam "directory" Text
         :> Get '[JSON] [Value]
-
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- worktree endpoints

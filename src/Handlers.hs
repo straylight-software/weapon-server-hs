@@ -1,134 +1,133 @@
-{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Handlers
-    ( -- * Server
-      server
+module Handlers (
+    -- * Server
+    server,
 
-      -- * Core Handlers
-    , healthHandler
-    , pathHandler
-    , globalConfigHandler
-    , globalConfigUpdateHandler
-    , globalDisposeHandler
-    , instanceDisposeHandler
-    , logHandler
-    , eventHandler
+    -- * Core Handlers
+    healthHandler,
+    pathHandler,
+    globalConfigHandler,
+    globalConfigUpdateHandler,
+    globalDisposeHandler,
+    instanceDisposeHandler,
+    logHandler,
+    eventHandler,
 
-      -- * Project Handlers
-    , projectListHandler
-    , projectCurrentHandler
-    , projectGetHandler
-    , projectUpdateHandler
+    -- * Project Handlers
+    projectListHandler,
+    projectCurrentHandler,
+    projectGetHandler,
+    projectUpdateHandler,
 
-      -- * Provider Handlers
-    , providerListHandler
-    , providerAuthHandler
-    , providerHandler
-    , providerOauthAuthorizeHandler
-    , providerOauthCallbackHandler
-    , authCreateHandler
-    , authUpdateHandler
-    , authDeleteHandler
+    -- * Provider Handlers
+    providerListHandler,
+    providerAuthHandler,
+    providerHandler,
+    providerOauthAuthorizeHandler,
+    providerOauthCallbackHandler,
+    authCreateHandler,
+    authUpdateHandler,
+    authDeleteHandler,
 
-      -- * Config Handlers
-    , configHandler
-    , configUpdateHandler
-    , commandHandler
-    , agentHandler
+    -- * Config Handlers
+    configHandler,
+    configUpdateHandler,
+    commandHandler,
+    agentHandler,
 
-      -- * Session Handlers
-    , sessionStatusHandler
-    , sessionListHandler
-    , sessionCreateHandler
-    , sessionGetHandler
-    , sessionDeleteHandler
-    , sessionUpdateHandler
-    , sessionChildrenHandler
-    , sessionTodoHandler
-    , sessionInitHandler
-    , sessionForkHandler
-    , sessionAbortHandler
-    , sessionShareCreateHandler
-    , sessionShareDeleteHandler
-    , sessionDiffHandler
-    , sessionSummarizeHandler
-    , sessionCommandHandler
-    , sessionShellHandler
-    , sessionRevertHandler
-    , sessionUnrevertHandler
-    , sessionPermissionHandler
+    -- * Session Handlers
+    sessionStatusHandler,
+    sessionListHandler,
+    sessionCreateHandler,
+    sessionGetHandler,
+    sessionDeleteHandler,
+    sessionUpdateHandler,
+    sessionChildrenHandler,
+    sessionTodoHandler,
+    sessionInitHandler,
+    sessionForkHandler,
+    sessionAbortHandler,
+    sessionShareCreateHandler,
+    sessionShareDeleteHandler,
+    sessionDiffHandler,
+    sessionSummarizeHandler,
+    sessionCommandHandler,
+    sessionShellHandler,
+    sessionRevertHandler,
+    sessionUnrevertHandler,
+    sessionPermissionHandler,
 
-      -- * Message Handlers
-    , sessionMessageListHandler
-    , sessionMessageCreateHandler
-    , sessionMessageGetHandler
-    , sessionMessagePartDeleteHandler
-    , sessionMessagePartUpdateHandler
-    , sessionPromptAsyncHandler
-    , startPromptAsyncWorker
+    -- * Message Handlers
+    sessionMessageListHandler,
+    sessionMessageCreateHandler,
+    sessionMessageGetHandler,
+    sessionMessagePartDeleteHandler,
+    sessionMessagePartUpdateHandler,
+    sessionPromptAsyncHandler,
+    startPromptAsyncWorker,
 
-      -- * Infrastructure Handlers
-    , lspHandler
-    , vcsHandler
-    , permissionHandler
-    , permissionReplyHandler
-    , questionHandler
-    , questionReplyHandler
-    , questionRejectHandler
+    -- * Infrastructure Handlers
+    lspHandler,
+    vcsHandler,
+    permissionHandler,
+    permissionReplyHandler,
+    questionHandler,
+    questionReplyHandler,
+    questionRejectHandler,
 
-      -- * Find Handlers
-    , findHandler
-    , findFileHandler
-    , findSymbolHandler
-    , findMatches
+    -- * Find Handlers
+    findHandler,
+    findFileHandler,
+    findSymbolHandler,
+    findMatches,
 
-      -- * File Handlers
-    , fileListHandler
-    , fileReadHandler
-    , fileStatusHandler
+    -- * File Handlers
+    fileListHandler,
+    fileReadHandler,
+    fileStatusHandler,
 
-      -- * PTY Handlers
-    , ptyListHandler
-    , ptyCreateHandler
-    , ptyGetHandler
-    , ptyUpdateHandler
-    , ptyDeleteHandler
-    , ptyCommitHandler
-    , ptyChangesHandler
+    -- * PTY Handlers
+    ptyListHandler,
+    ptyCreateHandler,
+    ptyGetHandler,
+    ptyUpdateHandler,
+    ptyDeleteHandler,
+    ptyCommitHandler,
+    ptyChangesHandler,
 
-      -- * TUI Handlers
-    , tuiAppendPromptHandler
-    , tuiOpenHandler
-    , tuiSubmitPromptHandler
-    , tuiClearPromptHandler
-    , tuiExecuteCommandHandler
-    , tuiShowToastHandler
-    , tuiPublishHandler
-    , tuiSelectSessionHandler
-    , tuiControlHandler
+    -- * TUI Handlers
+    tuiAppendPromptHandler,
+    tuiOpenHandler,
+    tuiSubmitPromptHandler,
+    tuiClearPromptHandler,
+    tuiExecuteCommandHandler,
+    tuiShowToastHandler,
+    tuiPublishHandler,
+    tuiSelectSessionHandler,
+    tuiControlHandler,
 
-      -- * Skill/Formatter Handlers
-    , skillHandler
-    , formatterHandler
+    -- * Skill/Formatter Handlers
+    skillHandler,
+    formatterHandler,
 
-      -- * Experimental Handlers
-    , experimentalToolIdsHandler
-    , experimentalToolHandler
-    , experimentalToolListHandler
-    , experimentalWorktreeGetHandler
-    , experimentalWorktreePostHandler
-    , experimentalWorktreeResetHandler
-    , experimentalWorktreeDeleteHandler
+    -- * Experimental Handlers
+    experimentalToolIdsHandler,
+    experimentalToolHandler,
+    experimentalToolListHandler,
+    experimentalWorktreeGetHandler,
+    experimentalWorktreePostHandler,
+    experimentalWorktreeResetHandler,
+    experimentalWorktreeDeleteHandler,
 
-      -- * Chat Handlers
-    , chatHandler
+    -- * Chat Handlers
+    chatHandler,
 
-      -- * Session Helpers
-    , sessionContext
-    ) where
+    -- * Session Helpers
+    sessionContext,
+) where
 
 import Agent.Agent qualified as Agent
 import Agent.Types qualified as AT
@@ -148,6 +147,7 @@ import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
 import Data.ByteString.Lazy qualified as BSL
+import Data.Foldable (for_)
 import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe)
@@ -177,8 +177,8 @@ import Provider.OAuth qualified as OAuth
 import Provider.Provider qualified as Provider
 import Provider.Types qualified as PT
 import Proxy.Proxy qualified as Proxy
-import Pty.Parse qualified as PtyParse
 import Pty.Connect qualified as PtyConnect
+import Pty.Parse qualified as PtyParse
 import Pty.Pty qualified as Pty
 import Pty.Types qualified as PtyT
 import Request.Store qualified as RequestStore
@@ -200,7 +200,7 @@ import Vcs.Status qualified as VcsStatus
 
 -- | Resolve optional directory, defaulting to app state directory
 resolveDir :: AppState -> Maybe Text -> FilePath
-resolveDir st mDir = maybe (unpack (stDirectory st)) unpack mDir
+resolveDir st = maybe (unpack (stDirectory st)) unpack
 
 -- Helper to resolve paths
 resolvePath :: Maybe Text -> Text -> IO FilePath
@@ -224,8 +224,9 @@ sessionContext st =
         , Sess.scVersion = stVersion st
         }
 
--- | Helper for updating a session and returning it
--- Returns 404 if session not found
+{- | Helper for updating a session and returning it
+Returns 404 if session not found
+-}
 withSessionUpdate :: AppState -> Text -> (Session -> Session) -> Handler Session
 withSessionUpdate st sid f = do
     let ctx = sessionContext st
@@ -351,7 +352,7 @@ providerListHandler _st _mDir = liftIO $ do
         object
             [ "id" .= PT.providerId p
             , "name" .= PT.providerName p
-            , "source" .= ("env" :: Text)  -- Default source for builtin providers
+            , "source" .= ("env" :: Text) -- Default source for builtin providers
             , "env" .= PT.providerEnv p
             , "options" .= object []
             , "models" .= PT.providerModels p
@@ -410,11 +411,11 @@ providerOauthCallbackHandler st pid _mDir input = do
     case (storedState, provided) of
         (Just s, Just p) | s == p -> do
             case extractToken input of
-                Nothing -> return True  -- Authenticated via OAuth but no token
+                Nothing -> return True -- Authenticated via OAuth but no token
                 Just token -> do
                     liftIO $ Provider.setAuth (stStorage st) pid token
                     return True
-        _ -> throwError $ err400 { errBody = "{\"error\":\"invalid_state\"}" }
+        _ -> throwError $ err400{errBody = "{\"error\":\"invalid_state\"}"}
 
 authCreateHandler :: AppState -> Text -> Value -> Handler Bool
 authCreateHandler st pid input = liftIO $ do
@@ -599,8 +600,8 @@ sessionDiffHandler st _sid _mMessageID = liftIO $ do
     toApiFileDiff fd =
         FileDiff
             { fdFile = Diff.fdiFile fd
-            , fdBefore = ""  -- Would need full file content diff to populate
-            , fdAfter = ""   -- Would need full file content diff to populate
+            , fdBefore = "" -- Would need full file content diff to populate
+            , fdAfter = "" -- Would need full file content diff to populate
             , fdAdditions = Diff.fdiAdditions fd
             , fdDeletions = Diff.fdiDeletions fd
             , fdStatus = Just $ inferStatus fd
@@ -637,19 +638,22 @@ sessionCommandHandler st sid input = liftIO $ do
     let isError = ToolT.toIsError output
         outputText = ToolT.toOutput output
         -- Build AssistantMessage (info)
-        info = object
-            [ "id" .= ("msg_cmd_" <> sid)
-            , "sessionID" .= sid
-            , "role" .= ("assistant" :: Text)
-            , "time" .= object ["created" .= timestamp, "completed" .= timestamp]
-            , "error" .= if isError then Just (object ["type" .= ("error" :: Text), "message" .= outputText]) else Nothing
-            ]
+        info =
+            object
+                [ "id" .= ("msg_cmd_" <> sid)
+                , "sessionID" .= sid
+                , "role" .= ("assistant" :: Text)
+                , "time" .= object ["created" .= timestamp, "completed" .= timestamp]
+                , "error" .= if isError then Just (object ["type" .= ("error" :: Text), "message" .= outputText]) else Nothing
+                ]
         -- Build parts array with a text part containing the output
-        parts = [object
-            [ "id" .= ("part_cmd_" <> sid)
-            , "type" .= ("text" :: Text)
-            , "text" .= outputText
-            ]]
+        parts =
+            [ object
+                [ "id" .= ("part_cmd_" <> sid)
+                , "type" .= ("text" :: Text)
+                , "text" .= outputText
+                ]
+            ]
         response = object ["info" .= info, "parts" .= parts]
     Bus.publish (stBus st) "command.executed" response
     return response
@@ -694,8 +698,9 @@ sessionMessageListHandler st sid mLimit = liftIO $ do
   where
     readMessage k =
         (Just <$> Storage.read (stStorage st) k)
-            `catch` \(_ :: Storage.NotFoundError) -> pure Nothing
-            `catch` \(_ :: Storage.StorageError) -> pure Nothing
+            `catch` \(_ :: Storage.NotFoundError) ->
+                pure Nothing
+                    `catch` \(_ :: Storage.StorageError) -> pure Nothing
 
 sessionMessageCreateHandler :: AppState -> Text -> CreateMessageInput -> Handler Message
 sessionMessageCreateHandler st sid input = liftIO $ do
@@ -860,10 +865,8 @@ sessionMessagePartUpdateHandler st sid msgId partId input = do
     let bodyMessage = extractText input "messageID"
     let bodyPart = extractText input "id"
     case (bodySession, bodyMessage, bodyPart) of
-        (Just s, Just m, Just p) -> do
-            if s /= sid || m /= msgId || p /= partId
-                then throwError err400
-                else pure ()
+        (Just s, Just m, Just p) ->
+            when (s /= sid || m /= msgId || p /= partId) $ throwError err400
         _ -> throwError err400
     result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
@@ -1026,7 +1029,7 @@ fileListHandler mDir path = liftIO $ do
         then return []
         else do
             contents <- listDirectory fullPath
-            nodes <- forM contents $ \name -> do
+            forM contents $ \name -> do
                 let itemPath = fullPath </> name
                 isDir <- doesDirectoryExist itemPath
                 let type_ = if isDir then FileTypeDirectory else FileTypeFile
@@ -1034,7 +1037,7 @@ fileListHandler mDir path = liftIO $ do
                         if unpack path == "" || unpack path == "." || unpack path == "/"
                             then name
                             else unpack path </> name
-                return $
+                return
                     FileNode
                         { fnName = pack name
                         , fnPath = pack relPath
@@ -1042,7 +1045,6 @@ fileListHandler mDir path = liftIO $ do
                         , fnType = type_
                         , fnIgnored = False
                         }
-            return nodes
 
 fileReadHandler :: Maybe Text -> Text -> Handler FileContent
 fileReadHandler mDir path = liftIO $ do
@@ -1107,11 +1109,12 @@ findHandler st mQuery mPattern mDir = liftIO $ do
 findFileHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Bool -> Maybe Text -> Maybe Int -> Handler [Value]
 findFileHandler st mPattern mDir mDirs mType mLimit = liftIO $ do
     let root = resolveDir st mDir
-    let opts = FindSearch.FindFileOptions
-            { FindSearch.ffoIncludeDirs = fromMaybe False mDirs
-            , FindSearch.ffoFileType = mType
-            , FindSearch.ffoLimit = mLimit
-            }
+    let opts =
+            FindSearch.FindFileOptions
+                { FindSearch.ffoIncludeDirs = fromMaybe False mDirs
+                , FindSearch.ffoFileType = mType
+                , FindSearch.ffoLimit = mLimit
+                }
     case mPattern of
         Nothing -> pure []
         Just p -> FindSearch.findFileWithOptions root p opts
@@ -1196,9 +1199,7 @@ tuiControlHandler st name _mDir input = liftIO $ do
 
 instanceDisposeHandler :: AppState -> Handler Bool
 instanceDisposeHandler st = liftIO $ do
-    case stProxy st of
-        Nothing -> pure ()
-        Just proxy -> Proxy.stop proxy
+    for_ (stProxy st) Proxy.stop
     Bus.publish (stBus st) "server.instance.disposed" (object [])
     return True
 
@@ -1233,9 +1234,7 @@ experimentalToolListHandler _st _provider _model _mDir = liftIO $ do
 
 experimentalToolHandler :: AppState -> Value -> Handler Value
 experimentalToolHandler st input = liftIO $ do
-    let name = case extractText input "name" of
-            Just t -> t
-            Nothing -> "unknown"
+    let name = fromMaybe "unknown" (extractText input "name")
     let payload = object ["name" .= name, "input" .= input]
     RequestStore.writeRequest (stStorage st) "experimental-tool" name payload
     return payload
@@ -1348,15 +1347,16 @@ chatWithAnthropic model message = do
         Nothing -> return $ errorResponse "ANTHROPIC_API_KEY not set"
         Just key -> do
             client <- Anthropic.newClient (pack key)
-            let request = LLMTypes.ChatRequest
-                    { LLMTypes.crModel = dropPrefix "anthropic/" model
-                    , LLMTypes.crMessages = [LLMTypes.Message LLMTypes.User (LLMTypes.SimpleContent message)]
-                    , LLMTypes.crMaxTokens = 1024
-                    , LLMTypes.crSystem = Nothing
-                    , LLMTypes.crTemperature = Nothing
-                    , LLMTypes.crTools = Nothing
-                    , LLMTypes.crStream = False
-                    }
+            let request =
+                    LLMTypes.ChatRequest
+                        { LLMTypes.crModel = dropPrefix "anthropic/" model
+                        , LLMTypes.crMessages = [LLMTypes.Message LLMTypes.User (LLMTypes.SimpleContent message)]
+                        , LLMTypes.crMaxTokens = 1024
+                        , LLMTypes.crSystem = Nothing
+                        , LLMTypes.crTemperature = Nothing
+                        , LLMTypes.crTools = Nothing
+                        , LLMTypes.crStream = False
+                        }
             result <- Anthropic.chat client request
             case result of
                 Left err -> return $ errorResponse err
@@ -1364,12 +1364,13 @@ chatWithAnthropic model message = do
                     let content = case LLMTypes.respContent resp of
                             (LLMTypes.TextBlock t : _) -> t
                             _ -> ""
-                    in return $ object
-                        [ "id" .= LLMTypes.respId resp
-                        , "model" .= LLMTypes.respModel resp
-                        , "content" .= content
-                        , "usage" .= LLMTypes.respUsage resp
-                        ]
+                     in return $
+                            object
+                                [ "id" .= LLMTypes.respId resp
+                                , "model" .= LLMTypes.respModel resp
+                                , "content" .= content
+                                , "usage" .= LLMTypes.respUsage resp
+                                ]
 
 -- | Chat using OpenRouter API
 chatWithOpenRouter :: Text -> Text -> IO Value
@@ -1379,13 +1380,14 @@ chatWithOpenRouter model message = do
         Nothing -> return $ errorResponse "OPENROUTER_API_KEY not set"
         Just key -> do
             client <- OpenRouter.newClient (pack key)
-            let request = OpenRouter.ChatRequest
-                    { OpenRouter.crModel = dropPrefix "openrouter/" model
-                    , OpenRouter.crMessages = [OpenRouter.Message OpenRouter.User message]
-                    , OpenRouter.crMaxTokens = Just 1024
-                    , OpenRouter.crTemperature = Nothing
-                    , OpenRouter.crStream = False
-                    }
+            let request =
+                    OpenRouter.ChatRequest
+                        { OpenRouter.crModel = dropPrefix "openrouter/" model
+                        , OpenRouter.crMessages = [OpenRouter.Message OpenRouter.User message]
+                        , OpenRouter.crMaxTokens = Just 1024
+                        , OpenRouter.crTemperature = Nothing
+                        , OpenRouter.crStream = False
+                        }
             result <- OpenRouter.chat client request
             case result of
                 Left err -> return $ errorResponse err
@@ -1393,12 +1395,13 @@ chatWithOpenRouter model message = do
                     let content = case OpenRouter.respChoices resp of
                             (c : _) -> OpenRouter.msgContent (OpenRouter.choiceMessage c)
                             [] -> ""
-                    in return $ object
-                        [ "id" .= OpenRouter.respId resp
-                        , "model" .= OpenRouter.respModel resp
-                        , "content" .= content
-                        , "usage" .= OpenRouter.respUsage resp
-                        ]
+                     in return $
+                            object
+                                [ "id" .= OpenRouter.respId resp
+                                , "model" .= OpenRouter.respModel resp
+                                , "content" .= content
+                                , "usage" .= OpenRouter.respUsage resp
+                                ]
 
 dropPrefix :: Text -> Text -> Text
 dropPrefix prefix value = fromMaybe value (T.stripPrefix prefix value)

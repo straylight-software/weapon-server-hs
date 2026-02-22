@@ -3,6 +3,7 @@
 module Property.ProjectProps where
 
 import Api (Project (Project), id)
+import Data.Char (isAsciiLower, isDigit)
 import Data.Text qualified as T
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -73,7 +74,7 @@ prop_projectIdValidChars = property $ do
     dir <- forAll $ Gen.text (Range.linear 1 20) Gen.lower
     let project = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack dir)
     let pid = id project
-    assert $ T.all (\c -> c == '_' || c == '-' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9') pid
+    assert $ T.all (\c -> c == '_' || c == '-' || isAsciiLower c || isDigit c) pid
 
 -- | Property: same directory produces same project
 prop_projectSameDirSameProject :: Property

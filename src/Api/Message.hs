@@ -6,33 +6,31 @@
 -- within a session, containing parts that can be text, tool calls, or results.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Api.Message
-    ( -- * Message Types
-      MessageInfo (..)
-    , Message (..)
-    , CreateMessageInput (..)
+module Api.Message (
+    -- * Message Types
+    MessageInfo (..),
+    Message (..),
+    CreateMessageInput (..),
 
-      -- * Message API Endpoints
-    , SessionMessageListAPI
-    , SessionMessageCreateAPI
-    , SessionMessageGetAPI
-    , SessionMessagePartDeleteAPI
-    , SessionMessagePartUpdateAPI
-    , SessionPromptAsyncAPI
-    ) where
+    -- * Message API Endpoints
+    SessionMessageListAPI,
+    SessionMessageCreateAPI,
+    SessionMessageGetAPI,
+    SessionMessagePartDeleteAPI,
+    SessionMessagePartUpdateAPI,
+    SessionPromptAsyncAPI,
+) where
 
 import Api.Session (SessionTime)
 import Data.Aeson
 import Data.Text (Text)
 import GHC.Generics
 import Servant
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // message info //
@@ -63,7 +61,6 @@ instance FromJSON MessageInfo where
             <*> v .: "role"
             <*> v .: "time"
 
-
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // message //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -87,7 +84,6 @@ instance FromJSON Message where
             <$> v .: "info"
             <*> v .: "parts"
 
-
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // message input //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -103,7 +99,6 @@ instance FromJSON CreateMessageInput where
         CreateMessageInput
             <$> v .:? "messageID"
             <*> v .: "parts"
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //

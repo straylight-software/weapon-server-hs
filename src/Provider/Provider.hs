@@ -30,6 +30,7 @@ import Control.Exception qualified
 import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson.KeyMap qualified as KM
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
 import System.Environment (lookupEnv)
@@ -46,22 +47,24 @@ builtinProviders =
         , providerEnv = ["ANTHROPIC_API_KEY"]
         , providerModels =
             Map.fromList
-                [ ( "claude-sonnet-4-20250514"
-                  , (defaultModel "claude-sonnet-4-20250514" "Claude Sonnet 4" "2025-05-14" (ModelLimit 200000 Nothing 16384))
+                [
+                    ( "claude-sonnet-4-20250514"
+                    , (defaultModel "claude-sonnet-4-20250514" "Claude Sonnet 4" "2025-05-14" (ModelLimit 200000 Nothing 16384))
                         { modelReasoning = True
                         , modelFamily = Just "claude"
                         , modelCost = Just $ ModelCost 3.0 15.0 (Just 0.3) (Just 3.75) Nothing
                         , modelModalities = Just $ ModelModalities ["text", "image", "pdf"] ["text"]
                         }
-                  )
-                , ( "claude-opus-4-20250514"
-                  , (defaultModel "claude-opus-4-20250514" "Claude Opus 4" "2025-05-14" (ModelLimit 200000 Nothing 32000))
+                    )
+                ,
+                    ( "claude-opus-4-20250514"
+                    , (defaultModel "claude-opus-4-20250514" "Claude Opus 4" "2025-05-14" (ModelLimit 200000 Nothing 32000))
                         { modelReasoning = True
                         , modelFamily = Just "claude"
                         , modelCost = Just $ ModelCost 15.0 75.0 (Just 1.5) (Just 18.75) Nothing
                         , modelModalities = Just $ ModelModalities ["text", "image", "pdf"] ["text"]
                         }
-                  )
+                    )
                 ]
         , providerApi = Nothing
         , providerNpm = Nothing
@@ -72,22 +75,24 @@ builtinProviders =
         , providerEnv = ["OPENAI_API_KEY"]
         , providerModels =
             Map.fromList
-                [ ( "gpt-4o"
-                  , (defaultModel "gpt-4o" "GPT-4o" "2024-05-13" (ModelLimit 128000 Nothing 16384))
+                [
+                    ( "gpt-4o"
+                    , (defaultModel "gpt-4o" "GPT-4o" "2024-05-13" (ModelLimit 128000 Nothing 16384))
                         { modelFamily = Just "gpt"
                         , modelCost = Just $ ModelCost 2.5 10.0 Nothing Nothing Nothing
                         , modelModalities = Just $ ModelModalities ["text", "image"] ["text"]
                         }
-                  )
-                , ( "o3"
-                  , (defaultModel "o3" "o3" "2025-01-01" (ModelLimit 200000 Nothing 100000))
+                    )
+                ,
+                    ( "o3"
+                    , (defaultModel "o3" "o3" "2025-01-01" (ModelLimit 200000 Nothing 100000))
                         { modelReasoning = True
                         , modelTemperature = False
                         , modelFamily = Just "o"
                         , modelCost = Just $ ModelCost 10.0 40.0 Nothing Nothing Nothing
                         , modelModalities = Just $ ModelModalities ["text", "image"] ["text"]
                         }
-                  )
+                    )
                 ]
         , providerApi = Nothing
         , providerNpm = Nothing
@@ -136,12 +141,12 @@ checkAuth storage provider = do
             (\(_ :: Control.Exception.SomeException) -> pure Nothing)
     envAuth <- anyM hasEnv (providerEnv provider)
     let storedMethod = stored >>= extractMethod
-    let hasAuth = stored /= Nothing || envAuth
+    let hasAuth = isJust stored || envAuth
     let method =
             case storedMethod of
                 Just m -> Just m
                 Nothing ->
-                    if stored /= Nothing
+                    if isJust stored
                         then Just "api_key"
                         else
                             if envAuth

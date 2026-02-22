@@ -102,10 +102,10 @@ The server executes LLM tool calls with the following tools:
 Tool execution flow:
 
 1. LLM returns `stop_reason: "tool_use"` with `tool_use` content blocks
-2. server parses `ToolUse` from response
-3. `Tool.Exec.executeToolUse` runs the tool and returns `ToolResult`
-4. results sent back as `tool_result` content blocks
-5. conversation continues until `stop_reason: "end_turn"`
+1. server parses `ToolUse` from response
+1. `Tool.Exec.executeToolUse` runs the tool and returns `ToolResult`
+1. results sent back as `tool_result` content blocks
+1. conversation continues until `stop_reason: "end_turn"`
 
 ## `// environment`
 

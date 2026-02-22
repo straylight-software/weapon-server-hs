@@ -6,26 +6,24 @@
 -- for safe command execution with filesystem isolation.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Api.Pty
-    ( -- * PTY API Endpoints
-      PtyListAPI
-    , PtyCreateAPI
-    , PtyGetAPI
-    , PtyUpdateAPI
-    , PtyDeleteAPI
-    , PtyConnectAPI
-    , PtyCommitAPI
-    , PtyChangesAPI
-    ) where
+module Api.Pty (
+    -- * PTY API Endpoints
+    PtyListAPI,
+    PtyCreateAPI,
+    PtyGetAPI,
+    PtyUpdateAPI,
+    PtyDeleteAPI,
+    PtyConnectAPI,
+    PtyCommitAPI,
+    PtyChangesAPI,
+) where
 
 import Data.Aeson (Value)
 import Data.Text (Text)
 import Servant
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //

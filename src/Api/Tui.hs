@@ -6,31 +6,29 @@
 -- management, navigation, and UI state.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Api.Tui
-    ( -- * TUI API Endpoints
-      TuiAppendPromptAPI
-    , TuiOpenHelpAPI
-    , TuiOpenSessionsAPI
-    , TuiOpenThemesAPI
-    , TuiOpenModelsAPI
-    , TuiSubmitPromptAPI
-    , TuiClearPromptAPI
-    , TuiExecuteCommandAPI
-    , TuiShowToastAPI
-    , TuiPublishAPI
-    , TuiSelectSessionAPI
-    , TuiControlNextAPI
-    , TuiControlResponseAPI
-    ) where
+module Api.Tui (
+    -- * TUI API Endpoints
+    TuiAppendPromptAPI,
+    TuiOpenHelpAPI,
+    TuiOpenSessionsAPI,
+    TuiOpenThemesAPI,
+    TuiOpenModelsAPI,
+    TuiSubmitPromptAPI,
+    TuiClearPromptAPI,
+    TuiExecuteCommandAPI,
+    TuiShowToastAPI,
+    TuiPublishAPI,
+    TuiSelectSessionAPI,
+    TuiControlNextAPI,
+    TuiControlResponseAPI,
+) where
 
 import Data.Aeson (Value)
 import Data.Text (Text)
 import Servant
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //

@@ -3,10 +3,11 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
     haskemathesis.url = "github:weyl-ai/haskemathesis";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
   };
 
   outputs =
-    inputs@{ flake-parts, nixpkgs, ... }:
+    inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -15,11 +16,15 @@
         "aarch64-darwin"
       ];
 
+      imports = [
+        ./nix/formatter.nix
+      ];
+
       perSystem =
-        { pkgs, system, inputs', ... }:
+        { pkgs, inputs', ... }:
         let
           hsPkgs = pkgs.haskellPackages.override {
-            overrides = self: super: {
+            overrides = self: _super: {
               haskemathesis = inputs'.haskemathesis.packages.default;
               weapon-server = self.callPackage ./default.nix { };
             };
@@ -42,7 +47,7 @@
         {
           packages = {
             default = server;
-            weapon-server = hsPkgs.weapon-server;
+            inherit (hsPkgs) weapon-server;
           };
 
           checks.weapon-server = server;

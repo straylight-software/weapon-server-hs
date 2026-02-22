@@ -6,31 +6,29 @@
 -- reading, and file status operations for the workspace.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Api.File
-    ( -- * File Types
-      FileType (..)
-    , FileNode (..)
-    , ContentType (..)
-    , FileContent (..)
+module Api.File (
+    -- * File Types
+    FileType (..),
+    FileNode (..),
+    ContentType (..),
+    FileContent (..),
 
-      -- * File API Endpoints
-    , FileListAPI
-    , FileReadAPI
-    , FileStatusAPI
-    ) where
+    -- * File API Endpoints
+    FileListAPI,
+    FileReadAPI,
+    FileStatusAPI,
+) where
 
 import Data.Aeson
 import Data.Text (Text)
 import GHC.Generics
 import Servant
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // file type //
@@ -48,7 +46,6 @@ instance FromJSON FileType where
         "file" -> pure FileTypeFile
         "directory" -> pure FileTypeDirectory
         _ -> fail "Invalid file type"
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // file node //
@@ -82,7 +79,6 @@ instance FromJSON FileNode where
             <*> v .: "type"
             <*> v .: "ignored"
 
-
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // content type //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -99,7 +95,6 @@ instance FromJSON ContentType where
         "text" -> pure ContentTypeText
         "binary" -> pure ContentTypeBinary
         _ -> fail "Invalid content type"
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // file content //
@@ -123,7 +118,6 @@ instance FromJSON FileContent where
         FileContent
             <$> v .: "type"
             <*> v .: "content"
-
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //

@@ -25,10 +25,11 @@ module LLM.OpenRouter (
 ) where
 
 import Control.Exception (SomeException, try)
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Data.Aeson
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString (ByteString)
+import Data.Foldable (for_)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import GHC.Generics (Generic)
@@ -226,12 +227,8 @@ chatStream client req onDelta = do
                         when (": OPENROUTER" `T.isPrefixOf` line) $ pure ()
                         when ("data: " `T.isPrefixOf` line) $ do
                             let jsonPart = encodeUtf8 $ T.drop 6 line
-                            case extractDelta jsonPart of
-                                Just delta -> onDelta delta
-                                Nothing -> pure ()
-                        if "data: [DONE]" `T.isPrefixOf` line
-                            then pure ()
-                            else readLoop
+                            for_ (extractDelta jsonPart) onDelta
+                        unless ("data: [DONE]" `T.isPrefixOf` line) readLoop
 
         readLoop
         _ <- waitForProcess ph

@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -62,8 +61,8 @@ parseAndRun ctx input exec = case eitherDecode (encode input) of
 execRead :: ToolContext -> ReadInput -> IO ToolOutput
 execRead ctx ReadInput{..} = do
     let path = T.unpack (resolvePath ctx riFilePath)
-    let offset = maybe 1 id riOffset
-    let limit = maybe 2000 id riLimit
+    let offset = fromMaybe 1 riOffset
+    let limit = fromMaybe 2000 riLimit
 
     isFile <- doesFileExist path
     isDir <- doesDirectoryExist path
@@ -112,17 +111,18 @@ execEdit ctx EditInput{..} = do
             let count = length $ T.breakOnAll eiOldString content
             if count == 0
                 then pure $ toolError "Edit Error" "oldString not found in content"
-                else if count > 1 && not replaceAll
-                    then pure $ toolError "Edit Error" ("Found " <> T.pack (show count) <> " matches for oldString. Provide more surrounding lines to identify the correct match or use replaceAll.")
-                    else do
-                        let newContent =
-                                if replaceAll
-                                    then T.replace eiOldString eiNewString content
-                                    else replaceFirst eiOldString eiNewString content
-                        writeResult <- try @SomeException $ TIO.writeFile path newContent
-                        case writeResult of
-                            Left e -> pure $ toolError "Edit Error" (T.pack $ show e)
-                            Right () -> pure $ toolSuccess ("Edited " <> eiFilePath) ("Replaced " <> T.pack (show (if replaceAll then count else 1)) <> " occurrence(s)")
+                else
+                    if count > 1 && not replaceAll
+                        then pure $ toolError "Edit Error" ("Found " <> T.pack (show count) <> " matches for oldString. Provide more surrounding lines to identify the correct match or use replaceAll.")
+                        else do
+                            let newContent =
+                                    if replaceAll
+                                        then T.replace eiOldString eiNewString content
+                                        else replaceFirst eiOldString eiNewString content
+                            writeResult <- try @SomeException $ TIO.writeFile path newContent
+                            case writeResult of
+                                Left e -> pure $ toolError "Edit Error" (T.pack $ show e)
+                                Right () -> pure $ toolSuccess ("Edited " <> eiFilePath) ("Replaced " <> T.pack (show (if replaceAll then count else 1)) <> " occurrence(s)")
 
 -- | Replace first occurrence
 replaceFirst :: Text -> Text -> Text -> Text
@@ -135,7 +135,7 @@ replaceFirst old new txt = case T.breakOn old txt of
 execBash :: ToolContext -> BashInput -> IO ToolOutput
 execBash ctx BashInput{..} = do
     let workdir = maybe (tcWorkdir ctx) T.unpack biWorkdir
-    let timeoutMs = maybe 120000 id biTimeout
+    let timeoutMs = fromMaybe 120000 biTimeout
     let timeoutS = max 1 ((timeoutMs + 999) `div` 1000)
 
     let cmd =

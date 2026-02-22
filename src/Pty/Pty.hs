@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -38,7 +37,8 @@ module Pty.Pty (
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
-import Control.Monad (void, when)
+import Control.Monad (unless, void, when)
+import Data.Bifunctor (bimap)
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
@@ -49,15 +49,15 @@ import System.Directory (findExecutable)
 import System.Exit (ExitCode (..))
 import System.Posix.Pty (Pty, closePty, readPty, resizePty, spawnWithPty, writePty)
 import System.Posix.Signals qualified as Sig
-import System.Process
-    ( ProcessHandle
-    , createProcess
-    , getPid
-    , getProcessExitCode
-    , proc
-    , terminateProcess
-    , waitForProcess
-    )
+import System.Process (
+    ProcessHandle,
+    createProcess,
+    getPid,
+    getProcessExitCode,
+    proc,
+    terminateProcess,
+    waitForProcess,
+ )
 
 import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
@@ -152,7 +152,7 @@ createSandboxed PtyManager{..} ptyId cwd title env network input = do
                 Right (overlayDir, _) -> do
                     -- Build the full bwrap command
                     let bwrapArgs = Sandbox.buildBwrapArgs config
-                        _envList = map (\(k, v) -> (T.unpack k, T.unpack v)) env ++ defaultEnvList
+                        _envList = map (bimap T.unpack T.unpack) env ++ defaultEnvList
 
                     -- Spawn with PTY
                     ptyResult <-
@@ -211,7 +211,7 @@ createUnsandboxed :: PtyManager -> Text -> FilePath -> Text -> [(Text, Text)] ->
 createUnsandboxed PtyManager{..} ptyId cwd title env input = do
     let cmd = T.unpack $ fromMaybe "/bin/sh" (cpiCommand input)
         args = map T.unpack $ fromMaybe ["-l"] (cpiArgs input)
-        envList = Just $ map (\(k, v) -> (T.unpack k, T.unpack v)) env ++ defaultEnvList
+        envList = Just $ map (bimap T.unpack T.unpack) env ++ defaultEnvList
 
     ptyResult <-
         try @SomeException $
@@ -454,9 +454,9 @@ connect mgr ptyId cursor = withSession mgr ptyId Nothing $ \session -> do
     pure $
         Just
             PtyConnection
-                { pcSend = \bs -> void $ try @SomeException $ writePty (rpsPty session) bs
+                { pcSend = void . try @SomeException . writePty (rpsPty session)
                 , pcOnData = \handler -> do
-                    when (not $ BS.null replayData) $ handler replayData
+                    unless (BS.null replayData) $ handler replayData
 
                     void $ forkIO $ do
                         let pollLoop = do
@@ -469,7 +469,7 @@ connect mgr ptyId cursor = withSession mgr ptyId Nothing $ \session -> do
                                         let start = pbBufferCursor currentBuf
                                             offset = max 0 (fromIntegral $ lastCursor - start)
                                             newData = BS.drop offset (pbData currentBuf)
-                                        when (not $ BS.null newData) $ handler newData
+                                        unless (BS.null newData) $ handler newData
                                         writeIORef lastCursorRef (pbCursor currentBuf)
 
                                     threadDelay 10000

@@ -16,7 +16,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
 import Data.ByteString.Builder (Builder, toLazyByteString)
 import Data.ByteString.Lazy qualified as LBS
-import Data.Maybe (mapMaybe)
+import Data.Maybe (isJust, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -39,7 +39,6 @@ import Servant (Tagged (..))
 import Servant.Server (Handler, ServerError, runHandler)
 import State
 import Storage.Storage qualified as Storage
-import Util.StorageKeys (todoKey)
 import System.Directory (createDirectory, findExecutable, removeDirectoryRecursive)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
@@ -51,11 +50,12 @@ import Test.Tasty
 import Test.Tasty.Hedgehog
 import Test.Tasty.Runners (NumThreads (..))
 import Tui.Store qualified as TuiStore
+import Util.StorageKeys (todoKey)
 import Vcs.Diff (VcsError)
 
 withTmp :: (FilePath -> IO a) -> IO a
-withTmp action =
-    bracket (createTempDirectory "/tmp" "handler-test") removeDirectoryRecursive action
+withTmp =
+    bracket (createTempDirectory "/tmp" "handler-test") removeDirectoryRecursive
 
 {- | Run an IO action with SIGTERM and SIGHUP ignored to prevent signal
 propagation from child processes (PTYs) terminating during tests.
@@ -271,7 +271,7 @@ prop_providerOauthHandlers = withTests 10 $ property $ do
     pid <- forAll genName
     token <- forAll genName
     result <- evalIO $ withState $ \st -> do
-        let input = object ["redirect" .= ("http://localhost" :: Text), "scopes" .= [("read" :: Text)]]
+        let input = object ["redirect" .= ("http://localhost" :: Text), "scopes" .= ["read" :: Text]]
         auth <- runHandlerIO (providerOauthAuthorizeHandler st pid input)
         callback <- case auth of
             Left err -> pure (Left err)
@@ -287,7 +287,7 @@ prop_providerOauthHandlers = withTests 10 $ property $ do
         (_, Left _) -> failure
         (Right auth, Right callbackResult) -> do
             lookupText "providerID" auth === Just pid
-            assert $ lookupText "state" auth /= Nothing
+            assert $ isJust (lookupText "state" auth)
             -- Now callback returns Bool
             callbackResult === True
 
@@ -385,8 +385,7 @@ prop_sessionTodoHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> do
         let todos = [object ["text" .= item]]
         Storage.write (stStorage st) (todoKey sid) todos
-        res <- runHandlerIO (sessionTodoHandler st sid)
-        pure res
+        runHandlerIO (sessionTodoHandler st sid)
     case result of
         Left _ -> failure
         Right todos -> todos === [object ["text" .= item]]
@@ -406,7 +405,7 @@ prop_sessionInitHandler = withTests 20 $ property $ do
         (Right val, evt) -> do
             -- Handler now returns Bool (true on success)
             val === True
-            assert $ evt /= Nothing
+            assert $ isJust evt
 
 prop_sessionForkHandler :: Property
 prop_sessionForkHandler = withTests 20 $ property $ do
@@ -437,7 +436,7 @@ prop_sessionAbortHandler = withTests 20 $ property $ do
     case result of
         (Left _, _) -> failure
         (Right True, evt) -> do
-            assert $ evt /= Nothing
+            assert $ isJust evt
         _ -> failure
 
 prop_sessionShareHandlers :: Property
@@ -541,7 +540,7 @@ prop_sessionPermissionHandler = withTests 20 $ property $ do
         (Left _, _) -> failure
         (Right val, evt) -> do
             val === True
-            assert $ evt /= Nothing
+            assert $ isJust evt
 
 prop_sessionMessageHandlers :: Property
 prop_sessionMessageHandlers = withTests 20 $ property $ do
@@ -561,7 +560,7 @@ prop_sessionMessageHandlers = withTests 20 $ property $ do
             assert $ length listed >= 2
             msgId (msgInfo fetched) === "msg_1"
             let assistants = filter (\m -> msgRole (msgInfo m) == ("assistant" :: Text)) listed
-            assert $ any (\m -> not (null (msgParts m))) assistants
+            assert $ not (all (null . msgParts) assistants)
 
 prop_sessionMessagePartHandlers :: Property
 prop_sessionMessagePartHandlers = withTests 20 $ property $ do
@@ -604,8 +603,7 @@ prop_permissionHandlers = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> do
         let payload = object ["ok" .= True]
         _ <- runHandlerIO (permissionReplyHandler st rid Nothing payload)
-        res <- runHandlerIO (permissionHandler st Nothing)
-        pure res
+        runHandlerIO (permissionHandler st Nothing)
     case result of
         Left _ -> failure
         Right vals -> do
@@ -619,8 +617,7 @@ prop_questionHandlers = withTests 20 $ property $ do
         let payload = object ["ok" .= True]
         _ <- runHandlerIO (questionReplyHandler st rid Nothing payload)
         _ <- runHandlerIO (questionRejectHandler st (rid <> "_r") Nothing payload)
-        res <- runHandlerIO (questionHandler st Nothing)
-        pure res
+        runHandlerIO (questionHandler st Nothing)
     case result of
         Left _ -> failure
         Right vals -> do
@@ -634,8 +631,7 @@ prop_fileStatusHandler = withTests 20 $ property $ do
         let root = T.unpack (stDirectory st)
         let path = root </> T.unpack name
         TIO.writeFile path "ok"
-        res <- runHandlerIO (fileStatusHandler st (Just (stDirectory st)) (Just name))
-        pure res
+        runHandlerIO (fileStatusHandler st (Just (stDirectory st)) (Just name))
     case result of
         Left _ -> failure
         Right vals -> do
@@ -668,7 +664,7 @@ prop_tuiHandlers = withTests 20 $ property $ do
         (Right True, prompt, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, lastVal) -> do
             -- Just verify prompt was set and last value exists
             assert $ T.length prompt >= 0
-            assert $ lastVal /= Nothing
+            assert $ isJust lastVal
         _ -> failure
 
 prop_skillHandler :: Property
@@ -791,10 +787,10 @@ prop_sessionCommandHandler = withTests 20 $ property $ do
                 Nothing -> failure
                 Just parts -> case parts of
                     [] -> failure
-                    (p:_) -> case lookupText "text" p of
+                    (p : _) -> case lookupText "text" p of
                         Nothing -> failure
                         Just out -> assert $ txt `T.isInfixOf` out
-            assert $ evt /= Nothing
+            assert $ isJust evt
 
 prop_sessionShellHandler :: Property
 prop_sessionShellHandler = withTests 10 $ property $ do
@@ -828,7 +824,7 @@ prop_sessionShellHandler = withTests 10 $ property $ do
             -- PTY creation must succeed - require pid to be present
             case pid of
                 Nothing -> failure
-                Just _ -> assert $ evt /= Nothing
+                Just _ -> assert $ isJust evt
 
 prop_promptAsyncIndex :: Property
 prop_promptAsyncIndex = withTests 20 $ property $ do
@@ -868,7 +864,7 @@ prop_ptyHandlersLifecycle = withTests 20 $ property $ do
     case result of
         (Left _, _) -> failure
         (Right val, Nothing) -> do
-            assert $ lookupText "error" val /= Nothing
+            assert $ isJust (lookupText "error" val)
         (Right _, Just (ptyId, listed, fetched, updated, deleted, fetched2)) -> do
             case listed of
                 Left _ -> failure
@@ -884,7 +880,7 @@ prop_ptyHandlersLifecycle = withTests 20 $ property $ do
                 Right ok -> ok === True
             case fetched2 of
                 Left _ -> failure
-                Right val -> assert $ lookupText "error" val /= Nothing
+                Right val -> assert $ isJust (lookupText "error" val)
 
 prop_ptyHandlersUnsandboxedChanges :: Property
 prop_ptyHandlersUnsandboxedChanges = withTests 20 $ property $ do
@@ -906,14 +902,14 @@ prop_ptyHandlersUnsandboxedChanges = withTests 20 $ property $ do
     case result of
         (Left _, _, _) -> failure
         (Right val, Nothing, _) -> do
-            assert $ lookupText "error" val /= Nothing
+            assert $ isJust (lookupText "error" val)
         (Right _, Just changes, Just commit) -> do
             case changes of
                 Left _ -> failure
-                Right val -> assert $ lookupText "error" val /= Nothing
+                Right val -> assert $ isJust (lookupText "error" val)
             case commit of
                 Left _ -> failure
-                Right val -> assert $ lookupText "error" val /= Nothing
+                Right val -> assert $ isJust (lookupText "error" val)
         _ -> failure
 
 prop_ptyConnectHandler :: Property
@@ -1025,7 +1021,7 @@ prop_vcsHandler = withTests 20 $ property $ do
     case result of
         (Left _, _) -> failure
         (Right info, Nothing) -> branch info === Nothing
-        (Right info, Just _) -> assert $ branch info /= Nothing
+        (Right info, Just _) -> assert $ isJust (branch info)
 
 prop_instanceDisposeHandler :: Property
 prop_instanceDisposeHandler = withTests 20 $ property $ do
@@ -1040,7 +1036,7 @@ prop_instanceDisposeHandler = withTests 20 $ property $ do
         (Left _, _) -> failure
         (Right val, evt) -> do
             val === True
-            assert $ evt /= Nothing
+            assert $ isJust evt
 
 prop_logHandler :: Property
 prop_logHandler = withTests 20 $ property $ do
@@ -1177,7 +1173,7 @@ prop_authDeleteHandler = withTests 20 $ property $ do
     case result of
         (Left _, _) -> failure
         (Right val, removed) -> do
-            val === True  -- delete always returns true
+            val === True -- delete always returns true
             assert removed
 
 tests :: TestTree

@@ -16,6 +16,7 @@ module LLM.Anthropic (
 ) where
 
 import Control.Exception (SomeException, try)
+import Control.Monad (unless)
 import Data.Aeson (Value (..), decode, eitherDecode, encode, parseJSON, (.:))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString (ByteString)
@@ -104,9 +105,7 @@ chatStream client req onEvent = do
                                 writeIORef bufferRef remaining
                                 mapM_ onEvent events
                                 -- Check if we got MessageStop
-                                if any isMessageStop events
-                                    then pure ()
-                                    else loop
+                                unless (any isMessageStop events) loop
                 loop
                 pure $ Right ()
 

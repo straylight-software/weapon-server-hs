@@ -15,7 +15,7 @@ where
 
 import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.STM
-import Control.Monad (forever)
+import Control.Monad (forever, when)
 import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Text (Text)
 
@@ -64,6 +64,4 @@ subscribeAll bus callback = do
 -- | Subscribe to events of a specific type
 subscribe :: Bus -> Text -> (BusEvent -> IO ()) -> IO (IO ())
 subscribe bus eventType callback = subscribeAll bus $ \event ->
-    if beType event == eventType
-        then callback event
-        else pure ()
+    when (beType event == eventType) $ callback event

@@ -40,9 +40,11 @@ Health check endpoint.
 Server-sent events stream. All events are broadcast here.
 
 **Headers:**
+
 - `Accept: text/event-stream`
 
 **Query Parameters:**
+
 - `directory` (optional) — filter events by directory
 
 **Response:** SSE stream
@@ -130,10 +132,12 @@ Update project properties.
 List sessions.
 
 **Query Parameters:**
+
 - `start` (optional) — filter sessions updated on or after timestamp
 - `search` (optional) — filter sessions by title (case-insensitive)
 
 **Headers:**
+
 - `x-weapon-directory` (optional) — filter by directory
 
 **Response:**
@@ -216,6 +220,7 @@ Abort the current operation in session.
 Get diff of changes made in session.
 
 **Query Parameters:**
+
 - `messageID` (optional) — get diff for specific message
 
 ### `POST /session/{sessionID}/summarize`
@@ -497,6 +502,7 @@ List uncommitted changes in PTY sandbox.
 List files in directory.
 
 **Query Parameters:**
+
 - `path` — directory path
 
 ### `GET /file/content`
@@ -504,6 +510,7 @@ List files in directory.
 Get file content.
 
 **Query Parameters:**
+
 - `path` — file path
 
 ### `GET /file/status`
@@ -521,6 +528,7 @@ Get file status (modified, untracked, etc.).
 Search for text in files.
 
 **Query Parameters:**
+
 - `query` — search term
 - `include` (optional) — file pattern to include
 - `limit` (optional) — max results
@@ -530,6 +538,7 @@ Search for text in files.
 Search for files by name.
 
 **Query Parameters:**
+
 - `query` — file name pattern
 - `dirs` (optional) — include directories ("true"/"false")
 - `type` (optional) — filter by type ("file"/"directory")
@@ -540,6 +549,7 @@ Search for files by name.
 Search for symbols (functions, types, etc.).
 
 **Query Parameters:**
+
 - `query` — symbol name
 
 ## `// provider`

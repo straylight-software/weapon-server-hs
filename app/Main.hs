@@ -12,7 +12,6 @@
 -- support for PTY connections, CORS middleware, and the Servant API.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
@@ -35,25 +34,24 @@ import Network.HTTP.Types (methodOptions, status200)
 import Network.Wai (Middleware, mapResponseHeaders, requestMethod, responseLBS)
 import Network.Wai.Handler.Warp (run)
 import Network.Wai.Handler.WebSockets (websocketsOr)
-import Network.WebSockets
-    ( Connection
-    , PendingConnection
-    , acceptRequest
-    , defaultConnectionOptions
-    , pendingRequest
-    , receiveData
-    , requestPath
-    , sendBinaryData
-    )
+import Network.WebSockets (
+    Connection,
+    PendingConnection,
+    acceptRequest,
+    defaultConnectionOptions,
+    pendingRequest,
+    receiveData,
+    requestPath,
+    sendBinaryData,
+ )
 import Pty.Connect ()
 import Pty.Pty qualified as Pty
-import Server.ErrorFormatters (errorFormattersContext)
 import Servant
+import Server.ErrorFormatters (errorFormattersContext)
 import State
 import System.Directory (getCurrentDirectory)
 import System.FilePath ((</>))
 import System.IO (BufferMode (..), hSetBuffering, stdout)
-
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                 // middleware
@@ -78,10 +76,11 @@ enableCors app req callback
 --                                                                 // websocket
 -- ════════════════════════════════════════════════════════════════════════════
 
--- | WebSocket handler for PTY connections.
---
--- Bridges WebSocket I/O to PTY sessions, enabling terminal access from
--- browser clients.
+{- | WebSocket handler for PTY connections.
+
+Bridges WebSocket I/O to PTY sessions, enabling terminal access from
+browser clients.
+-}
 ptyWebSocketApp :: AppState -> PendingConnection -> IO ()
 ptyWebSocketApp appState pending = do
     let path = requestPath (pendingRequest pending)
@@ -118,7 +117,6 @@ bridgePtyToWebSocket ptyConnection websocketConnection = do
                     loop
     loop
 
-
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                      // main
 -- ════════════════════════════════════════════════════════════════════════════
@@ -151,6 +149,6 @@ main = Log.withLogger "weapon" $ \logger -> do
 -- | Periodic heartbeat to keep SSE connections alive.
 heartbeatLoop :: AppState -> IO ()
 heartbeatLoop appState = do
-    threadDelay 10_000_000  -- 10 seconds
+    threadDelay 10_000_000 -- 10 seconds
     Bus.publish (stBus appState) "server.heartbeat" (object [])
     heartbeatLoop appState

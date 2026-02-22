@@ -23,9 +23,9 @@ module Session.Session (
 ) where
 
 import Control.Monad (forM)
-import Data.List (sortOn)
 import Data.Aeson (object, (.=))
-import Data.Maybe (fromMaybe, isNothing)
+import Data.List (sortOn)
+import Data.Maybe (catMaybes, fromMaybe, isNothing)
 import Data.Ord (Down (..))
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -144,7 +144,7 @@ list ctx mRoots mLimit mStart mSearch = do
     sessions <- forM keys $ \key -> do
         let sid = last key
         get ctx sid
-    let valid = [s | Just s <- sessions]
+    let valid = catMaybes sessions
     -- Filter by roots (no parent)
     let rootFiltered = case mRoots of
             Just True -> filter (isNothing . sessionParentID) valid

@@ -118,8 +118,7 @@ handleHttp state manager logFile req respond = do
 
     -- Extract session ID from header (injected by sandbox)
     let sessionId =
-            fromMaybe "unknown" $
-                decodeUtf8 <$> lookup "X-Opencode-Session" (requestHeaders req)
+            maybe "unknown" decodeUtf8 (lookup "X-Opencode-Session" (requestHeaders req))
 
     -- Generate request ID
     reqId <- atomically $ do
@@ -140,7 +139,7 @@ handleHttp state manager logFile req respond = do
 
     -- Build outbound request
     -- For proxy requests, reconstruct full URL from Host header + path
-    let host = fromMaybe "unknown" $ decodeUtf8 <$> requestHeaderHost req
+    let host = maybe "unknown" decodeUtf8 (requestHeaderHost req)
         path = rawPathInfo req <> rawQueryString req
         url =
             if "http" `BS.isPrefixOf` path
@@ -264,11 +263,11 @@ parseHostPort target =
     let stripped = case target of
             '/' : rest -> rest
             other -> other
-    in case break (== ':') stripped of
-        (host, ':' : portStr) -> case reads portStr of
-            [(port, "")] -> Just (host, port)
+     in case break (== ':') stripped of
+            (host, ':' : portStr) -> case reads portStr of
+                [(port, "")] -> Just (host, port)
+                _ -> Nothing
             _ -> Nothing
-        _ -> Nothing
 
 tunnel :: String -> Int -> IO ByteString -> (ByteString -> IO ()) -> IO ()
 tunnel host port readClient writeClient = do

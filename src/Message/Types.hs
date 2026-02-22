@@ -50,7 +50,7 @@ instance FromJSON MessageRole where
         _ -> fail "Invalid message role"
 
 -- | Message time info
-data MessageTime = MessageTime
+newtype MessageTime = MessageTime
     { mtCreated :: Double
     }
     deriving (Show, Eq, Generic)
@@ -212,37 +212,51 @@ baseFields pb =
 
 instance ToJSON Part where
     toJSON (PartText tp) =
-        object $ ("type" .= String "text") : baseFields (tpBase tp) ++
-            [ "text" .= tpText tp
-            , "synthetic" .= tpSynthetic tp
-            , "ignored" .= tpIgnored tp
-            ]
+        object $
+            ("type" .= String "text")
+                : baseFields (tpBase tp)
+                ++ [ "text" .= tpText tp
+                   , "synthetic" .= tpSynthetic tp
+                   , "ignored" .= tpIgnored tp
+                   ]
     toJSON (PartTool tp) =
-        object $ ("type" .= String "tool") : baseFields (toolBase tp) ++
-            [ "callID" .= toolCallID tp
-            , "tool" .= toolName tp
-            , "state" .= toolState tp
-            ]
+        object $
+            ("type" .= String "tool")
+                : baseFields (toolBase tp)
+                ++ [ "callID" .= toolCallID tp
+                   , "tool" .= toolName tp
+                   , "state" .= toolState tp
+                   ]
     toJSON (PartFile fp) =
-        object $ ("type" .= String "file") : baseFields (fpBase fp) ++
-            [ "mime" .= fpMime fp
-            , "filename" .= fpFilename fp
-            , "url" .= fpUrl fp
-            ]
+        object $
+            ("type" .= String "file")
+                : baseFields (fpBase fp)
+                ++ [ "mime" .= fpMime fp
+                   , "filename" .= fpFilename fp
+                   , "url" .= fpUrl fp
+                   ]
     toJSON (PartReasoning rp) =
-        object $ ("type" .= String "reasoning") : baseFields (rpBase rp) ++
-            ["text" .= rpText rp]
+        object $
+            ("type" .= String "reasoning")
+                : baseFields (rpBase rp)
+                ++ ["text" .= rpText rp]
     toJSON (PartStepStart ssp) =
-        object $ ("type" .= String "step-start") : baseFields (sspBase ssp) ++
-            ["snapshot" .= sspSnapshot ssp]
+        object $
+            ("type" .= String "step-start")
+                : baseFields (sspBase ssp)
+                ++ ["snapshot" .= sspSnapshot ssp]
     toJSON (PartStepFinish sfp) =
-        object $ ("type" .= String "step-finish") : baseFields (sfpBase sfp) ++
-            [ "reason" .= sfpReason sfp
-            , "cost" .= sfpCost sfp
-            ]
+        object $
+            ("type" .= String "step-finish")
+                : baseFields (sfpBase sfp)
+                ++ [ "reason" .= sfpReason sfp
+                   , "cost" .= sfpCost sfp
+                   ]
     toJSON (PartSnapshot snp) =
-        object $ ("type" .= String "snapshot") : baseFields (snpBase snp) ++
-            ["snapshot" .= snpSnapshot snp]
+        object $
+            ("type" .= String "snapshot")
+                : baseFields (snpBase snp)
+                ++ ["snapshot" .= snpSnapshot snp]
 
 -- | Full message with parts
 data Message = Message

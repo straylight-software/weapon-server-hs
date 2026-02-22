@@ -16,8 +16,7 @@ import Storage.Storage qualified as Storage
 import System.Random (randomIO)
 
 writeRequest :: Storage.StorageConfig -> Text -> Text -> Value -> IO ()
-writeRequest storage kind req value =
-    Storage.write storage [kind, req] value
+writeRequest storage kind req = Storage.write storage [kind, req]
 
 listRequests :: Storage.StorageConfig -> Text -> IO [Value]
 listRequests storage kind = do

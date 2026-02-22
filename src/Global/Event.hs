@@ -7,6 +7,7 @@ module Global.Event (
 ) where
 
 import Control.Concurrent.STM
+import Control.Monad (join, when)
 import Data.Aeson (Value (..), encode)
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString.Builder (lazyByteString, string8)
@@ -43,8 +44,8 @@ globalEventHandler state = Tagged $ \_ respond' -> do
 eventHandler :: AppState -> Tagged Handler Application
 eventHandler state = Tagged $ \req respond' -> do
     -- Parse directory query param
-    let mDirectory = lookup "directory" (queryString req) >>= id >>= Just . decodeUtf8
-    
+    let mDirectory = decodeUtf8 <$> join (lookup "directory" (queryString req))
+
     chan <- atomically $ dupTChan (stEventChan state)
 
     respond'
@@ -61,13 +62,11 @@ eventHandler state = Tagged $ \req respond' -> do
                     let shouldSend = case mDirectory of
                             Nothing -> True
                             Just dir -> matchesDirectory dir val
-                    if shouldSend
-                        then do
-                            send $ string8 "data: "
-                            send $ lazyByteString (encode val)
-                            send $ string8 "\n\n"
-                            flush
-                        else pure ()
+                    when shouldSend $ do
+                        send $ string8 "data: "
+                        send $ lazyByteString (encode val)
+                        send $ string8 "\n\n"
+                        flush
                     loop
             loop
 

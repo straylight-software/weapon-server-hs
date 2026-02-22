@@ -25,6 +25,7 @@ where
 import Config.Types
 import Control.Applicative ((<|>))
 import Data.Aeson (eitherDecodeFileStrict)
+import Data.Maybe (fromMaybe)
 import System.Directory (doesFileExist, getHomeDirectory)
 import System.FilePath ((</>))
 
@@ -79,7 +80,7 @@ load projectDir = do
     projectCfg <- loadFile projectPath
 
     -- Merge configs (project overrides global)
-    let base = maybe defaultConfig id globalCfg
+    let base = fromMaybe defaultConfig globalCfg
     let merged = maybe base (mergeConfig base) projectCfg
 
     pure merged
