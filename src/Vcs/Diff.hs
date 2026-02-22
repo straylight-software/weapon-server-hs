@@ -2,6 +2,7 @@
 
 module Vcs.Diff (
     parseNumstat,
+    parseNumstatFiles,
     loadDiff,
     loadFileDiffs,
     FileDiffInternal (..),
