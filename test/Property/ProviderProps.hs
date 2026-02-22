@@ -46,6 +46,42 @@ prop_providerAuthRoundtrip = property $ do
         Nothing -> failure
         Just pa' -> pa === pa'
 
+-- | Property: ModelInterleaved JSON round-trip
+prop_modelInterleavedRoundtrip :: Property
+prop_modelInterleavedRoundtrip = property $ do
+    interleaved <- forAll genModelInterleaved
+    let json = encode interleaved
+    case decode json of
+        Nothing -> failure
+        Just interleaved' -> interleaved === interleaved'
+
+-- | Property: ModelModalities JSON round-trip
+prop_modelModalitiesRoundtrip :: Property
+prop_modelModalitiesRoundtrip = property $ do
+    modalities <- forAll genModelModalities
+    let json = encode modalities
+    case decode json of
+        Nothing -> failure
+        Just modalities' -> modalities === modalities'
+
+-- | Property: ModelProvider JSON round-trip
+prop_modelProviderRoundtrip :: Property
+prop_modelProviderRoundtrip = property $ do
+    provider <- forAll genModelProvider
+    let json = encode provider
+    case decode json of
+        Nothing -> failure
+        Just provider' -> provider === provider'
+
+-- | Property: ModelLimit JSON round-trip
+prop_modelLimitRoundtrip :: Property
+prop_modelLimitRoundtrip = property $ do
+    limit <- forAll genModelLimit
+    let json = encode limit
+    case decode json of
+        Nothing -> failure
+        Just limit' -> limit === limit'
+
 prop_authPersistence :: Property
 prop_authPersistence = property $ do
     token <- forAll genNonEmptyText
@@ -121,6 +157,12 @@ genModelModalities =
         <$> Gen.list (Range.linear 1 5) (Gen.element ["text", "audio", "image", "video", "pdf"])
         <*> Gen.list (Range.linear 1 5) (Gen.element ["text", "audio", "image", "video", "pdf"])
 
+genModelProvider :: Gen ModelProvider
+genModelProvider =
+    ModelProvider
+        <$> Gen.maybe genNonEmptyText
+        <*> Gen.maybe genNonEmptyText
+
 genModel :: Gen Model
 genModel =
     Model
@@ -158,6 +200,10 @@ tests =
         [ testProperty "ModelCost round-trip" prop_modelCostRoundtrip
         , testProperty "Model round-trip" prop_modelRoundtrip
         , testProperty "ProviderAuth round-trip" prop_providerAuthRoundtrip
+        , testProperty "ModelInterleaved round-trip" prop_modelInterleavedRoundtrip
+        , testProperty "ModelModalities round-trip" prop_modelModalitiesRoundtrip
+        , testProperty "ModelProvider round-trip" prop_modelProviderRoundtrip
+        , testProperty "ModelLimit round-trip" prop_modelLimitRoundtrip
         , testProperty "Auth persistence" prop_authPersistence
         , testProperty "Auth status handles corrupt JSON" prop_authStatusCorruptJson
         ]

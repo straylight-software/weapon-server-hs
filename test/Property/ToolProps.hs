@@ -209,6 +209,47 @@ prop_bashToolUsesWorkdir = property $ do
     -- Use equality check on stripped paths for more reliable comparison
     assert $ T.strip (toOutput result) == T.pack dir
 
+prop_bashToolTimeout :: Property
+prop_bashToolTimeout = property $ do
+    result <- evalIO $ withTempDir $ \tmpDir -> do
+        let input =
+                object
+                    [ "command" .= ("sleep 2" :: Text)
+                    , "description" .= ("timeout test" :: Text)
+                    , "timeout" .= (200 :: Int)
+                    ]
+        execute (testContext tmpDir) "bash" input
+    assert $ toIsError result
+
+prop_globToolLimitsResults :: Property
+prop_globToolLimitsResults = property $ do
+    lineCount <- evalIO $ withTempDir $ \tmpDir -> do
+        forM_ [1 .. (150 :: Int)] $ \idx -> do
+            let path = tmpDir </> ("file" <> show idx <> ".txt")
+            TIO.writeFile path "content"
+        let input =
+                object
+                    [ "pattern" .= ("*.txt" :: Text)
+                    , "path" .= (T.pack tmpDir)
+                    ]
+        result <- execute (testContext tmpDir) "glob" input
+        let ls = T.lines (toOutput result)
+        pure (length ls)
+    assert $ lineCount <= 100
+
+prop_grepToolNoMatchesNotError :: Property
+prop_grepToolNoMatchesNotError = property $ do
+    result <- evalIO $ withTempDir $ \tmpDir -> do
+        let path = tmpDir </> "sample.txt"
+        TIO.writeFile path "hello world"
+        let input =
+                object
+                    [ "pattern" .= ("missing_pattern" :: Text)
+                    , "path" .= (T.pack tmpDir)
+                    ]
+        execute (testContext tmpDir) "grep" input
+    assert $ not (toIsError result)
+
 prop_toolOutputJsonRoundtrip :: Property
 prop_toolOutputJsonRoundtrip = property $ do
     title <- forAll genText
@@ -308,6 +349,69 @@ prop_toolRequiredParamsValid = property $ do
                     _ -> success
             _ -> success
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Edge Case Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: read tool returns error for nonexistent file
+prop_readNonexistentFile :: Property
+prop_readNonexistentFile = property $ do
+    filename <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
+    result <- evalIO $ withTempDir $ \tmpDir -> do
+        let path = tmpDir </> T.unpack filename </> "nonexistent.txt"
+        let input =
+                object
+                    [ "filePath" .= path
+                    , "offset" .= (1 :: Int)
+                    , "limit" .= (100 :: Int)
+                    ]
+        execute (testContext tmpDir) "read" input
+    assert $ toIsError result
+
+-- | Property: edit tool returns error for nonexistent file
+prop_editNonexistentFile :: Property
+prop_editNonexistentFile = property $ do
+    filename <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
+    result <- evalIO $ withTempDir $ \tmpDir -> do
+        let path = tmpDir </> T.unpack filename </> "nonexistent.txt"
+        let input =
+                object
+                    [ "filePath" .= path
+                    , "oldString" .= ("old" :: Text)
+                    , "newString" .= ("new" :: Text)
+                    ]
+        execute (testContext tmpDir) "edit" input
+    assert $ toIsError result
+
+-- | Property: bash tool with invalid command returns error
+prop_bashInvalidCommand :: Property
+prop_bashInvalidCommand = property $ do
+    result <- evalIO $ withTempDir $ \tmpDir -> do
+        let input =
+                object
+                    [ "command" .= ("nonexistent_command_xyz123" :: Text)
+                    , "description" .= ("test invalid" :: Text)
+                    , "timeout" .= (2000 :: Int)
+                    ]
+        execute (testContext tmpDir) "bash" input
+    -- The command should complete but with non-zero exit or error output
+    -- Either isError is true, or output contains error message
+    assert $ toIsError result || T.isInfixOf "not found" (toOutput result) || T.isInfixOf "command not found" (toOutput result)
+
+-- | Property: glob tool returns empty for nonexistent pattern
+prop_globEmptyForNonexistent :: Property
+prop_globEmptyForNonexistent = property $ do
+    result <- evalIO $ withTempDir $ \tmpDir -> do
+        let input =
+                object
+                    [ "pattern" .= ("**/*.nonexistent_extension_xyz" :: Text)
+                    , "path" .= (T.pack tmpDir)
+                    ]
+        execute (testContext tmpDir) "glob" input
+    assert $ not (toIsError result)
+    -- Output should indicate no matches
+    assert $ T.null (T.strip (toOutput result)) || T.isInfixOf "No files" (toOutput result) || toOutput result == ""
+
 -- Generators
 genText :: Gen Text
 genText = Gen.text (Range.linear 0 100) Gen.alphaNum
@@ -337,6 +441,9 @@ tests =
         , testProperty "edit multiple matches error" prop_editToolMultipleMatchesError
         , testProperty "bash tool" prop_bashTool
         , testProperty "bash tool uses workdir" prop_bashToolUsesWorkdir
+        , testProperty "bash tool timeout" prop_bashToolTimeout
+        , testProperty "glob tool limits results" prop_globToolLimitsResults
+        , testProperty "grep no matches not error" prop_grepToolNoMatchesNotError
         , testProperty "tool output JSON roundtrip" prop_toolOutputJsonRoundtrip
         , testProperty "tool definitions not empty" prop_toolDefinitionsNotEmpty
         , testProperty "all tools have names" prop_allToolsHaveNames
@@ -348,4 +455,9 @@ tests =
         , testProperty "tool list contains bash" prop_toolListContainsBash
         , testProperty "tool schemas have type" prop_toolSchemasHaveType
         , testProperty "tool required params valid" prop_toolRequiredParamsValid
+        -- Edge cases
+        , testProperty "read nonexistent file" prop_readNonexistentFile
+        , testProperty "edit nonexistent file" prop_editNonexistentFile
+        , testProperty "bash invalid command" prop_bashInvalidCommand
+        , testProperty "glob empty for nonexistent" prop_globEmptyForNonexistent
         ]

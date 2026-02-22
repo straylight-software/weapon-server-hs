@@ -13,6 +13,7 @@ module Integration.HaskemathesisTest (tests) where
 
 import Api (api)
 
+import Control.Monad (when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.OpenApi (OpenApi)
 import Data.Text (Text)
@@ -28,12 +29,14 @@ import Haskemathesis.OpenApi.Types (ResolvedOperation (..))
 import Log qualified
 import Middleware (supplyEmptyBody)
 import Network.Wai (Application)
-import Servant (serve)
+import Servant (serveWithContext)
 import Session.Session qualified as Session
 import Session.Types (Session (..), SessionTime (..))
+import Server.ErrorFormatters (errorFormattersContext)
 import State (AppState (..), initialStateNoProxyWithHome)
 import Storage.Storage qualified as Storage
-import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
+import Util.StorageKeys (sessionKey)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, getCurrentDirectory, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import System.IO.Unsafe (unsafePerformIO)
 import Test.Tasty (TestTree, testGroup)
@@ -88,6 +91,8 @@ createTestApp = do
   -- Get unique ID for this test instance
   uniqueId <- atomicModifyIORef' storageCounter (\n -> (n + 1, n))
   let storageDir = cwd </> ".opencode-test" </> "haskemathesis" </> show uniqueId
+  exists <- doesDirectoryExist storageDir
+  when exists $ removeDirectoryRecursive storageDir
   createDirectoryIfMissing True storageDir
   -- Create .config/weapon directory for global config isolation
   createDirectoryIfMissing True (storageDir </> ".config" </> "weapon")
@@ -100,7 +105,7 @@ createTestApp = do
   -- Pre-seed sessions with known IDs
   preSeedSessions state
 
-  let app = supplyEmptyBody $ serve api (server state)
+  let app = supplyEmptyBody $ serveWithContext api errorFormattersContext (server state)
   pure (app, state)
 
 -- | Pre-seed sessions with known IDs for testing
@@ -131,7 +136,7 @@ preSeedSessions state = do
             , sessionShare = Nothing
             , sessionRevert = Nothing
             }
-      Storage.write (Session.scStorage ctx) ["session", Session.scProjectID ctx, sid] session
+      Storage.write (Session.scStorage ctx) (sessionKey (Session.scProjectID ctx) sid) session
 
 -- | Rewrite a request to use known session IDs instead of random ones
 --

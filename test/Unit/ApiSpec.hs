@@ -96,6 +96,7 @@ spec = do
                     SessionTime
                         { stCreated = 1234567890
                         , stUpdated = 1234567891
+                        , stCompacting = Nothing
                         , stArchived = Just 1234567892
                         }
             decode (encode st) `shouldBe` Just st

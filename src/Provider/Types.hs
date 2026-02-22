@@ -21,9 +21,15 @@ module Provider.Types (
 where
 
 import Data.Aeson
+import Data.Aeson.Types (Pair)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import GHC.Generics (Generic)
+
+-- | Helper for optional JSON fields: converts Maybe value to optional key-value pair
+optField :: ToJSON v => Key -> Maybe v -> Maybe Pair
+optField k = fmap (k .=)
 
 -- | Model cost information (per million tokens)
 -- Flat structure with cache_read/cache_write per provider.list schema
@@ -41,9 +47,11 @@ instance ToJSON ModelCost where
         object $
             [ "input" .= mcInput mc
             , "output" .= mcOutput mc
-            ] ++ maybe [] (\v -> ["cache_read" .= v]) (mcCacheRead mc)
-              ++ maybe [] (\v -> ["cache_write" .= v]) (mcCacheWrite mc)
-              ++ maybe [] (\v -> ["context_over_200k" .= v]) (mcContextOver200k mc)
+            ] ++ catMaybes
+                [ optField "cache_read" (mcCacheRead mc)
+                , optField "cache_write" (mcCacheWrite mc)
+                , optField "context_over_200k" (mcContextOver200k mc)
+                ]
 
 instance FromJSON ModelCost where
     parseJSON = withObject "ModelCost" $ \v ->
@@ -67,7 +75,7 @@ instance ToJSON ModelLimit where
         object $
             [ "context" .= mlContext ml
             , "output" .= mlOutput ml
-            ] ++ maybe [] (\i -> ["input" .= i]) (mlInput ml)
+            ] ++ catMaybes [optField "input" (mlInput ml)]
 
 instance FromJSON ModelLimit where
     parseJSON = withObject "ModelLimit" $ \v ->
@@ -119,9 +127,10 @@ data ModelProvider = ModelProvider
 
 instance ToJSON ModelProvider where
     toJSON p =
-        object $
-            maybe [] (\v -> ["npm" .= v]) (mpNpm p)
-            ++ maybe [] (\v -> ["api" .= v]) (mpApi p)
+        object $ catMaybes
+            [ optField "npm" (mpNpm p)
+            , optField "api" (mpApi p)
+            ]
 
 instance FromJSON ModelProvider where
     parseJSON = withObject "ModelProvider" $ \v ->
@@ -165,15 +174,17 @@ instance ToJSON Model where
             , "tool_call" .= modelToolCall m
             , "limit" .= modelLimit m
             , "options" .= modelOptions m
-            ] ++ maybe [] (\f -> ["family" .= f]) (modelFamily m)
-              ++ maybe [] (\i -> ["interleaved" .= i]) (modelInterleaved m)
-              ++ maybe [] (\c -> ["cost" .= c]) (modelCost m)
-              ++ maybe [] (\x -> ["modalities" .= x]) (modelModalities m)
-              ++ maybe [] (\e -> ["experimental" .= e]) (modelExperimental m)
-              ++ maybe [] (\s -> ["status" .= s]) (modelStatus m)
-              ++ maybe [] (\h -> ["headers" .= h]) (modelHeaders m)
-              ++ maybe [] (\p -> ["provider" .= p]) (modelProvider m)
-              ++ maybe [] (\v -> ["variants" .= v]) (modelVariants m)
+            ] ++ catMaybes
+                [ optField "family" (modelFamily m)
+                , optField "interleaved" (modelInterleaved m)
+                , optField "cost" (modelCost m)
+                , optField "modalities" (modelModalities m)
+                , optField "experimental" (modelExperimental m)
+                , optField "status" (modelStatus m)
+                , optField "headers" (modelHeaders m)
+                , optField "provider" (modelProvider m)
+                , optField "variants" (modelVariants m)
+                ]
 
 instance FromJSON Model where
     parseJSON = withObject "Model" $ \v ->
@@ -240,8 +251,10 @@ instance ToJSON Provider where
             , "name" .= providerName p
             , "env" .= providerEnv p
             , "models" .= providerModels p
-            ] ++ maybe [] (\a -> ["api" .= a]) (providerApi p)
-              ++ maybe [] (\n -> ["npm" .= n]) (providerNpm p)
+            ] ++ catMaybes
+                [ optField "api" (providerApi p)
+                , optField "npm" (providerNpm p)
+                ]
 
 instance FromJSON Provider where
     parseJSON = withObject "Provider" $ \v ->

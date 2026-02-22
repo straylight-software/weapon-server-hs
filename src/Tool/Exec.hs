@@ -19,7 +19,7 @@ import LLM.Types (ToolResult (..), ToolUse (..))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory)
-import System.Process (readProcessWithExitCode)
+import System.Process (CreateProcess (..), StdStream (..), proc, readCreateProcessWithExitCode)
 import Tool.Types
 
 -- | Execute a tool from a ToolUse block
@@ -136,45 +136,79 @@ execBash :: ToolContext -> BashInput -> IO ToolOutput
 execBash ctx BashInput{..} = do
     let workdir = maybe (tcWorkdir ctx) T.unpack biWorkdir
     let timeoutMs = maybe 120000 id biTimeout
-    let timeoutS = timeoutMs `div` 1000
+    let timeoutS = max 1 ((timeoutMs + 999) `div` 1000)
 
-    -- Use timeout command for safety
-    let cmdLine = "cd " <> show workdir <> " && " <> T.unpack biCommand
-    let cmd = "timeout " <> show timeoutS <> " bash -c " <> show cmdLine
+    let cmd =
+            (proc "timeout" [show timeoutS, "bash", "-c", T.unpack biCommand])
+                { cwd = Just workdir
+                , std_in = NoStream
+                }
 
-    result <- try @SomeException $ readProcessWithExitCode "bash" ["-c", cmd] ""
+    result <- try @SomeException $ readCreateProcessWithExitCode cmd ""
     case result of
         Left e -> pure $ toolError "Bash Error" (T.pack $ show e)
         Right (exitCode, stdout, stderr) -> do
             let output = T.pack stdout <> (if null stderr then "" else "\n[stderr]\n" <> T.pack stderr)
+            let output' =
+                    if T.null output
+                        then "Command completed successfully with no output."
+                        else output
             if exitCode /= ExitSuccess
                 then pure $ toolError "Command failed" output
-                else pure $ toolSuccess biDescription output
+                else pure $ toolSuccess biDescription output'
 
 -- | Glob file search
 execGlob :: ToolContext -> GlobInput -> IO ToolOutput
 execGlob ctx GlobInput{..} = do
-    let searchPath = maybe (tcWorkdir ctx) T.unpack giPath
-    -- Use fd for fast globbing
-    let cmd = "fd --type f --glob " <> show (T.unpack giPattern) <> " " <> searchPath <> " | head -100"
+    let searchPath = maybe "." T.unpack giPath
+    let cwdDir = tcWorkdir ctx
+    let cmd =
+            (proc "fd" ["--type", "f", "--glob", T.unpack giPattern, searchPath])
+                { cwd = Just cwdDir
+                , std_in = NoStream
+                }
 
-    result <- try @SomeException $ readProcessWithExitCode "bash" ["-c", cmd] ""
+    result <- try @SomeException $ readCreateProcessWithExitCode cmd ""
     case result of
         Left e -> pure $ toolError "Glob Error" (T.pack $ show e)
-        Right (_, stdout, _) -> pure $ toolSuccess ("Glob " <> giPattern) (T.pack stdout)
+        Right (exitCode, stdout, stderr) -> do
+            let outputLines = take 100 (T.lines (T.pack stdout))
+            let output = T.unlines outputLines
+            case exitCode of
+                ExitSuccess -> pure $ toolSuccess ("Glob " <> giPattern) output
+                ExitFailure _ ->
+                    pure $
+                        toolError
+                            "Glob Error"
+                            (if null stderr then T.pack stdout else T.pack stderr)
 
 -- | Grep content search
 execGrep :: ToolContext -> GrepInput -> IO ToolOutput
 execGrep ctx GrepInput{..} = do
-    let searchPath = maybe (tcWorkdir ctx) T.unpack grPath
-    let includeArg = maybe "" (\p -> " --glob " <> show (T.unpack p)) grInclude
-    -- Use ripgrep for fast searching
-    let cmd = "rg --line-number --no-heading " <> show (T.unpack grPattern) <> includeArg <> " " <> searchPath <> " | head -100"
+    let searchPath = maybe "." T.unpack grPath
+    let cwdDir = tcWorkdir ctx
+    let baseArgs = ["--line-number", "--no-heading", T.unpack grPattern]
+    let includeArgs = maybe [] (\p -> ["--glob", T.unpack p]) grInclude
+    let cmd =
+            (proc "rg" (baseArgs <> includeArgs <> [searchPath]))
+                { cwd = Just cwdDir
+                , std_in = NoStream
+                }
 
-    result <- try @SomeException $ readProcessWithExitCode "bash" ["-c", cmd] ""
+    result <- try @SomeException $ readCreateProcessWithExitCode cmd ""
     case result of
         Left e -> pure $ toolError "Grep Error" (T.pack $ show e)
-        Right (_, stdout, _) -> pure $ toolSuccess ("Grep " <> grPattern) (T.pack stdout)
+        Right (exitCode, stdout, stderr) -> do
+            let outputLines = take 100 (T.lines (T.pack stdout))
+            let output = T.unlines outputLines
+            case exitCode of
+                ExitSuccess -> pure $ toolSuccess ("Grep " <> grPattern) output
+                ExitFailure 1 | null stdout -> pure $ toolSuccess ("Grep " <> grPattern) ""
+                ExitFailure _ ->
+                    pure $
+                        toolError
+                            "Grep Error"
+                            (if null stderr then T.pack stdout else T.pack stderr)
 
 -- | Resolve path relative to workdir if not absolute
 resolvePath :: ToolContext -> Text -> Text

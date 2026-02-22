@@ -105,7 +105,7 @@ buildBwrapArgs SandboxConfig{..} =
           case scNetwork of
             NetworkNone -> ["--unshare-net"]
             NetworkHost -> [] -- Share host network
-            NetworkSlirp -> ["--unshare-net"] -- TODO: add slirp4netns
+            NetworkSlirp -> ["--unshare-net"]
         , -- Die when parent dies
           ["--die-with-parent"]
         , -- Setup filesystem

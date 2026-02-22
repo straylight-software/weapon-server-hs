@@ -33,8 +33,9 @@ setDiagnostics storage values =
 getDiagnosticsFile :: Storage.StorageConfig -> IO [Value]
 getDiagnosticsFile storage = do
     -- Canonicalize to resolve symlinks (important in nix sandbox)
-    dir <- canonicalizePath (Storage.storageDir storage)
-    readFromPaths (diagnosticPaths dir)
+    let rawDir = Storage.storageDir storage
+    dir <- canonicalizePath rawDir
+    readFromPaths (diagnosticPaths rawDir <> diagnosticPaths dir)
 
 diagnosticPaths :: FilePath -> [FilePath]
 diagnosticPaths dir =

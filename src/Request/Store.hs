@@ -6,7 +6,6 @@ module Request.Store (
     generateId,
 ) where
 
-import Control.Exception (SomeException, try)
 import Data.Aeson (Value)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
@@ -23,15 +22,8 @@ writeRequest storage kind req value =
 listRequests :: Storage.StorageConfig -> Text -> IO [Value]
 listRequests storage kind = do
     keys <- Storage.list storage [kind]
-    values <- mapM (safeRead storage) keys
+    values <- mapM (Storage.readMaybe storage) keys
     pure (catMaybes values)
-  where
-    safeRead :: Storage.StorageConfig -> [Text] -> IO (Maybe Value)
-    safeRead s k = do
-        result <- try @SomeException (Storage.read s k)
-        case result of
-            Right v -> pure (Just v)
-            Left _ -> pure Nothing
 
 generateId :: IO Text
 generateId = do

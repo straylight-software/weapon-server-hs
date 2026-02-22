@@ -141,6 +141,25 @@ genUsage =
         <*> Gen.maybe (Gen.int (Range.linear 0 10000))
         <*> Gen.maybe (Gen.int (Range.linear 0 10000))
 
+-- | Property: ChatResponse JSON round-trip
+prop_chatResponseRoundtrip :: Property
+prop_chatResponseRoundtrip = property $ do
+    resp <- forAll genChatResponse
+    let json = encode resp
+    case decode json of
+        Nothing -> failure
+        Just resp' -> resp === resp'
+
+genChatResponse :: Gen ChatResponse
+genChatResponse =
+    ChatResponse
+        <$> genNonEmptyText
+        <*> genNonEmptyText
+        <*> genRole
+        <*> Gen.list (Range.linear 0 3) genContentBlock
+        <*> Gen.maybe genStopReason
+        <*> genUsage
+
 -- Test tree
 tests :: TestTree
 tests =
@@ -149,6 +168,10 @@ tests =
         [ testProperty "Role round-trip" prop_roleRoundtrip
         , testProperty "StopReason round-trip" prop_stopReasonRoundtrip
         , testProperty "Usage round-trip" prop_usageRoundtrip
-        -- Note: Content, ContentBlock, ToolUse, ToolResult, and Message
-        -- need proper FromJSON instances to be tested
+        , testProperty "Content round-trip" prop_contentRoundtrip
+        , testProperty "ContentBlock round-trip" prop_contentBlockRoundtrip
+        , testProperty "ToolUse round-trip" prop_toolUseRoundtrip
+        , testProperty "ToolResult round-trip" prop_toolResultRoundtrip
+        , testProperty "Message round-trip" prop_messageRoundtrip
+        , testProperty "ChatResponse round-trip" prop_chatResponseRoundtrip
         ]

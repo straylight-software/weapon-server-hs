@@ -170,6 +170,43 @@ prop_configThemePersistence = withTests 50 $ property $ do
     mergeValue (Object base) (Object updates) = Object (KM.union updates base)
     mergeValue _ updates = updates
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Additional Edge Case Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: mergeConfig with Right values overrides Left values
+prop_mergeRightOverridesLeft :: Property
+prop_mergeRightOverridesLeft = withTests 50 $ property $ do
+    theme1 <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    theme2 <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    let cfg1 = defaultConfig{cfgTheme = Just theme1}
+    let cfg2 = defaultConfig{cfgTheme = Just theme2}
+    let merged = mergeConfig cfg1 cfg2
+    cfgTheme merged === Just theme2
+
+-- | Property: mergeConfig preserves provider settings from override
+prop_mergePreservesProviders :: Property
+prop_mergePreservesProviders = withTests 50 $ property $ do
+    disabled <- forAll Gen.bool
+    let providerCfg = ProviderConfig (Just disabled) Nothing
+    let cfg1 = defaultConfig
+    let cfg2 = defaultConfig{cfgProvider = Just (Map.singleton "openai" providerCfg)}
+    let merged = mergeConfig cfg1 cfg2
+    case cfgProvider merged of
+        Just providers -> do
+            case Map.lookup "openai" providers of
+                Just pc -> pcDisabled pc === Just disabled
+                Nothing -> failure
+        Nothing -> failure
+
+-- | Property: empty config merge is identity
+prop_emptyConfigIdentity :: Property
+prop_emptyConfigIdentity = withTests 50 $ property $ do
+    cfg <- forAll genConfig
+    -- Merging with a completely empty config should preserve original
+    let emptyish = defaultConfig
+    mergeConfig cfg emptyish === cfg
+
 -- Generators
 genText :: Gen Text
 genText = Gen.text (Range.linear 0 50) Gen.alphaNum
@@ -284,4 +321,8 @@ tests =
         , testProperty "config file atomic write" prop_configFileAtomicWrite
         , testProperty "config nested merge" prop_configNestedMerge
         , testProperty "config theme persistence" prop_configThemePersistence
+        -- Additional edge cases
+        , testProperty "merge right overrides left" prop_mergeRightOverridesLeft
+        , testProperty "merge preserves providers" prop_mergePreservesProviders
+        , testProperty "empty config identity" prop_emptyConfigIdentity
         ]

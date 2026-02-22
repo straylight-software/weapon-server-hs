@@ -77,6 +77,65 @@ prop_updatePreservesOtherParts = property $ do
         Just updated -> do
             Parts.findPart otherPid updated === Just other
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Additional Edge Case Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: updating a part with same content is idempotent
+prop_updatePartIdempotent :: Property
+prop_updatePartIdempotent = property $ do
+    pid <- forAll genNonEmptyText
+    part <- forAll (genPart pid)
+    -- Update with the same content
+    let patch = part  -- Use the same value as patch
+    case Parts.updatePart pid patch [part] of
+        Nothing -> failure
+        Just updated1 -> do
+            case Parts.updatePart pid patch updated1 of
+                Nothing -> failure
+                Just updated2 -> updated1 === updated2
+
+-- | Property: deleting same part twice - second returns Nothing
+prop_deletePartTwice :: Property
+prop_deletePartTwice = property $ do
+    pid <- forAll genNonEmptyText
+    part <- forAll (genPart pid)
+    case Parts.deletePart pid [part] of
+        Nothing -> failure
+        Just afterFirst -> do
+            -- Second delete should return Nothing (part no longer exists)
+            Parts.deletePart pid afterFirst === Nothing
+
+-- | Property: findPart in nested structure with multiple levels
+prop_findPartInNestedStructure :: Property
+prop_findPartInNestedStructure = property $ do
+    pid <- forAll genNonEmptyText
+    content <- forAll genText
+    -- Create a deeply nested part structure
+    let nestedPart = object 
+            [ "id" .= pid
+            , "type" .= ("nested" :: Text)
+            , "data" .= object 
+                [ "inner" .= object ["value" .= content]
+                ]
+            ]
+    otherParts <- forAll $ Gen.list (Range.linear 0 3) genPartAny
+    let allParts = nestedPart : otherParts
+    -- findPart should still locate by top-level id
+    case Parts.findPart pid allParts of
+        Nothing -> failure
+        Just found -> found === nestedPart
+
+-- | Property: empty parts list operations
+prop_emptyPartsOperations :: Property
+prop_emptyPartsOperations = property $ do
+    pid <- forAll genNonEmptyText
+    patch <- forAll genPatch
+    -- All operations on empty list should return Nothing
+    Parts.findPart pid [] === Nothing
+    Parts.updatePart pid patch [] === Nothing
+    Parts.deletePart pid [] === Nothing
+
 genText :: Gen Text
 genText = Gen.text (Range.linear 0 50) Gen.alphaNum
 
@@ -112,4 +171,9 @@ tests =
         , testProperty "update missing part" prop_updateMissingPart
         , testProperty "delete missing part" prop_deleteMissingPart
         , testProperty "update preserves other parts" prop_updatePreservesOtherParts
+        -- Additional edge cases
+        , testProperty "update part is idempotent" prop_updatePartIdempotent
+        , testProperty "delete part twice" prop_deletePartTwice
+        , testProperty "find part in nested structure" prop_findPartInNestedStructure
+        , testProperty "empty parts operations" prop_emptyPartsOperations
         ]

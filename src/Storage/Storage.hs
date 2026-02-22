@@ -11,6 +11,7 @@ module Storage.Storage (
     remove,
     list,
     NotFoundError (..),
+    StorageError (..),
     withStorage,
     StorageConfig (..),
 ) where
@@ -41,6 +42,13 @@ newtype NotFoundError = NotFoundError {notFoundPath :: FilePath}
 
 instance Exception NotFoundError
 
+-- | Storage error
+data StorageError
+    = StorageDecodeError FilePath Text
+    deriving (Show, Eq)
+
+instance Exception StorageError
+
 -- | Initialize storage with a base directory
 withStorage :: FilePath -> (StorageConfig -> IO a) -> IO a
 withStorage dir action = do
@@ -57,7 +65,7 @@ read cfg key = do
     let target = keyPath cfg key
     result <- eitherDecodeFileStrict target `catch` handleNotFound target
     case result of
-        Left err -> fail $ "JSON decode error: " <> err
+        Left err -> throwIO $ StorageDecodeError target (T.pack err)
         Right val -> pure val
   where
     handleNotFound :: FilePath -> IOError -> IO (Either String a)
@@ -68,7 +76,10 @@ read cfg key = do
 -- | Read a JSON value from storage, returning Nothing if not found
 readMaybe :: (FromJSON a) => StorageConfig -> [Text] -> IO (Maybe a)
 readMaybe cfg key =
-    (Just <$> read cfg key) `catch` \(NotFoundError _) -> pure Nothing
+    ( (Just <$> read cfg key)
+        `catch` \(NotFoundError _) -> pure Nothing
+    )
+        `catch` \(StorageDecodeError _ _) -> pure Nothing
 
 -- | Write a JSON value to storage using atomic write (temp file + rename)
 write :: (ToJSON a) => StorageConfig -> [Text] -> a -> IO ()

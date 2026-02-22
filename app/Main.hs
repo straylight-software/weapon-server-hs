@@ -47,6 +47,7 @@ import Network.WebSockets
     )
 import Pty.Connect ()
 import Pty.Pty qualified as Pty
+import Server.ErrorFormatters (errorFormattersContext)
 import Servant
 import State
 import System.Directory (getCurrentDirectory)
@@ -142,7 +143,7 @@ main = Log.withLogger "weapon" $ \logger -> do
     Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
     Log.logMsg serverLogger Katip.InfoS "listening on port 4096"
 
-    let servantApp = enableCors $ supplyEmptyBody $ serve api (server appState)
+    let servantApp = enableCors $ supplyEmptyBody $ serveWithContext api errorFormattersContext (server appState)
         websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
 
     run 4096 websocketApp

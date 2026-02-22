@@ -10,7 +10,9 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Request.Store qualified as RequestStore
 import Storage.Storage qualified as Storage
-import System.Directory (removeDirectoryRecursive)
+import Data.Text.IO qualified as TIO
+import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.FilePath ((</>))
 import System.IO.Temp (createTempDirectory)
 import Test.Tasty
 import Test.Tasty.Hedgehog
@@ -38,6 +40,21 @@ prop_requestEmptyList = property $ do
     result <- evalIO $ withStore $ \store ->
         RequestStore.listRequests store kind
     result === []
+
+prop_requestSkipsInvalidJson :: Property
+prop_requestSkipsInvalidJson = property $ do
+    kind <- forAll genText
+    req <- forAll genText
+    value <- forAll genValue
+    result <- evalIO $ withStore $ \store -> do
+        RequestStore.writeRequest store kind req value
+        let badReq = if req == "invalid" then "invalid2" else "invalid"
+        let dir = Storage.storageDir store </> T.unpack kind
+        createDirectoryIfMissing True dir
+        TIO.writeFile (dir </> T.unpack badReq <> ".json") "{"
+        RequestStore.listRequests store kind
+    assert $ value `elem` result
+    length result === 1
 
 prop_generateIdPrefix :: Property
 prop_generateIdPrefix = property $ do
@@ -69,6 +86,7 @@ tests =
         "Request Store Property Tests"
         [ testProperty "request roundtrip" prop_requestRoundtrip
         , testProperty "request list empty" prop_requestEmptyList
+        , testProperty "request skips invalid json" prop_requestSkipsInvalidJson
         , testProperty "generate id prefix" prop_generateIdPrefix
         , testProperty "generate id unique" prop_generateIdUnique
         , testProperty "generate id non-empty" prop_generateIdNonEmpty

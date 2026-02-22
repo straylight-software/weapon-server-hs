@@ -42,6 +42,7 @@ import Network.Wai
 import Network.Wai.Handler.Warp (run)
 import System.Directory (createDirectoryIfMissing)
 
+import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as C8
 import Data.ByteString.Lazy qualified as LBS
@@ -49,6 +50,8 @@ import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Network.HTTP.Client qualified as HC
 import Network.HTTP.Client.TLS qualified as HCT
+import Network.Socket qualified as Socket
+import Network.Socket.ByteString qualified as SocketBS
 
 import Proxy.Types
 
@@ -242,24 +245,59 @@ handleHttp state manager logFile req respond = do
 -- | Handle CONNECT requests (HTTPS tunneling with MITM)
 handleConnect :: ProxyState -> HC.Manager -> FilePath -> Application
 handleConnect _state _manager _logFile req respond = do
-    -- For now, just tunnel without MITM
-    -- Full MITM requires dynamic cert generation
-    -- TODO: Implement proper TLS interception
+    let rawTarget = C8.unpack $ rawPathInfo req
+    case parseHostPort rawTarget of
+        Nothing ->
+            respond $
+                responseLBS
+                    status400
+                    [("Content-Type", "text/plain")]
+                    "Invalid CONNECT target"
+        Just (host, port) ->
+            respond $
+                responseRaw
+                    (tunnel host port)
+                    (responseLBS status502 [("Content-Type", "text/plain")] "Proxy error")
 
-    let _host = C8.unpack $ rawPathInfo req
+parseHostPort :: String -> Maybe (String, Int)
+parseHostPort target =
+    let stripped = case target of
+            '/' : rest -> rest
+            other -> other
+    in case break (== ':') stripped of
+        (host, ':' : portStr) -> case reads portStr of
+            [(port, "")] -> Just (host, port)
+            _ -> Nothing
+        _ -> Nothing
 
-    -- For HTTPS MITM, we'd need to:
-    -- 1. Generate cert for target host signed by our CA
-    -- 2. Accept TLS from client with that cert
-    -- 3. Open TLS to real server
-    -- 4. Proxy and log all data
-
-    -- For now, respond with 200 and note this needs work
-    respond $
-        responseLBS
-            status200
-            [("Content-Type", "text/plain")]
-            "CONNECT tunneling - MITM TLS not yet implemented"
+tunnel :: String -> Int -> IO ByteString -> (ByteString -> IO ()) -> IO ()
+tunnel host port readClient writeClient = do
+    addrInfos <- Socket.getAddrInfo Nothing (Just host) (Just (show port))
+    case addrInfos of
+        [] -> writeClient "HTTP/1.1 502 Bad Gateway\r\n\r\n"
+        (addr : _) -> do
+            sock <- Socket.socket (Socket.addrFamily addr) Socket.Stream Socket.defaultProtocol
+            Socket.connect sock (Socket.addrAddress addr)
+            writeClient "HTTP/1.1 200 Connection Established\r\n\r\n"
+            upstreamThread <- forkIO $ pumpClient sock
+            pumpServer sock
+            killThread upstreamThread
+            Socket.close sock
+  where
+    pumpClient sock = do
+        bs <- readClient
+        if BS.null bs
+            then pure ()
+            else do
+                SocketBS.sendAll sock bs
+                pumpClient sock
+    pumpServer sock = do
+        bs <- SocketBS.recv sock 4096
+        if BS.null bs
+            then pure ()
+            else do
+                writeClient bs
+                pumpServer sock
 
 -- | Check if header should not be forwarded
 isHopHeader :: HeaderName -> Bool

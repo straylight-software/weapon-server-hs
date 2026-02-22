@@ -256,6 +256,17 @@ data ChatResponse = ChatResponse
     }
     deriving (Eq, Show, Generic)
 
+instance ToJSON ChatResponse where
+    toJSON ChatResponse{..} =
+        object
+            [ "id" .= respId
+            , "model" .= respModel
+            , "role" .= respRole
+            , "content" .= respContent
+            , "stop_reason" .= respStopReason
+            , "usage" .= respUsage
+            ]
+
 instance FromJSON ChatResponse where
     parseJSON = withObject "ChatResponse" $ \v ->
         ChatResponse

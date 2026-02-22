@@ -49,7 +49,15 @@ import System.Directory (findExecutable)
 import System.Exit (ExitCode (..))
 import System.Posix.Pty (Pty, closePty, readPty, resizePty, spawnWithPty, writePty)
 import System.Posix.Signals qualified as Sig
-import System.Process (ProcessHandle, getPid, getProcessExitCode, terminateProcess, waitForProcess)
+import System.Process
+    ( ProcessHandle
+    , createProcess
+    , getPid
+    , getProcessExitCode
+    , proc
+    , terminateProcess
+    , waitForProcess
+    )
 
 import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
@@ -74,6 +82,7 @@ data RealPtySession = RealPtySession
     , rpsBuffer :: TVar PtyBuffer
     , rpsOverlayDir :: Maybe FilePath
     , rpsSandboxCfg :: Maybe SandboxConfig
+    , rpsNetworkProcess :: Maybe ProcessHandle
     }
 
 -- | Create a new PTY manager
@@ -127,65 +136,75 @@ createSandboxed PtyManager{..} ptyId cwd title env network input = do
     -- Build sandbox config
     let config =
             (defaultConfig cwd)
-                { scNetwork = if network then NetworkHost else NetworkNone
+                { scNetwork = if network then NetworkSlirp else NetworkNone
                 , scEnv = env
                 , scMounts = maybe [] (map toMountSpec) (cpiMounts input)
                 }
+    slirpPath <- if scNetwork config == NetworkSlirp then findExecutable "slirp4netns" else pure (Just "")
+    case (scNetwork config, slirpPath) of
+        (NetworkSlirp, Nothing) -> pure $ Left "slirp4netns not found"
+        _ -> do
+            -- Create sandbox directories
+            result <- Sandbox.create ptyId config
 
-    -- Create sandbox directories
-    result <- Sandbox.create ptyId config
+            case result of
+                Left err -> pure $ Left err
+                Right (overlayDir, _) -> do
+                    -- Build the full bwrap command
+                    let bwrapArgs = Sandbox.buildBwrapArgs config
+                        _envList = map (\(k, v) -> (T.unpack k, T.unpack v)) env ++ defaultEnvList
 
-    case result of
-        Left err -> pure $ Left err
-        Right (overlayDir, _) -> do
-            -- Build the full bwrap command
-            let bwrapArgs = Sandbox.buildBwrapArgs config
-                _envList = map (\(k, v) -> (T.unpack k, T.unpack v)) env ++ defaultEnvList
+                    -- Spawn with PTY
+                    ptyResult <-
+                        try @SomeException $
+                            spawnWithPty Nothing True "bwrap" bwrapArgs (80, 24)
 
-            -- Spawn with PTY
-            ptyResult <-
-                try @SomeException $
-                    spawnWithPty Nothing True "bwrap" bwrapArgs (80, 24)
+                    case ptyResult of
+                        Left e -> do
+                            void $ try @SomeException $ Sandbox.destroyDir overlayDir
+                            pure $ Left $ "Failed to spawn sandbox PTY: " <> T.pack (show e)
+                        Right (pty, ph) -> do
+                            pid <- getPid ph
+                            bufferVar <- newTVarIO emptyBuffer
+                            netProcess <- case (scNetwork config, pid) of
+                                (NetworkSlirp, Just procPid) -> do
+                                    let args = ["--configure", show procPid, "tap0"]
+                                    (_, _, _, slirpPh) <- createProcess (proc "slirp4netns" args)
+                                    pure (Just slirpPh)
+                                _ -> pure Nothing
 
-            case ptyResult of
-                Left e -> do
-                    void $ try @SomeException $ Sandbox.destroyDir overlayDir
-                    pure $ Left $ "Failed to spawn sandbox PTY: " <> T.pack (show e)
-                Right (pty, ph) -> do
-                    pid <- getPid ph
-                    bufferVar <- newTVarIO emptyBuffer
+                            let info =
+                                    PtyInfo
+                                        { piId = ptyId
+                                        , piTitle = title
+                                        , piCommand = "bwrap"
+                                        , piArgs = map T.pack bwrapArgs
+                                        , piCwd = T.pack cwd
+                                        , piStatus = PtyRunning
+                                        , piPid = maybe 0 fromIntegral pid
+                                        , piSandbox = True
+                                        }
 
-                    let info =
-                            PtyInfo
-                                { piId = ptyId
-                                , piTitle = title
-                                , piCommand = "bwrap"
-                                , piArgs = map T.pack bwrapArgs
-                                , piCwd = T.pack cwd
-                                , piStatus = PtyRunning
-                                , piPid = maybe 0 fromIntegral pid
-                                , piSandbox = True
-                                }
+                            let session =
+                                    RealPtySession
+                                        { rpsInfo = info
+                                        , rpsPty = pty
+                                        , rpsProcess = ph
+                                        , rpsBuffer = bufferVar
+                                        , rpsOverlayDir = Just overlayDir
+                                        , rpsSandboxCfg = Just config
+                                        , rpsNetworkProcess = netProcess
+                                        }
 
-                    let session =
-                            RealPtySession
-                                { rpsInfo = info
-                                , rpsPty = pty
-                                , rpsProcess = ph
-                                , rpsBuffer = bufferVar
-                                , rpsOverlayDir = Just overlayDir
-                                , rpsSandboxCfg = Just config
-                                }
+                            atomically $ modifyTVar' pmSessions (Map.insert ptyId session)
 
-                    atomically $ modifyTVar' pmSessions (Map.insert ptyId session)
+                            -- Start reader thread
+                            void $ forkIO $ ptyReaderThread session
 
-                    -- Start reader thread
-                    void $ forkIO $ ptyReaderThread session
+                            -- Monitor for exit
+                            void $ forkIO $ exitMonitor pmSessions ptyId ph (Just overlayDir)
 
-                    -- Monitor for exit
-                    void $ forkIO $ exitMonitor pmSessions ptyId ph (Just overlayDir)
-
-                    pure $ Right info
+                            pure $ Right info
 
 -- | Create an unsandboxed PTY
 createUnsandboxed :: PtyManager -> Text -> FilePath -> Text -> [(Text, Text)] -> CreatePtyInput -> IO (Either Text PtyInfo)
@@ -224,6 +243,7 @@ createUnsandboxed PtyManager{..} ptyId cwd title env input = do
                         , rpsBuffer = bufferVar
                         , rpsOverlayDir = Nothing
                         , rpsSandboxCfg = Nothing
+                        , rpsNetworkProcess = Nothing
                         }
 
             atomically $ modifyTVar' pmSessions (Map.insert ptyId session)
@@ -292,6 +312,15 @@ exitMonitor sessions ptyId ph mOverlayDir = do
                 (\s -> s{rpsInfo = (rpsInfo s){piStatus = status}})
                 ptyId
 
+    mSession <- readTVarIO sessions
+    case Map.lookup ptyId mSession of
+        Nothing -> pure ()
+        Just session -> case rpsNetworkProcess session of
+            Nothing -> pure ()
+            Just netPh -> do
+                terminateProcess netPh
+                void $ try @SomeException $ waitForProcess netPh
+
     -- Cleanup overlay after delay
     case mOverlayDir of
         Nothing -> pure ()
@@ -357,6 +386,11 @@ remove PtyManager{..} ptyId = do
             void $ try @SomeException $ closePty (rpsPty session)
             -- Terminate the process
             terminateProcess (rpsProcess session)
+            case rpsNetworkProcess session of
+                Nothing -> pure ()
+                Just netPh -> do
+                    terminateProcess netPh
+                    void $ try @SomeException $ waitForProcess netPh
             -- Wait briefly for process to exit (poll a few times)
             waitForExit 5 (rpsProcess session)
 

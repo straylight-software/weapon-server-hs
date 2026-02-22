@@ -16,7 +16,6 @@ module LLM.Anthropic (
 ) where
 
 import Control.Exception (SomeException, try)
-import Control.Monad (when)
 import Data.Aeson (Value (..), decode, eitherDecode, encode, parseJSON, (.:))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString (ByteString)
@@ -86,32 +85,35 @@ chatStream client req onEvent = do
 
     result <- try @SomeException $ HC.withResponse httpReq (acManager client) $ \resp -> do
         let status = HC.responseStatus resp
-        when (HT.statusCode status /= 200) $ do
-            body <- HC.brConsume $ HC.responseBody resp
-            error $ "API error: " <> show status <> " " <> show body
-
-        -- Parse SSE stream
-        bufferRef <- newIORef ""
-        let loop = do
-                chunk <- HC.brRead $ HC.responseBody resp
-                if BS.null chunk
-                    then pure ()
-                    else do
-                        buffer <- readIORef bufferRef
-                        let fullBuffer = buffer <> chunk
-                        -- Process complete events
-                        (remaining, events) <- parseSSE fullBuffer
-                        writeIORef bufferRef remaining
-                        mapM_ onEvent events
-                        -- Check if we got MessageStop
-                        if any isMessageStop events
+        if HT.statusCode status /= 200
+            then do
+                body <- HC.brConsume $ HC.responseBody resp
+                pure $ Left $ "API error: " <> T.pack (show status) <> " " <> T.pack (show body)
+            else do
+                -- Parse SSE stream
+                bufferRef <- newIORef ""
+                let loop = do
+                        chunk <- HC.brRead $ HC.responseBody resp
+                        if BS.null chunk
                             then pure ()
-                            else loop
-        loop
+                            else do
+                                buffer <- readIORef bufferRef
+                                let fullBuffer = buffer <> chunk
+                                -- Process complete events
+                                (remaining, events) <- parseSSE fullBuffer
+                                writeIORef bufferRef remaining
+                                mapM_ onEvent events
+                                -- Check if we got MessageStop
+                                if any isMessageStop events
+                                    then pure ()
+                                    else loop
+                loop
+                pure $ Right ()
 
     case result of
         Left e -> pure $ Left $ T.pack $ show e
-        Right () -> pure $ Right ()
+        Right (Left err) -> pure $ Left err
+        Right (Right ()) -> pure $ Right ()
 
 -- | Make an HTTP request to Anthropic API
 makeRequest :: AnthropicClient -> Text -> LBS.ByteString -> IO (Either Text LBS.ByteString)

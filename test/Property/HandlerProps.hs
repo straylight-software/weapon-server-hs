@@ -39,6 +39,7 @@ import Servant (Tagged (..))
 import Servant.Server (Handler, ServerError, runHandler)
 import State
 import Storage.Storage qualified as Storage
+import Util.StorageKeys (todoKey)
 import System.Directory (createDirectory, findExecutable, removeDirectoryRecursive)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
@@ -217,6 +218,33 @@ prop_projectHandlers = withTests 20 $ property $ do
             projWork current === dir
             projWork fetched === dir
 
+prop_projectUpdateHandler :: Property
+prop_projectUpdateHandler = withTests 20 $ property $ do
+    newName <- forAll genText
+    result <- evalIO $ withState $ \st -> do
+        current <- runHandlerIO (projectCurrentHandler st Nothing)
+        case current of
+            Left err -> pure (Left err)
+            Right cur -> do
+                let pid = Api.id cur
+                let input = object ["name" .= newName]
+                updated <- runHandlerIO (projectUpdateHandler st pid input)
+                current2 <- runHandlerIO (projectCurrentHandler st Nothing)
+                listed <- runHandlerIO (projectListHandler st)
+                pure (Right (updated, current2, listed))
+    case result of
+        Left _ -> failure
+        Right (updated, current2, listed) -> do
+            case updated of
+                Left _ -> failure
+                Right proj -> name proj === Just newName
+            case current2 of
+                Left _ -> failure
+                Right proj -> name proj === Just newName
+            case listed of
+                Left _ -> failure
+                Right projs -> assert $ any (\p -> name p == Just newName) projs
+
 prop_providerListHandler :: Property
 prop_providerListHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (providerListHandler st Nothing)
@@ -306,16 +334,16 @@ prop_sessionLifecycleHandler = withTests 20 $ property $ do
         listed <- runHandlerIO (sessionListHandler st Nothing Nothing Nothing Nothing Nothing)
         fetched <- case created of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionGetHandler st (sesId ses))
+            Right ses -> runHandlerIO (sessionGetHandler st (sessionId ses))
         updated <- case created of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionUpdateHandler st (sesId ses) (UpdateSessionInput (Just next) Nothing Nothing Nothing))
+            Right ses -> runHandlerIO (sessionUpdateHandler st (sessionId ses) (UpdateSessionInput (Just next) Nothing Nothing Nothing))
         deleted <- case created of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionDeleteHandler st (sesId ses))
+            Right ses -> runHandlerIO (sessionDeleteHandler st (sessionId ses))
         fetched2 <- case created of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionGetHandler st (sesId ses))
+            Right ses -> runHandlerIO (sessionGetHandler st (sessionId ses))
         pure (created, listed, fetched, updated, deleted, fetched2)
     case result of
         (Left _, _, _, _, _, _) -> failure
@@ -324,9 +352,9 @@ prop_sessionLifecycleHandler = withTests 20 $ property $ do
         (_, _, _, Left _, _, _) -> failure
         (_, _, _, _, Left _, _) -> failure
         (Right created, Right listed, Right fetched, Right updated, Right deleted, Left _) -> do
-            assert $ any (\s -> sesId s == sesId created) listed
-            sesId fetched === sesId created
-            sesTitle updated === next
+            assert $ any (\s -> sessionId s == sessionId created) listed
+            sessionId fetched === sessionId created
+            sessionTitle updated === next
             deleted === True
         _ -> failure
 
@@ -338,17 +366,17 @@ prop_sessionChildrenHandler = withTests 20 $ property $ do
         parent <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just parentTitle) Nothing))
         child <- case parent of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just childTitle) (Just (sesId ses))))
+            Right ses -> runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just childTitle) (Just (sessionId ses))))
         kids <- case parent of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionChildrenHandler st (sesId ses))
+            Right ses -> runHandlerIO (sessionChildrenHandler st (sessionId ses) Nothing)
         pure (parent, child, kids)
     case result of
         (Left _, _, _) -> failure
         (_, Left _, _) -> failure
         (_, _, Left _) -> failure
         (Right parent, Right child, Right kids) ->
-            assert $ any (\s -> sesId s == sesId child && sesParentId s == Just (sesId parent)) kids
+            assert $ any (\s -> sessionId s == sessionId child && sessionParentID s == Just (sessionId parent)) kids
 
 prop_sessionTodoHandler :: Property
 prop_sessionTodoHandler = withTests 20 $ property $ do
@@ -356,7 +384,7 @@ prop_sessionTodoHandler = withTests 20 $ property $ do
     item <- forAll genText
     result <- evalIO $ withState $ \st -> do
         let todos = [object ["text" .= item]]
-        Storage.write (stStorage st) ["todo", sid] todos
+        Storage.write (stStorage st) (todoKey sid) todos
         res <- runHandlerIO (sessionTodoHandler st sid)
         pure res
     case result of
@@ -387,14 +415,14 @@ prop_sessionForkHandler = withTests 20 $ property $ do
         parent <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just title) Nothing))
         forked <- case parent of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionForkHandler st (sesId ses) (ForkSessionInput Nothing))
+            Right ses -> runHandlerIO (sessionForkHandler st (sessionId ses) (ForkSessionInput Nothing))
         pure (parent, forked)
     case result of
         (Left _, _) -> failure
         (_, Left _) -> failure
         (Right parent, Right forked) -> do
-            sesParentId forked === Just (sesId parent)
-            assert $ "Fork of" `T.isPrefixOf` sesTitle forked
+            sessionParentID forked === Just (sessionId parent)
+            assert $ "Fork of" `T.isPrefixOf` sessionTitle forked
 
 prop_sessionAbortHandler :: Property
 prop_sessionAbortHandler = withTests 20 $ property $ do
@@ -418,10 +446,10 @@ prop_sessionShareHandlers = withTests 20 $ property $ do
         created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "share") Nothing))
         shared <- case created of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionShareCreateHandler st (sesId ses))
+            Right ses -> runHandlerIO (sessionShareCreateHandler st (sessionId ses))
         deleted <- case created of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionShareDeleteHandler st (sesId ses))
+            Right ses -> runHandlerIO (sessionShareDeleteHandler st (sessionId ses))
         pure (created, shared, deleted)
     case result of
         (Left _, _, _) -> failure
@@ -429,11 +457,11 @@ prop_sessionShareHandlers = withTests 20 $ property $ do
         (_, _, Left _) -> failure
         (Right created, Right shared, Right deleted) -> do
             -- After sharing, the session should have a share URL containing the session ID
-            case sesShare shared of
+            case sessionShare shared of
                 Nothing -> failure
-                Just share -> assert $ sesId created `T.isInfixOf` shareUrl share
+                Just share -> assert $ sessionId created `T.isInfixOf` shareUrl share
             -- After unsharing, the session should have no share
-            sesShare deleted === Nothing
+            sessionShare deleted === Nothing
 
 prop_sessionDiffHandler :: Property
 prop_sessionDiffHandler = withTests 20 $ property $ do
@@ -463,7 +491,7 @@ prop_sessionSummarizeHandler = withTests 20 $ property $ do
             created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "sum") Nothing))
             summarized <- case created of
                 Left err -> pure (Left err)
-                Right ses -> runHandlerIO (sessionSummarizeHandler st (sesId ses))
+                Right ses -> runHandlerIO (sessionSummarizeHandler st (sessionId ses))
             pure (summarized, Nothing)
         )
             `catch` \(e :: VcsError) -> pure (Right True, Just e)
@@ -481,21 +509,21 @@ prop_sessionRevertHandlers = withTests 20 $ property $ do
         created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "rev") Nothing))
         reverted <- case created of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionRevertHandler st (sesId ses) (SessionRevert mid Nothing Nothing Nothing))
+            Right ses -> runHandlerIO (sessionRevertHandler st (sessionId ses) (SessionRevert mid Nothing Nothing Nothing))
         unreverted <- case created of
             Left err -> pure (Left err)
-            Right ses -> runHandlerIO (sessionUnrevertHandler st (sesId ses))
+            Right ses -> runHandlerIO (sessionUnrevertHandler st (sessionId ses))
         pure (reverted, unreverted)
     case result of
         (Left _, _) -> failure
         (_, Left _) -> failure
         (Right reverted, Right unreverted) -> do
             -- After revert, the session should have a revert with the message ID
-            case sesRevert reverted of
+            case sessionRevert reverted of
                 Nothing -> failure
-                Just rev -> srMessageId rev === mid
+                Just rev -> revertMessageID rev === mid
             -- After unrevert, the session should have no revert
-            sesRevert unreverted === Nothing
+            sessionRevert unreverted === Nothing
 
 prop_sessionPermissionHandler :: Property
 prop_sessionPermissionHandler = withTests 20 $ property $ do
@@ -532,6 +560,8 @@ prop_sessionMessageHandlers = withTests 20 $ property $ do
         (Right listed, Right fetched) -> do
             assert $ length listed >= 2
             msgId (msgInfo fetched) === "msg_1"
+            let assistants = filter (\m -> msgRole (msgInfo m) == ("assistant" :: Text)) listed
+            assert $ any (\m -> not (null (msgParts m))) assistants
 
 prop_sessionMessagePartHandlers :: Property
 prop_sessionMessagePartHandlers = withTests 20 $ property $ do
@@ -1158,6 +1188,7 @@ tests =
         , testProperty "path handler" prop_pathHandler
         , testProperty "global config handler" prop_globalConfigHandler
         , testProperty "project handlers" prop_projectHandlers
+        , testProperty "project update handler" prop_projectUpdateHandler
         , testProperty "provider list handler" prop_providerListHandler
         , testProperty "provider auth handler" prop_providerAuthHandler
         , testProperty "provider handler" prop_providerHandler

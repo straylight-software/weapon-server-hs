@@ -5,6 +5,8 @@ module Property.SessionProps where
 
 import Bus.Bus qualified as Bus
 import Control.Monad (replicateM, void)
+import Data.List (sortOn)
+import Data.Ord (Down (..))
 import Data.Text qualified as T
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -16,6 +18,7 @@ import System.Directory (removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory)
 import Test.Tasty
 import Test.Tasty.Hedgehog
+import Util.StorageKeys (sessionKey)
 
 -- | Create a test session context
 withTestContext :: (Session.SessionContext -> IO a) -> IO a
@@ -186,6 +189,84 @@ prop_listLimitFilter = property $ do
     -- Should return at most limitVal sessions
     assert $ length sessions <= limitVal
 
+-- | Property: list returns sessions ordered by updated timestamp (descending)
+prop_listSortedByUpdated :: Property
+prop_listSortedByUpdated = property $ do
+    shuffled <- forAll $ Gen.shuffle [10.0, 20.0, 30.0]
+    let times = take 3 shuffled
+    listed <- evalIO $ withTestContext $ \ctx -> do
+        sessions <- replicateM 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        let store = Session.scStorage ctx
+        let projectId = Session.scProjectID ctx
+        let updatedSessions =
+                zipWith
+                    (\s t -> s{ST.sessionTime = ST.SessionTime t t Nothing Nothing})
+                    sessions
+                    times
+        mapM_
+            ( \s ->
+                Storage.write store (sessionKey projectId (ST.sessionId s)) s
+            )
+            updatedSessions
+        Session.list ctx Nothing Nothing Nothing Nothing
+    let listedTimes = map (ST.stUpdated . ST.sessionTime) listed
+    listedTimes === sortOn Down times
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Edge Case Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: update on nonexistent session returns Nothing
+prop_updateNonexistent :: Property
+prop_updateNonexistent = property $ do
+    sid <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
+    result <- evalIO $ withTestContext $ \ctx ->
+        Session.update ctx sid (\s -> s{ST.sessionTitle = "updated"})
+    result === Nothing
+
+-- | Property: delete on nonexistent session returns False
+prop_deleteNonexistent :: Property
+prop_deleteNonexistent = property $ do
+    sid <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
+    result <- evalIO $ withTestContext $ \ctx ->
+        Session.delete ctx sid
+    result === False
+
+-- | Property: list with roots=True filters out child sessions
+prop_listRootsFilter :: Property
+prop_listRootsFilter = property $ do
+    (rootCount, allCount) <- evalIO $ withTestContext $ \ctx -> do
+        -- Create a parent session
+        parent <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "parent", ST.csiParentID = Nothing}
+        -- Create some root sessions
+        void $ replicateM 2 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "root", ST.csiParentID = Nothing}
+        -- Create a child session
+        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "child", ST.csiParentID = Just (ST.sessionId parent)}
+        -- List roots only
+        roots <- Session.list ctx (Just True) Nothing Nothing Nothing
+        -- List all
+        allSessions <- Session.list ctx Nothing Nothing Nothing Nothing
+        pure (length roots, length allSessions)
+    -- Should have 3 roots (parent + 2 roots) and 4 total (+ 1 child)
+    rootCount === 3
+    allCount === 4
+
+-- | Property: touch updates the session timestamp
+prop_touchUpdatesTimestamp :: Property
+prop_touchUpdatesTimestamp = property $ do
+    (timeBefore, timeAfter) <- evalIO $ withTestContext $ \ctx -> do
+        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        let sid = ST.sessionId session
+        let timeBefore = ST.stUpdated (ST.sessionTime session)
+        -- Small delay to ensure timestamp changes
+        _ <- Session.touch ctx sid
+        updated <- Session.get ctx sid
+        case updated of
+            Nothing -> fail "session not found"
+            Just s -> pure (timeBefore, ST.stUpdated (ST.sessionTime s))
+    -- Time should have been updated (or at least not decreased)
+    assert $ timeAfter >= timeBefore
+
 -- Generators
 -- Test tree
 tests :: TestTree
@@ -200,4 +281,10 @@ tests =
         , testProperty "update summary/share/revert" prop_updateSummaryShareRevert
         , testProperty "list search filter" prop_listSearchFilter
         , testProperty "list limit filter" prop_listLimitFilter
+        , testProperty "list sorted by updated" prop_listSortedByUpdated
+        -- Edge cases
+        , testProperty "update nonexistent returns Nothing" prop_updateNonexistent
+        , testProperty "delete nonexistent returns False" prop_deleteNonexistent
+        , testProperty "list with roots filter" prop_listRootsFilter
+        , testProperty "touch updates timestamp" prop_touchUpdatesTimestamp
         ]

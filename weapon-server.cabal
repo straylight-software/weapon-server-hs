@@ -78,6 +78,7 @@ library
     LLM.Types
     -- // log
     Log
+    Server.ErrorFormatters
     -- // middleware
     Middleware
     -- // lsp
@@ -128,6 +129,7 @@ library
     -- // util
     Util.FileSystem
     Util.Git
+    Util.StorageKeys
     -- // vcs
     Vcs.Diff
     Vcs.Status
@@ -260,6 +262,7 @@ test-suite weapon-server-test
     Integration.ApiComplianceTest
     Integration.HaskemathesisTest
     -- // property tests
+    Property.AgentLogicProps
     Property.BusProps
     Property.ConfigProps
     Property.DiffProps
@@ -273,6 +276,7 @@ test-suite weapon-server-test
     Property.LspProps
     Property.MessagePartProps
     Property.MessageProps
+    Property.MiddlewareProps
     Property.OAuthProps
     Property.OpenApiProps
     Property.PathProps
@@ -282,9 +286,11 @@ test-suite weapon-server-test
     Property.ProviderProps
     Property.PtyProps
     Property.RequestProps
+    Property.SandboxProps
     Property.SessionProps
     Property.SessionStatusProps
     Property.SkillProps
+    Property.StorageKeyProps
     Property.StorageProps
     Property.TodoProps
     Property.ToolProps

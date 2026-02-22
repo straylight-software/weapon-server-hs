@@ -23,8 +23,10 @@ module Session.Session (
 ) where
 
 import Control.Monad (forM)
+import Data.List (sortOn)
 import Data.Aeson (object, (.=))
 import Data.Maybe (fromMaybe, isNothing)
+import Data.Ord (Down (..))
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Time.Clock (getCurrentTime)
@@ -36,6 +38,7 @@ import System.Random (randomIO)
 import Bus.Bus qualified as Bus
 import Session.Types
 import Storage.Storage qualified as Storage
+import Util.StorageKeys (sessionKey, sessionPrefix)
 
 -- | Context for session operations
 data SessionContext = SessionContext
@@ -59,7 +62,7 @@ generateSessionID = do
     -- Use max - timestamp for descending order
     let descending = maxBound - round ts :: Word64
     rand <- randomIO :: IO Word64
-    pure $ "ses_" <> T.pack (showHex descending "") <> T.pack (showHex (rand `mod` 0xFFFF) "")
+    pure $ "ses_" <> T.pack (showHex descending "") <> T.pack (showHex rand "")
 
 -- | Generate a random slug
 generateSlug :: IO Text
@@ -97,7 +100,7 @@ create ctx input = do
                 }
 
     -- Write to storage
-    Storage.write (scStorage ctx) ["session", scProjectID ctx, sid] session
+    Storage.write (scStorage ctx) (sessionKey (scProjectID ctx) sid) session
 
     -- Publish event
     Bus.publish (scBus ctx) "session.created" (object ["info" .= session])
@@ -108,7 +111,7 @@ create ctx input = do
 
 -- | Get a session by ID
 get :: SessionContext -> Text -> IO (Maybe Session)
-get ctx sid = Storage.readMaybe (scStorage ctx) ["session", scProjectID ctx, sid]
+get ctx sid = Storage.readMaybe (scStorage ctx) (sessionKey (scProjectID ctx) sid)
 
 -- | Update a session
 update :: SessionContext -> Text -> (Session -> Session) -> IO (Maybe Session)
@@ -119,7 +122,7 @@ update ctx sid fn = do
         Just session -> do
             now <- nowMs
             let updated = fn session{sessionTime = (sessionTime session){stUpdated = now}}
-            Storage.write (scStorage ctx) ["session", scProjectID ctx, sid] updated
+            Storage.write (scStorage ctx) (sessionKey (scProjectID ctx) sid) updated
             Bus.publish (scBus ctx) "session.updated" (object ["info" .= updated])
             pure (Just updated)
 
@@ -130,14 +133,14 @@ delete ctx sid = do
     case msession of
         Nothing -> pure False
         Just session -> do
-            Storage.remove (scStorage ctx) ["session", scProjectID ctx, sid]
+            Storage.remove (scStorage ctx) (sessionKey (scProjectID ctx) sid)
             Bus.publish (scBus ctx) "session.deleted" (object ["info" .= session])
             pure True
 
 -- | List all sessions for the current project
-list :: SessionContext -> Maybe Bool -> Maybe Int -> Maybe Int -> Maybe Text -> IO [Session]
+list :: SessionContext -> Maybe Bool -> Maybe Int -> Maybe Double -> Maybe Text -> IO [Session]
 list ctx mRoots mLimit mStart mSearch = do
-    keys <- Storage.list (scStorage ctx) ["session", scProjectID ctx]
+    keys <- Storage.list (scStorage ctx) (sessionPrefix (scProjectID ctx))
     sessions <- forM keys $ \key -> do
         let sid = last key
         get ctx sid
@@ -148,16 +151,18 @@ list ctx mRoots mLimit mStart mSearch = do
             _ -> valid
     -- Filter by start timestamp (sessions updated on or after)
     let startFiltered = case mStart of
-            Just ts -> filter (\s -> stUpdated (sessionTime s) >= fromIntegral ts) rootFiltered
+            Just ts -> filter (\s -> stUpdated (sessionTime s) >= ts) rootFiltered
             Nothing -> rootFiltered
     -- Filter by search (case-insensitive title match)
     let searchFiltered = case mSearch of
             Just q -> filter (\s -> T.toLower q `T.isInfixOf` T.toLower (sessionTitle s)) startFiltered
             Nothing -> startFiltered
+    -- Sort by most recently updated for deterministic ordering
+    let sorted = sortOn (Down . stUpdated . sessionTime) searchFiltered
     -- Apply limit
     let limited = case mLimit of
-            Just n -> take n searchFiltered
-            Nothing -> searchFiltered
+            Just n -> take n sorted
+            Nothing -> sorted
     pure limited
 
 -- | Touch a session (update timestamp)

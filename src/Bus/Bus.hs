@@ -13,9 +13,9 @@ module Bus.Bus (
 )
 where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.STM
-import Control.Monad (forever, void)
+import Control.Monad (forever)
 import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Text (Text)
 
@@ -56,10 +56,10 @@ Returns an unsubscribe action
 subscribeAll :: Bus -> (BusEvent -> IO ()) -> IO (IO ())
 subscribeAll bus callback = do
     chan <- atomically $ dupTChan (unBus bus)
-    _ <- forkIO $ forever $ do
+    tid <- forkIO $ forever $ do
         event <- atomically $ readTChan chan
         callback event
-    pure $ void $ forkIO $ atomically $ pure () -- TODO: proper unsubscribe with killThread
+    pure $ killThread tid
 
 -- | Subscribe to events of a specific type
 subscribe :: Bus -> Text -> (BusEvent -> IO ()) -> IO (IO ())

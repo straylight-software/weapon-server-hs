@@ -148,8 +148,9 @@ import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
 import Data.ByteString.Lazy qualified as BSL
+import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text, pack, unpack)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -183,7 +184,6 @@ import Pty.Types qualified as PtyT
 import Request.Store qualified as RequestStore
 import Servant
 import Session.Session qualified as Sess
-import Session.Types qualified as ST
 import Skill.Skill qualified as Skill
 import State
 import Storage.Storage qualified as Storage
@@ -194,6 +194,7 @@ import Tool.Defs qualified as Tool
 import Tool.Exec qualified as ToolExec
 import Tool.Types qualified as ToolT
 import Tui.Store qualified as TuiStore
+import Util.StorageKeys (messageKey, messagePrefix, projectKey, todoKey)
 import Vcs.Diff qualified as Diff
 import Vcs.Status qualified as VcsStatus
 
@@ -285,29 +286,48 @@ getGlobalConfigPath st = case stHomeDir st of
 
 projectListHandler :: AppState -> Handler [Project]
 projectListHandler st = liftIO $ do
-    ProjectDiscovery.discoverProjects (unpack (stDirectory st))
+    projects <- ProjectDiscovery.discoverProjects (unpack (stDirectory st))
+    mapM (applyProjectOverrides st) projects
 
 projectCurrentHandler :: AppState -> Maybe Text -> Handler Project
 projectCurrentHandler st mDir = liftIO $ do
     full <- makeAbsolute (resolveDir st mDir)
-    return $ ProjectBuild.projectFromDir full
+    applyProjectOverrides st (ProjectBuild.projectFromDir full)
 
 projectGetHandler :: AppState -> Text -> Handler Project
 projectGetHandler st pid = do
     let current = ProjectBuild.projectFromDir (unpack (stDirectory st))
     if Api.id current == pid
-        then return current
+        then liftIO $ applyProjectOverrides st current
         else throwError err404
 
 -- | Update project properties (PATCH /project/{projectID})
 projectUpdateHandler :: AppState -> Text -> Value -> Handler Project
-projectUpdateHandler st pid _input = do
-    -- For now, just return the current project
-    -- TODO: Implement actual project update (name, icon, commands)
+projectUpdateHandler st pid input = do
     let current = ProjectBuild.projectFromDir (unpack (stDirectory st))
     if Api.id current == pid
-        then return current
+        then do
+            case input of
+                Object _ -> liftIO $ do
+                    let key = projectKey pid
+                    existing <- Storage.readMaybe (stStorage st) key
+                    let merged = mergeProjectValue existing input
+                    Storage.write (stStorage st) key merged
+                    applyProjectOverrides st current
+                _ -> throwError err400
         else throwError err404
+  where
+    mergeProjectValue (Just (Object base)) (Object updates) = Object (KM.union updates base)
+    mergeProjectValue _ updates = updates
+
+applyProjectOverrides :: AppState -> Project -> IO Project
+applyProjectOverrides st project = do
+    mval <- Storage.readMaybe (stStorage st) (projectKey (Api.id project))
+    case mval of
+        Just (Object obj) -> case KM.lookup (K.fromText "name") obj of
+            Just (String name) -> pure project{name = Just name}
+            _ -> pure project
+        _ -> pure project
 
 -- * Provider/Config Handlers
 
@@ -477,10 +497,11 @@ sessionStatusHandler _st _mDir = liftIO $ do
     -- An empty object {} is a valid empty map
     return $ Object mempty
 
-sessionListHandler :: AppState -> Maybe Text -> Maybe Bool -> Maybe Int -> Maybe Int -> Maybe Text -> Handler [Session]
+sessionListHandler :: AppState -> Maybe Text -> Maybe Bool -> Maybe Double -> Maybe Double -> Maybe Text -> Handler [Session]
 sessionListHandler st _mDir mRoots mLimit mStart mSearch = liftIO $ do
     let ctx = sessionContext st
-    Sess.list ctx mRoots mLimit mStart mSearch
+    let limitInt = fmap (max 0 . floor) mLimit
+    Sess.list ctx mRoots limitInt mStart mSearch
 
 sessionCreateHandler :: AppState -> Maybe Text -> CreateSessionInput -> Handler Session
 sessionCreateHandler st _mDir input = liftIO $ do
@@ -523,15 +544,15 @@ sessionUpdateHandler st sid input = withSessionUpdate st sid (applyUpdate input)
                 , sessionRevert = revert
                 }
 
-sessionChildrenHandler :: AppState -> Text -> Handler [Session]
-sessionChildrenHandler st sid = liftIO $ do
+sessionChildrenHandler :: AppState -> Text -> Maybe Text -> Handler [Session]
+sessionChildrenHandler st sid _mDir = liftIO $ do
     let ctx = sessionContext st
     sessions <- Sess.list ctx Nothing Nothing Nothing Nothing
     return $ filter (\s -> sessionParentID s == Just sid) sessions
 
 sessionTodoHandler :: AppState -> Text -> Handler [Value]
 sessionTodoHandler st sid = liftIO $ do
-    let key = ["todo", sid]
+    let key = todoKey sid
     result <- Storage.readMaybe (stStorage st) key
     pure $ fromMaybe [] result
 
@@ -592,14 +613,14 @@ sessionDiffHandler st _sid _mMessageID = liftIO $ do
 sessionSummarizeHandler :: AppState -> Text -> Handler Bool
 sessionSummarizeHandler st sid = do
     summary <- liftIO $ loadSummary (unpack (stDirectory st))
-    _ <- withSessionUpdate st sid $ \s -> s{ST.sessionSummary = Just summary}
+    _ <- withSessionUpdate st sid $ \s -> s{sessionSummary = Just summary}
     return True
 
-loadSummary :: FilePath -> IO ST.SessionSummary
+loadSummary :: FilePath -> IO SessionSummary
 loadSummary root = do
     mresult <- Diff.loadDiff root
     case mresult of
-        Nothing -> pure (ST.SessionSummary 0 0 (Just 0))
+        Nothing -> pure (SessionSummary 0 0 (Just 0))
         Just (_, summary) -> pure summary
 
 sessionCommandHandler :: AppState -> Text -> Value -> Handler Value
@@ -659,16 +680,22 @@ sessionPermissionHandler st sid pid _mDir input = liftIO $ do
     Bus.publish (stBus st) "permission.replied" (object ["sessionID" .= sid, "permissionID" .= pid, "response" .= input])
     return True
 
--- * Message Handlers (still in-memory for now, TODO: port to storage)
+-- * Message Handlers (persisted in storage)
 
 sessionMessageListHandler :: AppState -> Text -> Maybe Int -> Handler [Message]
-sessionMessageListHandler st sid _mLimit = liftIO $ do
-    -- Read messages from storage
-    let key = ["message", sid]
-    msgs <-
-        (Storage.list (stStorage st) key >>= mapM (Storage.read (stStorage st)))
-            `catch` \(Storage.NotFoundError _) -> return []
-    return msgs
+sessionMessageListHandler st sid mLimit = liftIO $ do
+    let key = messagePrefix sid
+    keys <- Storage.list (stStorage st) key
+    msgs <- mapM readMessage keys
+    let valid = catMaybes msgs
+        sorted = sortOn (stCreated . msgTime . msgInfo) valid
+        limited = maybe sorted (`take` sorted) mLimit
+    pure limited
+  where
+    readMessage k =
+        (Just <$> Storage.read (stStorage st) k)
+            `catch` \(_ :: Storage.NotFoundError) -> pure Nothing
+            `catch` \(_ :: Storage.StorageError) -> pure Nothing
 
 sessionMessageCreateHandler :: AppState -> Text -> CreateMessageInput -> Handler Message
 sessionMessageCreateHandler st sid input = liftIO $ do
@@ -704,13 +731,13 @@ createMessageIO st sid input = do
                 }
 
     -- Write to storage
-    Storage.write (stStorage st) ["message", sid, uMsgId] uMsg
-    Storage.write (stStorage st) ["message", sid, aMsgId] aMsg
+    Storage.write (stStorage st) (messageKey sid uMsgId) uMsg
+    Storage.write (stStorage st) (messageKey sid aMsgId) aMsg
 
     let todos = Todo.extractTodos (cmiParts input)
     case todos of
         [] -> pure ()
-        _ -> Storage.write (stStorage st) ["todo", sid] todos
+        _ -> Storage.write (stStorage st) (todoKey sid) todos
 
     -- Publish user message event (send just info, not full message)
     let userInfo =
@@ -747,25 +774,19 @@ createMessageIO st sid input = do
                 ]
     Bus.publish (stBus st) "message.updated" (object ["info" .= assistantInfo])
 
-    -- Spawn LLM streaming task
-    _ <-
-        forkIO $
-            ( do
-                apiKey <- lookupEnv "OPENROUTER_API_KEY"
-                case apiKey of
-                    Nothing -> do
-                        -- No API key - send error
-                        let errPart =
-                                object
-                                    [ "id" .= partId
-                                    , "sessionID" .= sid
-                                    , "messageID" .= aMsgId
-                                    , "type" .= ("text" :: Text)
-                                    , "text" .= ("Error: OPENROUTER_API_KEY not set" :: Text)
-                                    ]
-                        Bus.publish (stBus st) "message.part.updated" (object ["part" .= errPart])
-                        completeMessage st sid aMsgId t
-                    Just key -> do
+    apiKey <- lookupEnv "OPENROUTER_API_KEY"
+    case apiKey of
+        Nothing -> do
+            let errText = "Error: OPENROUTER_API_KEY not set" :: Text
+            let errPart = mkTextPart partId sid aMsgId errText
+            updateMessagePartsInStorage st sid aMsgId [errPart]
+            Bus.publish (stBus st) "message.part.updated" (object ["part" .= errPart])
+            completeMessage st sid aMsgId uMsgId t
+        Just key -> do
+            -- Spawn LLM streaming task
+            _ <-
+                forkIO $
+                    ( do
                         client <- OpenRouter.newClient (pack key)
                         textRef <- newTVarIO ("" :: Text)
 
@@ -784,14 +805,8 @@ createMessageIO st sid input = do
                             fullText <- readTVarIO textRef
 
                             -- Publish text part update with accumulated text
-                            let textPart =
-                                    object
-                                        [ "id" .= partId
-                                        , "sessionID" .= sid
-                                        , "messageID" .= aMsgId
-                                        , "type" .= ("text" :: Text)
-                                        , "text" .= fullText
-                                        ]
+                            let textPart = mkTextPart partId sid aMsgId fullText
+                            updateMessagePartsInStorage st sid aMsgId [textPart]
                             Bus.publish (stBus st) "message.part.updated" (object ["part" .= textPart, "delta" .= delta])
 
                         case result of
@@ -799,26 +814,21 @@ createMessageIO st sid input = do
                                 -- Publish error as final part
                                 fullText <- readTVarIO textRef
                                 let errText = fullText <> "\n\n[Error: " <> err <> "]"
-                                let textPart =
-                                        object
-                                            [ "id" .= partId
-                                            , "sessionID" .= sid
-                                            , "messageID" .= aMsgId
-                                            , "type" .= ("text" :: Text)
-                                            , "text" .= errText
-                                            ]
+                                let textPart = mkTextPart partId sid aMsgId errText
+                                updateMessagePartsInStorage st sid aMsgId [textPart]
                                 Bus.publish (stBus st) "message.part.updated" (object ["part" .= textPart])
                             Right () -> pure ()
 
-                        completeMessage st sid aMsgId t
-            )
-                `catch` \(_e :: SomeException) -> pure ()
+                        completeMessage st sid aMsgId uMsgId t
+                    )
+                        `catch` \(_e :: SomeException) -> pure ()
+            pure ()
 
     return aMsg
 
 sessionMessageGetHandler :: AppState -> Text -> Text -> Handler Message
 sessionMessageGetHandler st sid msgId = do
-    let key = ["message", sid, msgId]
+    let key = messageKey sid msgId
     result <-
         liftIO $
             (Just <$> Storage.read (stStorage st) key)
@@ -829,7 +839,7 @@ sessionMessageGetHandler st sid msgId = do
 
 sessionMessagePartDeleteHandler :: AppState -> Text -> Text -> Text -> Handler Bool
 sessionMessagePartDeleteHandler st sid msgId partId = do
-    let key = ["message", sid, msgId]
+    let key = messageKey sid msgId
     result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
         Nothing -> throwError err404
@@ -845,7 +855,7 @@ sessionMessagePartDeleteHandler st sid msgId partId = do
 
 sessionMessagePartUpdateHandler :: AppState -> Text -> Text -> Text -> Value -> Handler Value
 sessionMessagePartUpdateHandler st sid msgId partId input = do
-    let key = ["message", sid, msgId]
+    let key = messageKey sid msgId
     let bodySession = extractText input "sessionID"
     let bodyMessage = extractText input "messageID"
     let bodyPart = extractText input "id"
@@ -946,8 +956,8 @@ extractUserText parts = T.intercalate "\n" $ concatMap extractTextPart parts
     extractTextPart _ = []
 
 -- | Mark message as complete and publish idle event
-completeMessage :: AppState -> Text -> Text -> Double -> IO ()
-completeMessage st sid msgId startTime = do
+completeMessage :: AppState -> Text -> Text -> Text -> Double -> IO ()
+completeMessage st sid msgId parentId startTime = do
     let lg = Log.withNS (stLogger st) "message"
 
     now <- getCurrentTime
@@ -962,7 +972,7 @@ completeMessage st sid msgId startTime = do
                 , "sessionID" .= sid
                 , "role" .= ("assistant" :: Text)
                 , "time" .= object ["created" .= startTime, "completed" .= endTime]
-                , "parentID" .= (msgId :: Text) -- TODO: actual parent
+                , "parentID" .= parentId
                 , "modelID" .= ("anthropic/claude-opus-4.5" :: Text)
                 , "providerID" .= ("openrouter" :: Text)
                 , "mode" .= ("build" :: Text)
@@ -982,6 +992,29 @@ completeMessage st sid msgId startTime = do
 
     -- Publish session idle
     Bus.publish (stBus st) "session.idle" (object ["sessionID" .= sid])
+
+mkTextPart :: Text -> Text -> Text -> Text -> Value
+mkTextPart partId sid msgId text =
+    object
+        [ "id" .= partId
+        , "sessionID" .= sid
+        , "messageID" .= msgId
+        , "type" .= ("text" :: Text)
+        , "text" .= text
+        ]
+
+updateMessagePartsInStorage :: AppState -> Text -> Text -> [Value] -> IO ()
+updateMessagePartsInStorage st sid msgId parts = do
+    let key = messageKey sid msgId
+    result <- Storage.readMaybe (stStorage st) key
+    case result of
+        Nothing -> pure ()
+        Just msg -> do
+            now <- getCurrentTime
+            let t = realToFrac (utcTimeToPOSIXSeconds now) * 1000
+            let info = msgInfo msg
+            let nextInfo = info{msgTime = (msgTime info){stUpdated = t}}
+            Storage.write (stStorage st) key msg{msgInfo = nextInfo, msgParts = parts}
 
 -- * File Handlers
 

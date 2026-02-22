@@ -157,8 +157,8 @@ type SessionListAPI =
     "session"
         :> QueryParam "directory" Text
         :> QueryParam "roots" Bool
-        :> QueryParam "limit" Int
-        :> QueryParam "start" Int
+        :> QueryParam "limit" Double
+        :> QueryParam "start" Double
         :> QueryParam "search" Text
         :> Get '[JSON] [Session]
 
@@ -179,7 +179,7 @@ type SessionUpdateAPI =
         :> Patch '[JSON] Session
 
 type SessionChildrenAPI =
-    "session" :> Capture "sessionID" Text :> "children" :> Get '[JSON] [Session]
+    "session" :> Capture "sessionID" Text :> "children" :> QueryParam "directory" Text :> Get '[JSON] [Session]
 
 type SessionTodoAPI =
     "session" :> Capture "sessionID" Text :> "todo" :> Get '[JSON] [Value]

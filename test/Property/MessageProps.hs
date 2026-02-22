@@ -80,6 +80,7 @@ genSessionTime =
         <$> genDouble
         <*> genDouble
         <*> Gen.maybe genDouble
+        <*> Gen.maybe genDouble
 
 genMessageInfo :: Gen MessageInfo
 genMessageInfo =

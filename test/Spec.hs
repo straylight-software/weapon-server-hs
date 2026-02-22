@@ -2,6 +2,7 @@
 module Main where
 
 import Integration.HaskemathesisTest qualified as HaskemathesisTest
+import Property.AgentLogicProps qualified as AgentLogicProps
 import Property.BusProps qualified as BusProps
 import Property.ConfigProps qualified as ConfigProps
 import Property.DiffProps qualified as DiffProps
@@ -15,6 +16,7 @@ import Property.LLMProps qualified as LLMProps
 import Property.LspProps qualified as LspProps
 import Property.MessagePartProps qualified as MessagePartProps
 import Property.MessageProps qualified as MessageProps
+import Property.MiddlewareProps qualified as MiddlewareProps
 import Property.OAuthProps qualified as OAuthProps
 import Property.PathProps qualified as PathProps
 import Property.ProjectDiscoveryProps qualified as ProjectDiscoveryProps
@@ -23,9 +25,11 @@ import Property.PromptAsyncProps qualified as PromptAsyncProps
 import Property.ProviderProps qualified as ProviderProps
 import Property.PtyProps qualified as PtyProps
 import Property.RequestProps qualified as RequestProps
+import Property.SandboxProps qualified as SandboxProps
 import Property.SessionProps qualified as SessionProps
 import Property.SessionStatusProps qualified as SessionStatusProps
 import Property.SkillProps qualified as SkillProps
+import Property.StorageKeyProps qualified as StorageKeyProps
 import Property.StorageProps qualified as StorageProps
 import Property.TodoProps qualified as TodoProps
 import Property.ToolProps qualified as ToolProps
@@ -50,6 +54,7 @@ main = do
             [ testGroup
                 "Property Tests"
                 [ StorageProps.tests
+                , StorageKeyProps.tests
                 , BusProps.tests
                 , ConfigProps.tests
                 , DiffProps.tests
@@ -78,6 +83,9 @@ main = do
                 , TodoProps.tests
                 , VcsStatusProps.tests
                 , TuiProps.tests
+                , SandboxProps.tests
+                , AgentLogicProps.tests
+                , MiddlewareProps.tests
                 ]
             , apiTests
             , HaskemathesisTest.tests

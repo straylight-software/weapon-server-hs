@@ -116,6 +116,22 @@ prop_subscribeAllOrder = withTests 20 $ property $ do
         atomically $ readTVar receivedVar
     reverse received === eventTypes
 
+prop_unsubscribeStopsDelivery :: Property
+prop_unsubscribeStopsDelivery = withTests 20 $ property $ do
+    eventType <- forAll genEventType
+    received <- evalIO $ do
+        bus <- Bus.newBus
+        receivedVar <- newTVarIO (0 :: Int)
+        unsubscribe <- Bus.subscribe bus eventType $ \_ ->
+            atomically $ modifyTVar' receivedVar (+ 1)
+        Bus.publish bus eventType Null
+        threadDelay 2000
+        unsubscribe
+        Bus.publish bus eventType Null
+        threadDelay 2000
+        atomically $ readTVar receivedVar
+    received === 1
+
 -- Generators
 genEventType :: Gen Text
 genEventType =
@@ -139,4 +155,5 @@ tests =
         , testProperty "subscribeAll receives all" prop_subscribeAll
         , testProperty "multiple subscribers" prop_multipleSubscribers
         , testProperty "subscribeAll order" prop_subscribeAllOrder
+        , testProperty "unsubscribe stops delivery" prop_unsubscribeStopsDelivery
         ]
