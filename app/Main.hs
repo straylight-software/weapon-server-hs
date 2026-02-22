@@ -142,8 +142,8 @@ main = Log.withLogger "weapon" $ \logger -> do
   let servantApp = enableCors $ supplyEmptyBody $ serve api (server appState)
       websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
 
-  -- Use all available cores with io_uring
-  let settings = defaultServerSettings {serverPort = 4096}
+  -- Use limited cores to avoid hitting io_uring fd limits on high-core machines
+  let settings = defaultServerSettings {serverPort = 4096, serverCores = Just 8}
   runServerMultiCore settings websocketApp
 
 -- | Periodic heartbeat to keep SSE connections alive.
