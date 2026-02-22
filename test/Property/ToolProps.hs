@@ -216,7 +216,7 @@ prop_bashToolTimeout = property $ do
                 object
                     [ "command" .= ("sleep 2" :: Text)
                     , "description" .= ("timeout test" :: Text)
-                    , "timeout" .= (200 :: Int)
+                    , "timeout" .= (50 :: Int)
                     ]
         execute (testContext tmpDir) "bash" input
     assert $ toIsError result
@@ -441,7 +441,7 @@ tests =
         , testProperty "edit multiple matches error" prop_editToolMultipleMatchesError
         , testProperty "bash tool" prop_bashTool
         , testProperty "bash tool uses workdir" prop_bashToolUsesWorkdir
-        , testProperty "bash tool timeout" prop_bashToolTimeout
+        , testProperty "bash tool timeout" (withTests 1 prop_bashToolTimeout)
         , testProperty "glob tool limits results" prop_globToolLimitsResults
         , testProperty "grep no matches not error" prop_grepToolNoMatchesNotError
         , testProperty "tool output JSON roundtrip" prop_toolOutputJsonRoundtrip

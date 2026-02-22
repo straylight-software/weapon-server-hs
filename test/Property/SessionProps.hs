@@ -4,7 +4,7 @@
 module Property.SessionProps where
 
 import Bus.Bus qualified as Bus
-import Control.Monad (replicateM, replicateM_, void)
+import Control.Monad (replicateM, replicateM_)
 import Data.List (sortOn)
 import Data.Ord (Down (..))
 import Data.Text qualified as T

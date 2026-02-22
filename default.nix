@@ -147,6 +147,6 @@ mkDerivation {
   ];
   homepage = "https://github.com/straylight-software/weapon-server-hs";
   description = "Haskell server for Weapon AI coding agent";
-  license = lib.licenses.mit;
+  license = lib.licensesSpdx."MIT";
   mainProgram = "weapon-server";
 }

@@ -19,6 +19,7 @@ import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileE
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory)
 import System.Process (CreateProcess (..), StdStream (..), proc, readCreateProcessWithExitCode)
+import Text.Printf (printf)
 import Tool.Types
 
 -- | Execute a tool from a ToolUse block
@@ -136,10 +137,11 @@ execBash :: ToolContext -> BashInput -> IO ToolOutput
 execBash ctx BashInput{..} = do
     let workdir = maybe (tcWorkdir ctx) T.unpack biWorkdir
     let timeoutMs = fromMaybe 120000 biTimeout
-    let timeoutS = max 1 ((timeoutMs + 999) `div` 1000)
+    let timeoutS = max 0.001 (fromIntegral timeoutMs / 1000 :: Double)
+    let timeoutArg = printf "%.3fs" timeoutS
 
     let cmd =
-            (proc "timeout" [show timeoutS, "bash", "-c", T.unpack biCommand])
+            (proc "timeout" [timeoutArg, "bash", "-c", T.unpack biCommand])
                 { cwd = Just workdir
                 , std_in = NoStream
                 }
