@@ -10,11 +10,11 @@
   data-default-class,
   directory,
   filepath,
-  haskemathesis,
-  hedgehog,
-  hspec,
-  hspec-core,
-  hspec-hedgehog,
+  haskemathesis ? null, # Optional: only needed for tests
+  hedgehog ? null,
+  hspec ? null,
+  hspec-core ? null,
+  hspec-hedgehog ? null,
   http-client,
   http-client-tls,
   http-types,
@@ -22,20 +22,20 @@
   lib,
   mtl,
   network,
-  openapi3,
+  openapi3 ? null,
   posix-pty,
   primitive,
   process,
   random,
-  regex-pcre,
-  stan,
+  regex-pcre ? null,
+  stan ? null,
   servant,
   servant-server,
   stm,
-  tasty,
-  tasty-hedgehog,
-  tasty-hspec,
-  temporary,
+  tasty ? null,
+  tasty-hedgehog ? null,
+  tasty-hspec ? null,
+  temporary ? null,
   text,
   time,
   tls,
@@ -46,7 +46,7 @@
   vault,
   vector,
   wai,
-  wai-extra,
+  wai-extra ? null,
   wai-websockets,
   warp,
   websockets,
@@ -114,7 +114,7 @@ mkDerivation {
     warp
     websockets
   ];
-  testHaskellDepends = [
+  testHaskellDepends = lib.filter (x: x != null) [
     aeson
     base
     base64-bytestring
@@ -148,13 +148,13 @@ mkDerivation {
     wai
     wai-extra
   ];
-  testToolDepends = [
+  testToolDepends = lib.filter (x: x != null) [
     pkgs.ripgrep
     pkgs.fd
     pkgs.git
     stan
   ];
-  postCheck = ''
+  postCheck = lib.optionalString (stan != null) ''
     report="$(stan 2>$1)"
 
     printf '%s\n' "$report"
