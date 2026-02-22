@@ -59,17 +59,17 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1771530081,
-        "narHash": "sha256-yOckPJXo7BEsAT4uKp4s+FQ5UwP2iI974wXfHKfbrOs=",
-        "owner": "weyl-ai",
-        "repo": "haskemathesis",
-        "rev": "406abb22b2f459967ec1bddef36a0ec027bbb4b3",
-        "type": "github"
+        "lastModified": 1771785360,
+        "narHash": "sha256-nT36ms0JM6bAmL6u8qaVoBrzukvOndQ47b4ewmzbDHA=",
+        "ref": "refs/heads/master",
+        "rev": "9da31860409ce9ce001de5a813e3794fb33af97b",
+        "revCount": 35,
+        "type": "git",
+        "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       },
       "original": {
-        "owner": "weyl-ai",
-        "repo": "haskemathesis",
-        "type": "github"
+        "type": "git",
+        "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       }
     },
     "nixpkgs": {

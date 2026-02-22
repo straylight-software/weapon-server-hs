@@ -2,7 +2,8 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
-    haskemathesis.url = "github:weyl-ai/haskemathesis";
+
+    haskemathesis.url = "git+ssh://git@github.com/straylight-software/haskemathesis.git";
     treefmt-nix.url = "github:numtide/treefmt-nix";
   };
 
@@ -25,7 +26,7 @@
         let
           hsPkgs = pkgs.haskellPackages.override {
             overrides = self: _super: {
-              haskemathesis = inputs'.haskemathesis.packages.default;
+              haskemathesis = pkgs.haskell.lib.enableLibraryProfiling inputs'.haskemathesis.packages.default;
               weapon-server = self.callPackage ./default.nix { };
             };
           };
