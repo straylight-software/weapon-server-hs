@@ -38,7 +38,6 @@ import State (AppState (..), initialStateNoProxyWithHome)
 import Storage.Storage qualified as Storage
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, getCurrentDirectory, removeDirectoryRecursive)
 import System.FilePath ((</>))
-import System.IO.Unsafe (unsafePerformIO)
 import Test.Tasty (TestTree, testGroup)
 import Util.StorageKeys (sessionKey)
 
@@ -64,11 +63,6 @@ operationFilter op =
             -- For operations without IDs, check path
             roPath op /= "/pty/{ptyID}/connect"
 
--- | Global counter for unique storage directories
-storageCounter :: IORef Int
-storageCounter = unsafePerformIO $ newIORef 0
-{-# NOINLINE storageCounter #-}
-
 -- | Known session ID that we pre-seed for testing
 knownSessionId :: Text
 knownSessionId = "ses_test_1"
@@ -85,11 +79,11 @@ directory AND home directory to isolate all config file access.
 
 Pre-seeds sessions so session endpoints can be properly tested.
 -}
-createTestApp :: IO (Application, AppState)
-createTestApp = do
+createTestApp :: IORef Int -> IO (Application, AppState)
+createTestApp counter = do
     cwd <- getCurrentDirectory
     -- Get unique ID for this test instance
-    uniqueId <- atomicModifyIORef' storageCounter (\n -> (n + 1, n))
+    uniqueId <- atomicModifyIORef' counter (\n -> (n + 1, n))
     let storageDir = cwd </> ".opencode-test" </> "haskemathesis" </> show uniqueId
     exists <- doesDirectoryExist storageDir
     when exists $ removeDirectoryRecursive storageDir
@@ -157,14 +151,14 @@ rewriteSessionId req =
             ("" : "session" : _randomSid : rest) ->
                 let newPath = T.intercalate "/" ("" : "session" : knownSessionId : rest)
                  in req{reqPath = newPath}
-            _ -> req
+            _otherSegments -> req
 
 {- | Create an executor with a unique app instance that rewrites session IDs
 Each executor has its own app, so different tests (properties) don't conflict
 -}
-createExecutorForOperation :: IO ExecutorWithTimeout
-createExecutorForOperation = do
-    (app, _state) <- createTestApp
+createExecutorForOperation :: IORef Int -> IO ExecutorWithTimeout
+createExecutorForOperation counter = do
+    (app, _state) <- createTestApp counter
     pure $ \timeout req -> do
         let req' = rewriteSessionId req
         executeWaiWithTimeout app timeout req'
@@ -192,8 +186,9 @@ negativeConfig =
 We create a separate executor (with unique storage) for each operation
 to avoid file lock conflicts when tests run in parallel.
 -}
-tests :: TestTree
-tests = unsafePerformIO $ do
+tests :: IO TestTree
+tests = do
+    counter <- newIORef 0
     specResult <- loadOpenApiFile openApiSpecPath
     case specResult of
         Left err -> error $ "Failed to load OpenAPI spec: " <> show err
@@ -201,24 +196,23 @@ tests = unsafePerformIO $ do
             let operations = resolveOperations openApi
                 filteredOps = filter operationFilter operations
             -- Create test trees for each operation with isolated storage
-            positiveTrees <- mapM (makeOperationTest openApi positiveConfig) filteredOps
-            negativeTrees <- mapM (makeOperationTestNegative openApi negativeConfig) filteredOps
+            positiveTrees <- mapM (makeOperationTest counter openApi positiveConfig) filteredOps
+            negativeTrees <- mapM (makeOperationTestNegative counter openApi negativeConfig) filteredOps
             pure $
                 testGroup
                     "Haskemathesis OpenAPI Compliance"
                     [ testGroup "OpenAPI Conformance" positiveTrees
                     , testGroup "OpenAPI Conformance (Negative)" negativeTrees
                     ]
-{-# NOINLINE tests #-}
 
 -- | Create a test for a single operation with isolated storage
-makeOperationTest :: OpenApi -> TestConfig -> ResolvedOperation -> IO TestTree
-makeOperationTest openApi config op = do
-    executor <- createExecutorForOperation
+makeOperationTest :: IORef Int -> OpenApi -> TestConfig -> ResolvedOperation -> IO TestTree
+makeOperationTest counter openApi config op = do
+    executor <- createExecutorForOperation counter
     pure $ testTreeForExecutorWithConfig openApi config executor [op]
 
 -- | Create a negative test for a single operation with isolated storage
-makeOperationTestNegative :: OpenApi -> TestConfig -> ResolvedOperation -> IO TestTree
-makeOperationTestNegative openApi config op = do
-    executor <- createExecutorForOperation
+makeOperationTestNegative :: IORef Int -> OpenApi -> TestConfig -> ResolvedOperation -> IO TestTree
+makeOperationTestNegative counter openApi config op = do
+    executor <- createExecutorForOperation counter
     pure $ testTreeForExecutorNegative openApi config executor [op]

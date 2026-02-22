@@ -67,7 +67,7 @@ loadFile path = do
         else do
             result <- eitherDecodeFileStrict path
             case result of
-                Left _ -> pure Nothing
+                Left _err -> pure Nothing
                 Right cfg -> pure (Just cfg)
 
 -- | Load config (tries global, then project)

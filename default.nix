@@ -27,6 +27,7 @@
   process,
   random,
   regex-pcre,
+  stan,
   servant,
   servant-server,
   stm,
@@ -144,7 +145,14 @@ mkDerivation {
     pkgs.ripgrep
     pkgs.fd
     pkgs.git
+    stan
   ];
+  postCheck = ''
+    report="$(stan 2>$1)"
+
+    printf '%s\n' "$report"
+    printf '%s\n' "$report" | grep -F "Stan did not find any observations at the moment"
+  '';
   homepage = "https://github.com/straylight-software/weapon-server-hs";
   description = "Haskell server for Weapon AI coding agent";
   license = lib.licensesSpdx."MIT";

@@ -8,7 +8,8 @@ import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
 import Data.Foldable (toList)
-import Data.List (nub)
+import Data.List qualified as List
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -59,7 +60,7 @@ prop_readTool = property $ do
         execute (testContext tmpDir) "read" input
 
     assert $ not (toIsError result)
-    assert $ T.length (toOutput result) > 0
+    assert $ not (T.null (toOutput result))
 
 -- | Property: write tool creates file
 prop_writeTool :: Property
@@ -181,7 +182,7 @@ prop_bashTool = property $ do
         execute (testContext tmpDir) "bash" input
 
     assert $ not (toIsError result)
-    assert $ T.length (toOutput result) > 0
+    assert $ not (T.null (toOutput result))
 
 prop_bashToolUsesWorkdir :: Property
 prop_bashToolUsesWorkdir = property $ do
@@ -224,9 +225,14 @@ prop_bashToolTimeout = property $ do
 prop_globToolLimitsResults :: Property
 prop_globToolLimitsResults = property $ do
     lineCount <- evalIO $ withTempDir $ \tmpDir -> do
-        forM_ [1 .. (150 :: Int)] $ \idx -> do
-            let path = tmpDir </> ("file" <> show idx <> ".txt")
-            TIO.writeFile path "content"
+        let writeFileLoop idx =
+                if idx > (150 :: Int)
+                    then pure ()
+                    else do
+                        let path = tmpDir </> ("file" <> show idx <> ".txt")
+                        TIO.writeFile path "content"
+                        writeFileLoop (idx + 1)
+        writeFileLoop 1
         let input =
                 object
                     [ "pattern" .= ("*.txt" :: Text)
@@ -234,7 +240,7 @@ prop_globToolLimitsResults = property $ do
                     ]
         result <- execute (testContext tmpDir) "glob" input
         let ls = T.lines (toOutput result)
-        pure (length ls)
+        pure (listLength ls)
     assert $ lineCount <= 100
 
 prop_grepToolNoMatchesNotError :: Property
@@ -291,7 +297,11 @@ prop_toolNamesUnique :: Property
 prop_toolNamesUnique = property $ do
     let tools = Tool.allTools
     let names = map tdName tools
-    length names === length (nub names)
+    let uniqueCount = Set.size (Set.fromList names)
+    listLength names === uniqueCount
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- | Property: tool list returns consistent results
 prop_toolListConsistent :: Property
@@ -329,8 +339,10 @@ prop_toolSchemasHaveType = property $ do
             Just (Object obj) -> do
                 case KM.lookup "type" obj of
                     Just (String "object") -> success
-                    _ -> failure
-            _ -> failure
+                    Just (String _otherType) -> failure
+                    Just _otherValue -> failure
+                    Nothing -> failure
+            Just _otherValue -> failure
 
 -- | Property: tool required params are subset of all params
 prop_toolRequiredParamsValid :: Property
@@ -346,8 +358,8 @@ prop_toolRequiredParamsValid = property $ do
                         let reqList = [r | String r <- toList req]
                         let propKeys = map Key.toText (KM.keys props)
                         assert $ all (`elem` propKeys) reqList
-                    _ -> success
-            _ -> success
+                    _otherFields -> success
+            Just _otherValue -> success
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Edge Case Tests

@@ -39,8 +39,9 @@ prop_worktreeReset = withTests 50 $ property $ do
     case result of
         Object obj -> case KM.lookup (K.fromText "root") obj of
             Just (String value) -> value === root
-            _ -> failure
-        _ -> failure
+            Just _otherValue -> failure
+            Nothing -> failure
+        _otherValue -> failure
 
 -- | Property: worktree remove succeeds on empty store
 prop_worktreeRemoveEmpty :: Property
@@ -49,7 +50,7 @@ prop_worktreeRemoveEmpty = withTests 50 $ property $ do
     result <- evalIO $ withStore $ \store -> Worktree.remove store root Nothing
     case result of
         Right () -> success
-        Left _ -> success -- Both outcomes are valid for empty store
+        Left _err -> success -- Both outcomes are valid for empty store
 
 -- | Property: worktree remove after set succeeds
 prop_worktreeRemoveAfterSet :: Property
@@ -61,7 +62,7 @@ prop_worktreeRemoveAfterSet = withTests 50 $ property $ do
         Worktree.remove store root Nothing
     case result of
         Right () -> success
-        Left _ -> failure
+        Left _err -> failure
 
 -- | Property: worktree get after remove returns default
 prop_worktreeGetAfterRemove :: Property
@@ -76,8 +77,9 @@ prop_worktreeGetAfterRemove = withTests 50 $ property $ do
     case result of
         Object obj -> case KM.lookup (K.fromText "ready") obj of
             Just (Bool True) -> success
-            _ -> success -- Either outcome acceptable
-        _ -> success
+            Just _otherValue -> success -- Either outcome acceptable
+            Nothing -> success
+        _otherValue -> success
 
 genText :: Gen Text
 genText = Gen.text (Range.linear 1 20) Gen.alphaNum
@@ -109,8 +111,9 @@ prop_worktreeResetAfterSet = withTests 30 $ property $ do
     case result of
         Object obj -> case KM.lookup (K.fromText "root") obj of
             Just (String r) -> r === root
-            _ -> failure
-        _ -> failure
+            Just _otherValue -> failure
+            Nothing -> failure
+        _otherValue -> failure
 
 -- | Property: worktree get with different roots returns same value
 prop_worktreeGetDifferentRoots :: Property
@@ -136,7 +139,7 @@ prop_worktreeRemoveIdempotent = withTests 30 $ property $ do
         Worktree.remove store root Nothing
     case result of
         Right () -> success
-        Left _ -> success
+        Left _err -> success
 
 -- | Property: worktree set preserves all fields
 prop_worktreeSetPreservesFields :: Property
@@ -151,7 +154,7 @@ prop_worktreeSetPreservesFields = withTests 30 $ property $ do
         Object obj -> do
             KM.lookup (K.fromText "root") obj === Just (String text)
             KM.lookup (K.fromText "ready") obj === Just (Bool True)
-        _ -> failure
+        _otherValue -> failure
 
 -- | Property: worktree operations are independent per store
 prop_worktreeIndependentStores :: Property

@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 
 module Property.OpenApiProps where
 
@@ -8,7 +9,8 @@ import ApiCompatibilitySpec (Endpoint (..), haskellEndpoints)
 import Data.Aeson
 import Data.ByteString.Lazy qualified as BSL
 import Data.HashMap.Strict qualified as HM
-import Data.List (nub)
+import Data.List qualified as List
+import Data.Set qualified as Set
 import Data.Text qualified as T
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -125,7 +127,7 @@ genPathParam paramName = case T.unpack paramName of
     "projectID" -> Gen.element ["proj_123", "proj_default"]
     "permissionID" -> Gen.element ["perm_123", "perm_456"]
     "requestID" -> Gen.element ["req_123", "req_456"]
-    _ -> Gen.text (Range.linear 3 20) Gen.alphaNum
+    _otherParam -> Gen.text (Range.linear 3 20) Gen.alphaNum
 
 -- | Generate random query parameter value
 genQueryParam :: T.Text -> Gen T.Text
@@ -136,7 +138,7 @@ genQueryParam paramName = case T.unpack paramName of
     "roots" -> Gen.element ["true", "false"]
     "pattern" -> Gen.element ["foo", "bar", ".*", "test"]
     "query" -> Gen.element ["search", "find", "test"]
-    _ -> Gen.text (Range.linear 1 10) Gen.alphaNum
+    _otherParam -> Gen.text (Range.linear 1 10) Gen.alphaNum
 
 -- | Build URL with path and query parameters
 buildUrl :: T.Text -> [T.Text] -> [(T.Text, T.Text)] -> T.Text
@@ -183,7 +185,10 @@ prop_methodUppercase = property $ do
 prop_uniqueMethodPaths :: Property
 prop_uniqueMethodPaths = property $ do
     let entries = map (\ep -> (method ep, path ep)) haskellEndpoints
-    length entries === length (nub entries)
+    listLength entries === Set.size (Set.fromList entries)
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- | Run all property tests
 runPropertyTests :: IO Bool
@@ -216,8 +221,8 @@ main = do
         Left err -> do
             putStrLn $ "Warning: " ++ err
             putStrLn "Running basic property tests..."
-        Right spec -> do
-            putStrLn $ "Loaded OpenAPI spec with " ++ show (HM.size $ specPaths spec) ++ " paths"
+        Right _spec -> do
+            putStrLn "Loaded OpenAPI spec"
 
     -- Run property tests
     ok <- runPropertyTests

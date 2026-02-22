@@ -28,7 +28,7 @@ retryWithDelay attempts delayUs defaultVal action = do
     result <- action
     case result of
         Right v -> pure v
-        Left _ -> do
+        Left _err -> do
             threadDelay delayUs
             retryWithDelay (attempts - 1) delayUs defaultVal action
 
@@ -37,7 +37,7 @@ getPrompt storage = retryWithDelay 3 1000 "" $ do
     result <- try @SomeException (Storage.read storage promptKey)
     pure $ case result of
         Right (String t) -> Right t
-        Right _ -> Right ""
+        Right _otherValue -> Right ""
         Left e -> Left e
 
 appendPrompt :: Storage.StorageConfig -> Text -> IO Text

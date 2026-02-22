@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 
 module ApiCompatibilitySpec where
 
+import Data.List qualified as List
 import Data.Text qualified as T
 import Test.Hspec
 
@@ -116,15 +118,18 @@ spec :: Spec
 spec = do
     describe "API Compatibility Analysis" $ do
         it "reports Haskell server endpoints" $ do
-            putStrLn $ "\nHaskell server implements " ++ show (length haskellEndpoints) ++ " endpoints"
+            putStrLn $ "\nHaskell server implements " ++ show (listLength haskellEndpoints) ++ " endpoints"
 
         it "reports TypeScript-only endpoints" $ do
-            putStrLn $ "TypeScript server has " ++ show (length typescriptOnlyEndpoints) ++ " additional endpoints"
+            putStrLn $ "TypeScript server has " ++ show (listLength typescriptOnlyEndpoints) ++ " additional endpoints"
             putStrLn "\nMissing in Haskell server:"
             mapM_ (putStrLn . ("  - " ++) . show) typescriptOnlyEndpoints
 
         it "calculates API coverage" $ do
-            let total = length haskellEndpoints + length typescriptOnlyEndpoints
-            let coverage = fromIntegral (length haskellEndpoints) / fromIntegral total * 100 :: Double
+            let total = listLength haskellEndpoints + listLength typescriptOnlyEndpoints
+            let coverage = fromIntegral (listLength haskellEndpoints) / fromIntegral total * 100 :: Double
             putStrLn $ "\nAPI Coverage: " ++ show (round coverage :: Int) ++ "%"
-            putStrLn $ "(" ++ show (length haskellEndpoints) ++ " / " ++ show total ++ " endpoints)"
+            putStrLn $ "(" ++ show (listLength haskellEndpoints) ++ " / " ++ show total ++ " endpoints)"
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0

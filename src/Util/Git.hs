@@ -25,4 +25,4 @@ runGit root args = do
     (code, out, _) <- readProcessWithExitCode "git" (["-C", root] ++ args) ""
     pure $ case code of
         ExitSuccess -> Just (T.pack out)
-        _ -> Nothing
+        ExitFailure _exitCode -> Nothing

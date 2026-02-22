@@ -62,7 +62,7 @@ prop_messageJsonKeys = property $ do
         Just (Object obj) -> do
             assert $ KM.member (Key.fromText "info") obj
             assert $ KM.member (Key.fromText "parts") obj
-        _ -> failure
+        _otherParts -> failure
 
 -- Generators
 genText :: Gen Text

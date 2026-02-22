@@ -47,7 +47,7 @@ instance FromJSON MessageRole where
     parseJSON = withText "MessageRole" $ \case
         "user" -> pure User
         "assistant" -> pure Assistant
-        _ -> fail "Invalid message role"
+        _otherRole -> fail "Invalid message role"
 
 -- | Message time info
 newtype MessageTime = MessageTime

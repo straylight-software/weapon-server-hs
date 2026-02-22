@@ -4,6 +4,7 @@ module Property.SkillProps where
 
 import Data.Aeson (encode, object, (.=))
 import Data.ByteString.Lazy qualified as BSL
+import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -83,7 +84,7 @@ prop_parseSkillIndex = property $ do
                 ]
     case parseSkillIndex (BSL.toStrict (encode payload)) of
         Nothing -> failure
-        Just idx -> length (siSkills idx) === 1
+        Just idx -> listLength (siSkills idx) === 1
 
 prop_parseSkillIndexMultiple :: Property
 prop_parseSkillIndexMultiple = property $ do
@@ -100,7 +101,7 @@ prop_parseSkillIndexMultiple = property $ do
                 ]
     case parseSkillIndex (BSL.toStrict (encode payload)) of
         Nothing -> failure
-        Just idx -> length (siSkills idx) === 2
+        Just idx -> listLength (siSkills idx) === 2
 
 prop_parseSkillIndexInvalid :: Property
 prop_parseSkillIndexInvalid = property $ do
@@ -112,6 +113,9 @@ genText = Gen.text (Range.linear 0 200) Gen.alphaNum
 
 genNonEmptyText :: Gen Text
 genNonEmptyText = Gen.text (Range.linear 1 50) Gen.alphaNum
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =

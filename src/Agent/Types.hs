@@ -34,7 +34,7 @@ instance FromJSON PermissionAction where
         "allow" -> pure Allow
         "deny" -> pure Deny
         "ask" -> pure Ask
-        _ -> fail "Invalid permission action"
+        _otherAction -> fail "Invalid permission action"
 
 -- | Permission rule
 data PermissionRule = PermissionRule
@@ -82,7 +82,7 @@ instance FromJSON AgentMode where
         "subagent" -> pure Subagent
         "primary" -> pure Primary
         "all" -> pure AllModes
-        _ -> fail "Invalid agent mode"
+        _otherMode -> fail "Invalid agent mode"
 
 -- | Agent information
 data Agent = Agent

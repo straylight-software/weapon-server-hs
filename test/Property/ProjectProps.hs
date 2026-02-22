@@ -56,7 +56,7 @@ prop_projectWorktreeAbsolute = property $ do
     dir <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
     let project = ProjectBuild.projectFromDir ("/home/user/" <> T.unpack dir)
     case project of
-        Project _ wt _ -> T.isPrefixOf "/" wt === True
+        Project _projectId wt _projectName -> T.isPrefixOf "/" wt === True
 
 -- | Property: project name can be extracted from path
 prop_projectNameFromPath :: Property
@@ -66,7 +66,7 @@ prop_projectNameFromPath = property $ do
     let project = ProjectBuild.projectFromDir path
     case project of
         Project _ _ (Just nm) -> nm === name
-        _ -> failure
+        _otherProject -> failure
 
 -- | Property: project id contains only valid characters
 prop_projectIdValidChars :: Property

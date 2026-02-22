@@ -2,3 +2,4 @@ dist-newstyle
 .direnv
 .opencode-test
 result
+.hie

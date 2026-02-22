@@ -3,6 +3,7 @@
 module Property.RequestProps where
 
 import Data.Aeson (Value (..), object, (.=))
+import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -54,7 +55,7 @@ prop_requestSkipsInvalidJson = property $ do
         TIO.writeFile (dir </> T.unpack badReq <> ".json") "{"
         RequestStore.listRequests store kind
     assert $ value `elem` result
-    length result === 1
+    listLength result === 1
 
 prop_generateIdPrefix :: Property
 prop_generateIdPrefix = property $ do
@@ -70,7 +71,7 @@ prop_generateIdUnique = property $ do
 prop_generateIdNonEmpty :: Property
 prop_generateIdNonEmpty = property $ do
     reqId <- evalIO RequestStore.generateId
-    assert $ T.length reqId > 4
+    assert $ not (T.null (T.drop 4 reqId))
 
 genText :: Gen Text
 genText = Gen.text (Range.linear 1 10) Gen.alphaNum
@@ -79,6 +80,9 @@ genValue :: Gen Value
 genValue = do
     text <- genText
     pure $ object ["id" .= text]
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =

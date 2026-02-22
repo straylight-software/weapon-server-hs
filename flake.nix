@@ -60,6 +60,7 @@
                 cabal-install
                 ghcid
                 haskell-language-server
+                haskellPackages.stan
               ]);
           };
         };

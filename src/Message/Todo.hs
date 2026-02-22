@@ -14,6 +14,8 @@ extractTodos = concatMap extract
     extract (Object obj) = case KM.lookup "type" obj of
         Just (String "todo") -> case KM.lookup "items" obj of
             Just (Array xs) -> toList xs
-            _ -> []
-        _ -> []
-    extract _ = []
+            Just _otherValue -> []
+            Nothing -> []
+        Just _otherValue -> []
+        Nothing -> []
+    extract _otherValue = []

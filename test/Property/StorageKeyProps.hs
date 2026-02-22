@@ -3,6 +3,7 @@
 -- | Storage key helpers property tests
 module Property.StorageKeyProps where
 
+import Data.List (isPrefixOf)
 import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -60,7 +61,7 @@ prop_sessionKeyPrefixConsistent = property $ do
     let key = sessionKey projectId sid
     let prefix = sessionPrefix projectId
     -- The key should start with the prefix
-    take (length prefix) key === prefix
+    assert $ prefix `isPrefixOf` key
 
 -- | Property: messageKey and messagePrefix are consistent
 prop_messageKeyPrefixConsistent :: Property
@@ -70,7 +71,7 @@ prop_messageKeyPrefixConsistent = property $ do
     let key = messageKey sid msgId
     let prefix = messagePrefix sid
     -- The key should start with the prefix
-    take (length prefix) key === prefix
+    assert $ prefix `isPrefixOf` key
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Generators

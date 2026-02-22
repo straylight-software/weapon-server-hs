@@ -41,7 +41,7 @@ instance FromJSON Role where
         "user" -> pure User
         "assistant" -> pure Assistant
         "system" -> pure System
-        _ -> fail "Unknown role"
+        _otherRole -> fail "Unknown role"
 
 -- | Content block types
 data ContentBlock
@@ -90,7 +90,7 @@ instance FromJSON ContentBlock where
                 pure $ ImageBlock mediaType b64
             "tool_use" -> ToolUseBlock <$> parseJSON (Object v)
             "tool_result" -> ToolResultBlock <$> parseJSON (Object v)
-            _ -> fail "Unknown content block type"
+            _otherType -> fail "Unknown content block type"
 
 -- | Tool use request from assistant
 data ToolUse = ToolUse
@@ -211,7 +211,7 @@ instance FromJSON StopReason where
         "max_tokens" -> pure MaxTokens
         "tool_use" -> pure ToolUseSR
         "stop_sequence" -> pure StopSequence
-        _ -> pure EndTurn
+        _otherReason -> pure EndTurn
 
 instance ToJSON StopReason where
     toJSON EndTurn = "end_turn"

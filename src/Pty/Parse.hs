@@ -8,4 +8,4 @@ import Pty.Types
 parseInput :: Value -> CreatePtyInput
 parseInput input = case fromJSON input of
     Success value -> value
-    Error _ -> CreatePtyInput Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+    Error _err -> CreatePtyInput Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing

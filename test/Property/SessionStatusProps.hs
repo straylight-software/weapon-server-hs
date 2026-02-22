@@ -22,8 +22,8 @@ prop_idleStatusJson = property $ do
             assert $ KM.member (Key.fromText "type") obj
             case KM.lookup (Key.fromText "type") obj of
                 Just (String "idle") -> success
-                _ -> failure
-        _ -> failure
+                _otherValue -> failure
+        _otherValue -> failure
   where
     decodeValue bytes = fromMaybe Null (decode bytes)
 
@@ -39,7 +39,7 @@ prop_retryStatusJson = property $ do
             assert $ KM.member (Key.fromText "attempt") obj
             assert $ KM.member (Key.fromText "message") obj
             assert $ KM.member (Key.fromText "next") obj
-        _ -> failure
+        _otherValue -> failure
   where
     decodeValue bytes = fromMaybe Null (decode bytes)
 
@@ -51,7 +51,7 @@ prop_activeStatusJson = property $ do
         Object obj -> do
             assert $ KM.member (Key.fromText "type") obj
             assert $ KM.member (Key.fromText "stepID") obj
-        _ -> failure
+        _otherValue -> failure
   where
     decodeValue bytes = fromMaybe Null (decode bytes)
 

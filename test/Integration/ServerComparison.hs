@@ -109,7 +109,7 @@ prop_generateValidRequests = property $ do
     endpoint <- forAll $ Gen.element haskellEndpoints
     -- Generate path parameters
     let pathParams = extractPathParams (path endpoint)
-    generatedParams <- forAll $ mapM (\_ -> Gen.text (Range.linear 3 20) Gen.alphaNum) pathParams
+    generatedParams <- forAll $ mapM (\paramName -> Gen.text (Range.linear 3 20) Gen.alphaNum) pathParams
     -- Build URL
     let url = buildUrl (path endpoint) generatedParams []
     -- URL should be valid

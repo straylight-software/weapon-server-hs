@@ -45,7 +45,7 @@ instance FromJSON FileType where
     parseJSON = withText "FileType" $ \case
         "file" -> pure FileTypeFile
         "directory" -> pure FileTypeDirectory
-        _ -> fail "Invalid file type"
+        _otherType -> fail "Invalid file type"
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // file node //
@@ -94,7 +94,7 @@ instance FromJSON ContentType where
     parseJSON = withText "ContentType" $ \case
         "text" -> pure ContentTypeText
         "binary" -> pure ContentTypeBinary
-        _ -> fail "Invalid content type"
+        _otherType -> fail "Invalid content type"
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // file content //

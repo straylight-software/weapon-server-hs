@@ -148,11 +148,11 @@ prop_supplyEmptyBodyDelete = property $ do
 extractBody :: Response -> IO LBS.ByteString
 extractBody resp = do
     bodyRef <- newIORef ([] :: [Builder])
-    let collectBuilder builder = modifyIORef' bodyRef (builder :)
+    let collectBuilder builder = modifyIORef' bodyRef (\builders -> builders <> [builder])
     let (_status, _headers, withBody) = responseToStream resp
     _ <- withBody $ \streamingBody -> streamingBody collectBuilder (pure ())
     builders <- readIORef bodyRef
-    pure $ toLazyByteString (mconcat (reverse builders))
+    pure $ toLazyByteString (mconcat builders)
 
 -- Actually, let's use a simpler approach for testing
 -- The middleware modifies the request, not the response

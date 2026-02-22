@@ -162,8 +162,9 @@ checkAuth storage provider = do
 extractMethod :: Value -> Maybe Text
 extractMethod (Object obj) = case KM.lookup "method" obj of
     Just (String t) -> Just t
-    _ -> Nothing
-extractMethod _ = Nothing
+    Just _otherValue -> Nothing
+    Nothing -> Nothing
+extractMethod _otherValue = Nothing
 
 hasEnv :: Text -> IO Bool
 hasEnv key = do
@@ -171,7 +172,7 @@ hasEnv key = do
     pure $ case val of
         Nothing -> False
         Just "" -> False
-        Just _ -> True
+        Just _otherValue -> True
 
 anyM :: (a -> IO Bool) -> [a] -> IO Bool
 anyM _ [] = pure False

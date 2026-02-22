@@ -23,8 +23,8 @@ getDiagnostics storage = do
     result <- try @SomeException (Storage.read storage diagKey)
     case result of
         Right (Array xs) -> pure (toList xs)
-        Right _ -> getDiagnosticsFile storage
-        Left _ -> getDiagnosticsFile storage
+        Right _otherValue -> getDiagnosticsFile storage
+        Left _err -> getDiagnosticsFile storage
 
 setDiagnostics :: Storage.StorageConfig -> [Value] -> IO ()
 setDiagnostics storage values =
@@ -55,4 +55,5 @@ readFromPaths (path : rest) = do
             result <- Aeson.eitherDecodeFileStrict path
             case result of
                 Right (Array xs) -> pure (toList xs)
-                _ -> readFromPaths rest
+                Right _otherValue -> readFromPaths rest
+                Left _err -> readFromPaths rest

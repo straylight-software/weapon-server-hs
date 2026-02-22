@@ -22,7 +22,7 @@ updatePart pid patch parts =
   where
     apply part = case partId part of
         Just pid' | pid' == pid -> mergePart part patch
-        _ -> part
+        _otherPartId -> part
 
 deletePart :: Text -> [Value] -> Maybe [Value]
 deletePart pid parts =
@@ -33,10 +33,15 @@ deletePart pid parts =
 partId :: Value -> Maybe Text
 partId (Object obj) = case KM.lookup "id" obj of
     Just (String t) -> Just t
-    _ -> case KM.lookup "partID" obj of
+    Just _otherValue -> case KM.lookup "partID" obj of
         Just (String t) -> Just t
-        _ -> Nothing
-partId _ = Nothing
+        Just _otherId -> Nothing
+        Nothing -> Nothing
+    Nothing -> case KM.lookup "partID" obj of
+        Just (String t) -> Just t
+        Just _otherId -> Nothing
+        Nothing -> Nothing
+partId _otherValue = Nothing
 
 mergePart :: Value -> Value -> Value
 mergePart (Object old) (Object new) = Object (KM.union new old)

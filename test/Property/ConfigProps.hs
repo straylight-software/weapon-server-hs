@@ -87,7 +87,7 @@ prop_configUpdatePreservesFields = withTests 50 $ property $ do
         Object obj -> do
             KM.lookup "theme" obj === Just (String "light")
             KM.lookup "model" obj === Just (String "gpt-4")
-        _ -> failure
+        _otherValue -> failure
   where
     mergeValue (Object base) (Object updates) = Object (KM.union updates base)
     mergeValue _ updates = updates
@@ -132,7 +132,7 @@ prop_configFileAtomicWrite = withTests 20 $ property $ do
         pure loaded
     case result of
         Nothing -> failure
-        Just _ -> success
+        Just _otherValue -> success
 
 -- | Property: config merge at top level replaces nested objects
 prop_configNestedMerge :: Property
@@ -148,8 +148,8 @@ prop_configNestedMerge = withTests 50 $ property $ do
                     KM.lookup "c" nested === Just (Number 3)
                     -- Original fields are gone because nested object was replaced
                     assert $ KM.member "other" obj
-                _ -> failure
-        _ -> failure
+                _otherNested -> failure
+        _otherValue -> failure
   where
     mergeValue (Object base) (Object updates) = Object (KM.union updates base)
     mergeValue _ updates = updates
@@ -165,7 +165,7 @@ prop_configThemePersistence = withTests 50 $ property $ do
         Object obj -> do
             KM.lookup "theme" obj === Just (String theme)
             KM.lookup "other" obj === Just (String "new")
-        _ -> failure
+        _otherValue -> failure
   where
     mergeValue (Object base) (Object updates) = Object (KM.union updates base)
     mergeValue _ updates = updates

@@ -123,10 +123,10 @@ create mgr@PtyManager{..} input = do
             bwrapPath <- findExecutable "bwrap"
             case bwrapPath of
                 Nothing -> createUnsandboxed mgr ptyId cwd title env input
-                Just _ -> do
+                Just _bwrapExe -> do
                     result <- createSandboxed mgr ptyId cwd title env network input
                     case result of
-                        Left _ -> createUnsandboxed mgr ptyId cwd title env input
+                        Left _err -> createUnsandboxed mgr ptyId cwd title env input
                         Right info -> pure $ Right info
         else createUnsandboxed mgr ptyId cwd title env input
 
@@ -143,7 +143,7 @@ createSandboxed PtyManager{..} ptyId cwd title env network input = do
     slirpPath <- if scNetwork config == NetworkSlirp then findExecutable "slirp4netns" else pure (Just "")
     case (scNetwork config, slirpPath) of
         (NetworkSlirp, Nothing) -> pure $ Left "slirp4netns not found"
-        _ -> do
+        _otherNetwork -> do
             -- Create sandbox directories
             result <- Sandbox.create ptyId config
 
@@ -171,7 +171,7 @@ createSandboxed PtyManager{..} ptyId cwd title env network input = do
                                     let args = ["--configure", show procPid, "tap0"]
                                     (_, _, _, slirpPh) <- createProcess (proc "slirp4netns" args)
                                     pure (Just slirpPh)
-                                _ -> pure Nothing
+                                _otherNetwork -> pure Nothing
 
                             let info =
                                     PtyInfo
@@ -281,7 +281,7 @@ ptyReaderThread RealPtySession{..} = loop
     loop = do
         result <- try @SomeException $ readPty rpsPty
         case result of
-            Left _ -> pure () -- PTY closed
+            Left _err -> pure () -- PTY closed
             Right bs | BS.null bs -> do
                 threadDelay 10000 -- 10ms
                 loop
@@ -411,7 +411,7 @@ remove PtyManager{..} ptyId = do
     waitForExit n ph = do
         code <- getProcessExitCode ph
         case code of
-            Just _ -> pure ()
+            Just _exitCode -> pure ()
             Nothing -> do
                 threadDelay 10000 -- 10ms
                 waitForExit (n - 1) ph

@@ -87,8 +87,8 @@ ptyWebSocketApp appState pending = do
         pathParts = BS.split (fromIntegral (fromEnum '/')) path
         -- path should be /pty/{ptyId}/connect
         maybePtyId = case pathParts of
-            [_, "pty", ptyIdBytes, "connect"] -> Just (TE.decodeUtf8 ptyIdBytes)
-            _ -> Nothing
+            [_root, "pty", ptyIdBytes, "connect"] -> Just (TE.decodeUtf8 ptyIdBytes)
+            _otherParts -> Nothing
 
     case maybePtyId of
         Nothing -> pure ()
@@ -111,7 +111,7 @@ bridgePtyToWebSocket ptyConnection websocketConnection = do
     let loop = do
             result <- try @SomeException $ receiveData websocketConnection
             case result of
-                Left _ -> Pty.pcClose ptyConnection
+                Left _err -> Pty.pcClose ptyConnection
                 Right bytes -> do
                     Pty.pcSend ptyConnection bytes
                     loop

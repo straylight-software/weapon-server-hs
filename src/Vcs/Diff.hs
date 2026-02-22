@@ -10,6 +10,7 @@ module Vcs.Diff (
 
 import Control.Exception (Exception, throwIO)
 import Data.Char (isDigit)
+import Data.List qualified as List
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -38,14 +39,14 @@ parseNumstat input =
     let entries = filter (not . T.null) (T.lines input)
         parts = map (T.splitOn "\t") entries
         stats = map toStat parts
-        adds = sum (map fst stats)
-        dels = sum (map snd stats)
-        count = length stats
+        adds = sumInts (map fst stats)
+        dels = sumInts (map snd stats)
+        count = listLength stats
      in ST.SessionSummary adds dels (Just count)
   where
     toStat fields = case fields of
         (addTxt : delTxt : _) -> (readInt addTxt, readInt delTxt)
-        _ -> (0, 0)
+        _otherFields -> (0, 0)
 
 loadDiff :: FilePath -> IO (Maybe (Text, ST.SessionSummary))
 loadDiff root = do
@@ -57,7 +58,7 @@ loadDiff root = do
             mNum <- runGit root ["diff", "--numstat"]
             case (mDiff, mNum) of
                 (Just diffOut, Just numOut) -> pure $ Just (diffOut, parseNumstat numOut)
-                _ -> pure Nothing
+                _otherOutputs -> pure Nothing
 
 -- | Internal file diff representation
 data FileDiffInternal = FileDiffInternal
@@ -77,7 +78,13 @@ parseNumstatFiles input =
     toFileDiff fields = case fields of
         (addTxt : delTxt : file : _) ->
             FileDiffInternal file (readInt addTxt) (readInt delTxt)
-        _ -> FileDiffInternal "" 0 0
+        _otherFields -> FileDiffInternal "" 0 0
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
+
+sumInts :: [Int] -> Int
+sumInts = List.foldl' (+) 0
 
 -- | Load file-level diffs for the session
 loadFileDiffs :: FilePath -> IO [FileDiffInternal]

@@ -10,6 +10,7 @@ where
 
 import Control.Exception (SomeException, try)
 import Data.Aeson (FromJSON, Value, eitherDecode, encode)
+import Data.List qualified as List
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -50,7 +51,7 @@ execute ctx name input = case name of
     "bash" -> parseAndRun ctx input execBash
     "glob" -> parseAndRun ctx input execGlob
     "grep" -> parseAndRun ctx input execGrep
-    _ -> pure $ toolError "Error" ("Unknown tool: " <> name)
+    _otherTool -> pure $ toolError "Error" ("Unknown tool: " <> name)
 
 -- | Parse input and run executor
 parseAndRun :: (FromJSON a) => ToolContext -> Value -> (ToolContext -> a -> IO ToolOutput) -> IO ToolOutput
@@ -97,7 +98,7 @@ execWrite ctx WriteInput{..} = do
         TIO.writeFile path wiContent
     case result of
         Left e -> pure $ toolError "Write Error" (T.pack $ show e)
-        Right () -> pure $ toolSuccess ("Wrote " <> wiFilePath) ("Successfully wrote " <> T.pack (show (T.length wiContent)) <> " characters")
+        Right () -> pure $ toolSuccess ("Wrote " <> wiFilePath) ("Successfully wrote " <> T.pack (show (textLength wiContent)) <> " characters")
 
 -- | Edit file
 execEdit :: ToolContext -> EditInput -> IO ToolOutput
@@ -109,7 +110,7 @@ execEdit ctx EditInput{..} = do
     case result of
         Left e -> pure $ toolError "Edit Error" (T.pack $ show e)
         Right content -> do
-            let count = length $ T.breakOnAll eiOldString content
+            let count = listLength $ T.breakOnAll eiOldString content
             if count == 0
                 then pure $ toolError "Edit Error" "oldString not found in content"
                 else
@@ -130,7 +131,13 @@ replaceFirst :: Text -> Text -> Text -> Text
 replaceFirst old new txt = case T.breakOn old txt of
     (before, after)
         | T.null after -> txt
-        | otherwise -> before <> new <> T.drop (T.length old) after
+        | otherwise -> before <> new <> T.drop (textLength old) after
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
+
+textLength :: Text -> Int
+textLength = T.foldl' (\acc _ -> acc + 1) 0
 
 -- | Execute bash command
 execBash :: ToolContext -> BashInput -> IO ToolOutput
@@ -178,7 +185,7 @@ execGlob ctx GlobInput{..} = do
             let output = T.unlines outputLines
             case exitCode of
                 ExitSuccess -> pure $ toolSuccess ("Glob " <> giPattern) output
-                ExitFailure _ ->
+                ExitFailure _exitCode ->
                     pure $
                         toolError
                             "Glob Error"
@@ -206,7 +213,7 @@ execGrep ctx GrepInput{..} = do
             case exitCode of
                 ExitSuccess -> pure $ toolSuccess ("Grep " <> grPattern) output
                 ExitFailure 1 | null stdout -> pure $ toolSuccess ("Grep " <> grPattern) ""
-                ExitFailure _ ->
+                ExitFailure _exitCode ->
                     pure $
                         toolError
                             "Grep Error"

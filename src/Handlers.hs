@@ -309,13 +309,13 @@ projectUpdateHandler st pid input = do
     if Api.id current == pid
         then do
             case input of
-                Object _ -> liftIO $ do
+                Object _obj -> liftIO $ do
                     let key = projectKey pid
                     existing <- Storage.readMaybe (stStorage st) key
                     let merged = mergeProjectValue existing input
                     Storage.write (stStorage st) key merged
                     applyProjectOverrides st current
-                _ -> throwError err400
+                _otherInput -> throwError err400
         else throwError err404
   where
     mergeProjectValue (Just (Object base)) (Object updates) = Object (KM.union updates base)
@@ -327,8 +327,10 @@ applyProjectOverrides st project = do
     case mval of
         Just (Object obj) -> case KM.lookup (K.fromText "name") obj of
             Just (String name) -> pure project{name = Just name}
-            _ -> pure project
-        _ -> pure project
+            Just _otherValue -> pure project
+            Nothing -> pure project
+        Just _otherValue -> pure project
+        Nothing -> pure project
 
 -- * Provider/Config Handlers
 
@@ -415,7 +417,7 @@ providerOauthCallbackHandler st pid _mDir input = do
                 Just token -> do
                     liftIO $ Provider.setAuth (stStorage st) pid token
                     return True
-        _ -> throwError $ err400{errBody = "{\"error\":\"invalid_state\"}"}
+        _otherStates -> throwError $ err400{errBody = "{\"error\":\"invalid_state\"}"}
 
 authCreateHandler :: AppState -> Text -> Value -> Handler Bool
 authCreateHandler st pid input = liftIO $ do
@@ -436,25 +438,32 @@ authDeleteHandler st pid = liftIO $ do
 extractToken :: Value -> Maybe Text
 extractToken (Object obj) = case KM.lookup "token" obj of
     Just (String t) -> Just t
-    _ -> case KM.lookup "apiKey" obj of
+    Just _otherValue -> case KM.lookup "apiKey" obj of
         Just (String t) -> Just t
-        _ -> Nothing
-extractToken _ = Nothing
+        Just _otherToken -> Nothing
+        Nothing -> Nothing
+    Nothing -> case KM.lookup "apiKey" obj of
+        Just (String t) -> Just t
+        Just _otherToken -> Nothing
+        Nothing -> Nothing
+extractToken _otherValue = Nothing
 
 extractText :: Value -> Text -> Maybe Text
 extractText (Object obj) key = case KM.lookup (K.fromText key) obj of
     Just (String t) -> Just t
-    _ -> Nothing
-extractText _ _ = Nothing
+    Just _otherValue -> Nothing
+    Nothing -> Nothing
+extractText _otherValue _key = Nothing
 
 extractTextList :: Value -> Text -> [Text]
 extractTextList (Object obj) key = case KM.lookup (K.fromText key) obj of
     Just (Array xs) -> foldr collect [] xs
-    _ -> []
+    Just _otherValue -> []
+    Nothing -> []
   where
     collect (String t) acc = t : acc
-    collect _ acc = acc
-extractTextList _ _ = []
+    collect _otherValue acc = acc
+extractTextList _otherValue _key = []
 
 -- | Create a JSON error response object
 errorResponse :: Text -> Value
@@ -742,7 +751,7 @@ createMessageIO st sid input = do
     let todos = Todo.extractTodos (cmiParts input)
     case todos of
         [] -> pure ()
-        _ -> Storage.write (stStorage st) (todoKey sid) todos
+        firstTodo : remainingTodos -> Storage.write (stStorage st) (todoKey sid) (firstTodo : remainingTodos)
 
     -- Publish user message event (send just info, not full message)
     let userInfo =
@@ -867,7 +876,7 @@ sessionMessagePartUpdateHandler st sid msgId partId input = do
     case (bodySession, bodyMessage, bodyPart) of
         (Just s, Just m, Just p) ->
             when (s /= sid || m /= msgId || p /= partId) $ throwError err400
-        _ -> throwError err400
+        _otherParts -> throwError err400
     result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
         Nothing -> throwError err404
@@ -891,10 +900,15 @@ sessionMessagePartUpdateHandler st sid msgId partId input = do
             else Nothing
     partKey (Object obj) = case KM.lookup "id" obj of
         Just (String t) -> Just t
-        _ -> case KM.lookup "partID" obj of
+        Just _otherValue -> case KM.lookup "partID" obj of
             Just (String t) -> Just t
-            _ -> Nothing
-    partKey _ = Nothing
+            Just _otherId -> Nothing
+            Nothing -> Nothing
+        Nothing -> case KM.lookup "partID" obj of
+            Just (String t) -> Just t
+            Just _otherId -> Nothing
+            Nothing -> Nothing
+    partKey _otherValue = Nothing
 
 sessionPromptAsyncHandler :: AppState -> Text -> CreateMessageInput -> Handler Value
 sessionPromptAsyncHandler st sid input = liftIO $ do
@@ -954,9 +968,11 @@ extractUserText parts = T.intercalate "\n" $ concatMap extractTextPart parts
     extractTextPart (Object obj) = case KM.lookup "type" obj of
         Just (String "text") -> case KM.lookup "text" obj of
             Just (String txt) -> [txt]
-            _ -> []
-        _ -> []
-    extractTextPart _ = []
+            Just _otherValue -> []
+            Nothing -> []
+        Just _otherValue -> []
+        Nothing -> []
+    extractTextPart _otherValue = []
 
 -- | Mark message as complete and publish idle event
 completeMessage :: AppState -> Text -> Text -> Text -> Double -> IO ()
@@ -1139,7 +1155,7 @@ fileStatusHandler st mDir mPath = liftIO $ do
                     fullPath <- resolvePath mDir path
                     exists <- doesFileExist fullPath
                     return [object ["path" .= path, "status" .= ("clean" :: Text), "exists" .= exists]]
-                _ -> return $ map Data.Aeson.toJSON filtered
+                firstFiltered : remainingFiltered -> return $ map Data.Aeson.toJSON (firstFiltered : remainingFiltered)
 
 tuiAppendPromptHandler :: AppState -> Maybe Text -> Value -> Handler Bool
 tuiAppendPromptHandler st _mDir input = liftIO $ do
@@ -1261,7 +1277,7 @@ experimentalWorktreeDeleteHandler st mDir input = liftIO $ do
     result <- Worktree.remove (stStorage st) (stDirectory st) dir
     case result of
         Left _err -> return False
-        Right _ -> return True
+        Right _removed -> return True
 
 -- * PTY Handlers (sandboxed terminals)
 
@@ -1292,7 +1308,7 @@ ptyUpdateHandler :: AppState -> Text -> Value -> Handler Value
 ptyUpdateHandler st ptyId input = liftIO $ do
     let parseInput = case Data.Aeson.fromJSON input of
             Data.Aeson.Success i -> Just i
-            Data.Aeson.Error _ -> Nothing
+            Data.Aeson.Error _err -> Nothing
 
     case parseInput of
         Nothing -> return $ errorResponse "Invalid input"
@@ -1363,7 +1379,7 @@ chatWithAnthropic model message = do
                 Right resp ->
                     let content = case LLMTypes.respContent resp of
                             (LLMTypes.TextBlock t : _) -> t
-                            _ -> ""
+                            _otherBlocks -> ""
                      in return $
                             object
                                 [ "id" .= LLMTypes.respId resp

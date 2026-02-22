@@ -59,7 +59,7 @@ instance FromJSON NetworkMode where
         "none" -> pure NetworkNone
         "host" -> pure NetworkHost
         "slirp" -> pure NetworkSlirp
-        _ -> fail "Invalid NetworkMode"
+        _otherMode -> fail "Invalid NetworkMode"
 
 -- | Mount specification for bind mounts
 data MountSpec = MountSpec

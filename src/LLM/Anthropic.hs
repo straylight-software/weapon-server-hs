@@ -151,14 +151,14 @@ Returns (remaining buffer, parsed events)
 parseSSE :: ByteString -> IO (ByteString, [StreamEvent])
 parseSSE buffer = do
     let chunks = C8.lines buffer
-    go chunks [] ""
+    go chunks id ""
   where
-    go [] events remaining = pure (remaining, reverse events)
+    go [] events remaining = pure (remaining, events [])
     go (l : ls) events _
         | "data: " `BS.isPrefixOf` l = do
             let jsonPart = BS.drop 6 l
             case parseEvent jsonPart of
-                Just event -> go ls (event : events) ""
+                Just event -> go ls (events . (event :)) ""
                 Nothing -> go ls events l -- Keep unparsed line
         | "event: " `BS.isPrefixOf` l = go ls events "" -- Skip event type lines
         | BS.null l = go ls events "" -- Empty line = event boundary
@@ -198,10 +198,10 @@ parseStreamEvent json = flip parseMaybe json $ \case
                 pure $ MessageDelta stopReason usage
             "message_stop" -> pure MessageStop
             "ping" -> pure Ping
-            _ -> fail "Unknown event type"
-    _ -> fail "Not an object"
+            _otherType -> fail "Unknown event type"
+    _otherValue -> fail "Not an object"
 
 -- | Check if event is MessageStop
 isMessageStop :: StreamEvent -> Bool
 isMessageStop MessageStop = True
-isMessageStop _ = False
+isMessageStop _otherEvent = False

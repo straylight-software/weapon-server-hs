@@ -32,7 +32,7 @@ prop_queuedPayloadFields = property $ do
             lookupText "requestID" obj === Just reqId
             lookupText "sessionID" obj === Just sid
             lookupText "status" obj === Just "queued"
-        _ -> failure
+        _otherValue -> failure
 
 prop_completedPayloadIncludesMessage :: Property
 prop_completedPayloadIncludesMessage = property $ do
@@ -46,7 +46,7 @@ prop_completedPayloadIncludesMessage = property $ do
             lookupText "sessionID" obj === Just sid
             lookupText "status" obj === Just "completed"
             lookupText "messageID" obj === Just msgId
-        _ -> failure
+        _otherValue -> failure
 
 prop_startedPayloadFields :: Property
 prop_startedPayloadFields = property $ do
@@ -58,7 +58,7 @@ prop_startedPayloadFields = property $ do
             lookupText "requestID" obj === Just reqId
             lookupText "sessionID" obj === Just sid
             lookupText "status" obj === Just "started"
-        _ -> failure
+        _otherValue -> failure
 
 prop_failedPayloadIncludesError :: Property
 prop_failedPayloadIncludesError = property $ do
@@ -72,7 +72,7 @@ prop_failedPayloadIncludesError = property $ do
             lookupText "sessionID" obj === Just sid
             lookupText "status" obj === Just "failed"
             lookupText "error" obj === Just err
-        _ -> failure
+        _otherValue -> failure
 
 prop_statusValuesValid :: Property
 prop_statusValuesValid = property $ do
@@ -107,12 +107,13 @@ prop_lifecycleOrder = property $ do
 promptStatus :: Value -> Text
 promptStatus payload = case payload of
     Object obj -> fromMaybe "" (lookupText "status" obj)
-    _ -> ""
+    _otherValue -> ""
 
 lookupText :: Text -> KM.KeyMap Value -> Maybe Text
 lookupText key obj = case KM.lookup (Key.fromText key) obj of
     Just (String txt) -> Just txt
-    _ -> Nothing
+    Just _otherValue -> Nothing
+    Nothing -> Nothing
 
 genPart :: Gen Value
 genPart = do

@@ -170,7 +170,7 @@ handleHttp state manager logFile req respond = do
     let duration = realToFrac (diffUTCTime endTime startTime) * 1000
 
     case result of
-        Left _ -> do
+        Left _err -> do
             -- Log failed request
             let entry =
                     LogEntry
@@ -266,8 +266,8 @@ parseHostPort target =
      in case break (== ':') stripped of
             (host, ':' : portStr) -> case reads portStr of
                 [(port, "")] -> Just (host, port)
-                _ -> Nothing
-            _ -> Nothing
+                _otherReads -> Nothing
+            _otherParts -> Nothing
 
 tunnel :: String -> Int -> IO ByteString -> (ByteString -> IO ()) -> IO ()
 tunnel host port readClient writeClient = do
@@ -359,7 +359,7 @@ parseTokensFromJson host json = flip parseMaybe json $ \case
                                 , tuCacheWrite = Nothing
                                 }
                     else fail "Unknown provider"
-    _ -> fail "Not an object"
+    _otherValue -> fail "Not an object"
 
 -- | Add token counts
 addTokens :: TokenUsage -> TokenUsage -> TokenUsage

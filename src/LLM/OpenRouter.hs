@@ -286,6 +286,7 @@ extractDelta bs = do
                     content <- delta .:? "content"
                     case content of
                         Just txt | not (T.null txt) -> pure txt
-                        _ -> fail "empty or no content"
+                        Just _otherText -> fail "empty or no content"
+                        Nothing -> fail "empty or no content"
                 [] -> fail "no choices"
-        _ -> fail "not object"
+        _otherValue -> fail "not object"

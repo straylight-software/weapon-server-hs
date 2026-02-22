@@ -74,5 +74,6 @@ eventHandler state = Tagged $ \req respond' -> do
 matchesDirectory :: Text -> Value -> Bool
 matchesDirectory dir (Object obj) = case KM.lookup "directory" obj of
     Just (String d) -> d == dir
-    _ -> True -- If no directory field, include the event
-matchesDirectory _ _ = True
+    Just _otherValue -> True -- If no directory field, include the event
+    Nothing -> True
+matchesDirectory _dir _otherValue = True

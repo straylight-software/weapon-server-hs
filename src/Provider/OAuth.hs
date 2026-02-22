@@ -28,7 +28,7 @@ buildAuthorizeUrl providerId state redirect scopes =
   where
     scopeParams xs = case xs of
         [] -> []
-        _ -> [("scope", T.intercalate "," xs)]
+        _nonEmptyScopes -> [("scope", T.intercalate "," xs)]
 
 renderParams :: [(Text, Text)] -> Text
 renderParams params =

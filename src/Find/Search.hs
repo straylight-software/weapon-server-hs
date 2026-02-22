@@ -63,12 +63,12 @@ findFileWithOptions root pat opts = do
     exe <- findExecutable "fd"
     case exe of
         Nothing -> throwIO $ MissingExecutable "fd" "Install fd-find: https://github.com/sharkdp/fd"
-        Just _ -> do
+        Just _fdExe -> do
             let typeArgs = case ffoFileType opts of
                     Just "file" -> ["--type", "f"]
                     Just "directory" -> ["--type", "d"]
                     Nothing -> if ffoIncludeDirs opts then [] else ["--type", "f"]
-                    Just _ -> ["--type", "f"] -- default to files for unknown types
+                    Just _otherType -> ["--type", "f"] -- default to files for unknown types
             (code, out, _) <- readProcessWithExitCode "fd" (typeArgs ++ ["--glob", T.unpack pat, root]) ""
             case code of
                 ExitSuccess -> do
@@ -76,7 +76,7 @@ findFileWithOptions root pat opts = do
                     pure $ case ffoLimit opts of
                         Just n -> take n results
                         Nothing -> results
-                _ -> pure []
+                ExitFailure _exitCode -> pure []
   where
     toValue path = object ["path" .= path]
 
@@ -85,10 +85,10 @@ runRg root query = do
     exe <- findExecutable "rg"
     case exe of
         Nothing -> throwIO $ MissingExecutable "rg" "Install ripgrep: https://github.com/BurntSushi/ripgrep"
-        Just _ -> do
+        Just _rgExe -> do
             (code, out, _) <- readProcessWithExitCode "rg" ["--line-number", "--no-heading", "--color", "never", T.unpack query, root] ""
             case code of
                 ExitSuccess -> pure $ map toValue $ mapMaybe parseRgLine (T.lines (T.pack out))
-                ExitFailure _ -> pure []
+                ExitFailure _exitCode -> pure []
   where
     toValue (path, lineNum, text) = object ["path" .= path, "line" .= lineNum, "text" .= text]

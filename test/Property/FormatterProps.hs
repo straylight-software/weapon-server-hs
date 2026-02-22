@@ -4,8 +4,9 @@ module Property.FormatterProps where
 
 import Config.Config qualified as Config
 import Config.Types qualified as CT
-import Data.List (nub)
+import Data.List qualified as List
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Formatter.Status (FormatterStatus (..), statusFor, statusForConfig)
 import Hedgehog
 import Test.Tasty
@@ -15,7 +16,7 @@ prop_uniqueNames :: Property
 prop_uniqueNames = withTests 10 $ property $ do
     statuses <- evalIO $ statusFor "."
     let names = map fsName statuses
-    length names === length (nub names)
+    listLength names === Set.size (Set.fromList names)
 
 prop_extensionsNonEmpty :: Property
 prop_extensionsNonEmpty = withTests 10 $ property $ do
@@ -74,6 +75,9 @@ prop_overrideExtensions = withTests 10 $ property $ do
                 }
     statuses <- evalIO $ statusForConfig "." cfg
     assert $ any (\status -> fsName status == "gofmt" && fsExtensions status == [".x"]) statuses
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =

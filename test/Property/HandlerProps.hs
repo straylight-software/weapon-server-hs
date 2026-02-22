@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 
 module Property.HandlerProps where
 
@@ -16,6 +17,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
 import Data.ByteString.Builder (Builder, toLazyByteString)
 import Data.ByteString.Lazy qualified as LBS
+import Data.List qualified as List
 import Data.Maybe (isJust, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -52,6 +54,61 @@ import Test.Tasty.Runners (NumThreads (..))
 import Tui.Store qualified as TuiStore
 import Util.StorageKeys (todoKey)
 import Vcs.Diff (VcsError)
+
+data ProjectHandlersResult = ProjectHandlersResult
+    { phrListed :: !(Either ServerError [Project])
+    , phrCurrent :: !(Either ServerError Project)
+    , phrFetched :: !(Either ServerError Project)
+    , phrDir :: !Text
+    }
+
+data PtyLifecycleDetails = PtyLifecycleDetails
+    { pldId :: !Text
+    , pldListed :: !(Either ServerError [Value])
+    , pldFetched :: !(Either ServerError Value)
+    , pldUpdated :: !(Either ServerError Value)
+    , pldDeleted :: !(Either ServerError Bool)
+    , pldFetched2 :: !(Either ServerError Value)
+    }
+
+data PtyLifecycleResult = PtyLifecycleResult
+    { plCreated :: !(Either ServerError Value)
+    , plDetails :: !(Maybe PtyLifecycleDetails)
+    }
+
+data TuiHandlersResult = TuiHandlersResult
+    { thrAppended :: !(Either ServerError Bool)
+    , thrPrompt :: !Text
+    , thrSubmitted :: !(Either ServerError Bool)
+    , thrCleared :: !(Either ServerError Bool)
+    , thrOpenHelp :: !(Either ServerError Bool)
+    , thrOpenSessions :: !(Either ServerError Bool)
+    , thrOpenThemes :: !(Either ServerError Bool)
+    , thrOpenModels :: !(Either ServerError Bool)
+    , thrExec :: !(Either ServerError Bool)
+    , thrToast :: !(Either ServerError Bool)
+    , thrPublish :: !(Either ServerError Bool)
+    , thrSelect :: !(Either ServerError Bool)
+    , thrControlNext :: !(Either ServerError Bool)
+    , thrControlResponse :: !(Either ServerError Bool)
+    , thrLast :: !(Maybe Value)
+    }
+
+data ExperimentalWorktreeResult = ExperimentalWorktreeResult
+    { ewrGet :: !(Either ServerError [Text])
+    , ewrSet :: !(Either ServerError Value)
+    , ewrReset :: !(Either ServerError Bool)
+    , ewrRoot :: !Text
+    }
+
+data SessionLifecycleResult = SessionLifecycleResult
+    { slrCreated :: !(Either ServerError Session)
+    , slrListed :: !(Either ServerError [Session])
+    , slrFetched :: !(Either ServerError Session)
+    , slrUpdated :: !(Either ServerError Session)
+    , slrDeleted :: !(Either ServerError Bool)
+    , slrFetched2 :: !(Either ServerError Session)
+    }
 
 withTmp :: (FilePath -> IO a) -> IO a
 withTmp =
@@ -110,7 +167,7 @@ setVar key val = case val of
 
 withEnv :: String -> Maybe String -> IO a -> IO a
 withEnv key val action =
-    bracket (lookupEnv key) (setVar key) (\_ -> setVar key val >> action)
+    bracket (lookupEnv key) (setVar key) (\_previous -> setVar key val >> action)
 
 runHandlerIO :: Handler a -> IO (Either ServerError a)
 runHandlerIO = runHandler
@@ -127,19 +184,19 @@ waitVar delay var = do
 lookupText :: Text -> Value -> Maybe Text
 lookupText key (Object obj) = case KM.lookup (K.fromText key) obj of
     Just (String t) -> Just t
-    _ -> Nothing
+    _otherResult -> Nothing
 lookupText _ _ = Nothing
 
 lookupBool :: Text -> Value -> Maybe Bool
 lookupBool key (Object obj) = case KM.lookup (K.fromText key) obj of
     Just (Bool b) -> Just b
-    _ -> Nothing
+    _otherResult -> Nothing
 lookupBool _ _ = Nothing
 
 lookupArray :: Text -> Value -> Maybe [Value]
 lookupArray key (Object obj) = case KM.lookup (K.fromText key) obj of
     Just (Array arr) -> Just (toList arr)
-    _ -> Nothing
+    _otherResult -> Nothing
   where
     toList = foldr (:) []
 lookupArray _ _ = Nothing
@@ -156,7 +213,7 @@ matchFind :: Text -> Text -> Value -> Bool
 matchFind token path val =
     case (lookupText "text" val, lookupText "path" val) of
         (Just txt, Just pth) -> token `T.isInfixOf` txt && pth == path
-        _ -> False
+        _otherResult -> False
 
 hasSuffix :: Text -> Value -> Bool
 hasSuffix suffix val = case lookupText "path" val of
@@ -175,7 +232,7 @@ prop_healthHandler = withTests 20 $ property $ do
         res <- runHandlerIO (healthHandler st)
         pure (res, stVersion st)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right health, ver) -> do
             healthy health === True
             version health === ver
@@ -186,7 +243,7 @@ prop_pathHandler = withTests 20 $ property $ do
         res <- runHandlerIO (pathHandler st)
         pure (res, stDirectory st)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right info, dir) -> do
             let PathInfo{worktree = wt, state = stPath} = info
             wt === dir
@@ -196,7 +253,7 @@ prop_globalConfigHandler :: Property
 prop_globalConfigHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (globalConfigHandler st)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right val -> assert $ isObject val
 
 prop_projectHandlers :: Property
@@ -205,18 +262,29 @@ prop_projectHandlers = withTests 20 $ property $ do
         listed <- runHandlerIO (projectListHandler st)
         current <- runHandlerIO (projectCurrentHandler st Nothing)
         fetched <- case current of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right cur -> runHandlerIO (projectGetHandler st (Api.id cur))
-        pure (listed, current, fetched, stDirectory st)
+        pure
+            ProjectHandlersResult
+                { phrListed = listed
+                , phrCurrent = current
+                , phrFetched = fetched
+                , phrDir = stDirectory st
+                }
     case result of
-        (Left _, _, _, _) -> failure
-        (_, Left _, _, _) -> failure
-        (_, _, Left _, _) -> failure
-        (Right listed, Right current, Right fetched, dir) -> do
-            let projWork p = case p of Project{worktree = wt} -> wt
-            assert $ any (\p -> projWork p == dir) listed
-            projWork current === dir
-            projWork fetched === dir
+        ProjectHandlersResult{phrListed = Left _err} -> failure
+        ProjectHandlersResult{phrCurrent = Left _err} -> failure
+        ProjectHandlersResult{phrFetched = Left _err} -> failure
+        ProjectHandlersResult
+            { phrListed = Right listed
+            , phrCurrent = Right current
+            , phrFetched = Right fetched
+            , phrDir = dir
+            } -> do
+                let projWork p = case p of Project{worktree = wt} -> wt
+                assert $ any (\p -> projWork p == dir) listed
+                projWork current === dir
+                projWork fetched === dir
 
 prop_projectUpdateHandler :: Property
 prop_projectUpdateHandler = withTests 20 $ property $ do
@@ -224,7 +292,7 @@ prop_projectUpdateHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> do
         current <- runHandlerIO (projectCurrentHandler st Nothing)
         case current of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right cur -> do
                 let pid = Api.id cur
                 let input = object ["name" .= newName]
@@ -233,38 +301,38 @@ prop_projectUpdateHandler = withTests 20 $ property $ do
                 listed <- runHandlerIO (projectListHandler st)
                 pure (Right (updated, current2, listed))
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right (updated, current2, listed) -> do
             case updated of
-                Left _ -> failure
+                Left _err -> failure
                 Right proj -> name proj === Just newName
             case current2 of
-                Left _ -> failure
+                Left _err -> failure
                 Right proj -> name proj === Just newName
             case listed of
-                Left _ -> failure
+                Left _err -> failure
                 Right projs -> assert $ any (\p -> name p == Just newName) projs
 
 prop_providerListHandler :: Property
 prop_providerListHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (providerListHandler st Nothing)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right pl -> assert $ isObject (cplDefault pl)
 
 prop_providerAuthHandler :: Property
 prop_providerAuthHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (providerAuthHandler st)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right val -> assert $ isObject val
 
 prop_providerHandler :: Property
 prop_providerHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (providerHandler st Nothing)
     case result of
-        Left _ -> failure
-        Right _ -> success
+        Left _err -> failure
+        Right _result -> success
 
 prop_providerOauthHandlers :: Property
 prop_providerOauthHandlers = withTests 10 $ property $ do
@@ -274,7 +342,7 @@ prop_providerOauthHandlers = withTests 10 $ property $ do
         let input = object ["redirect" .= ("http://localhost" :: Text), "scopes" .= ["read" :: Text]]
         auth <- runHandlerIO (providerOauthAuthorizeHandler st pid input)
         callback <- case auth of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right val -> do
                 case lookupText "state" val of
                     Nothing -> pure (Right False)
@@ -283,8 +351,8 @@ prop_providerOauthHandlers = withTests 10 $ property $ do
                         runHandlerIO (providerOauthCallbackHandler st pid Nothing payload)
         pure (auth, callback)
     case result of
-        (Left _, _) -> failure
-        (_, Left _) -> failure
+        (Left _err, _) -> failure
+        (_, Left _err) -> failure
         (Right auth, Right callbackResult) -> do
             lookupText "providerID" auth === Just pid
             assert $ isJust (lookupText "state" auth)
@@ -295,14 +363,14 @@ prop_configHandler :: Property
 prop_configHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (configHandler st)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right val -> assert $ isObject val
 
 prop_commandHandler :: Property
 prop_commandHandler = withTests 20 $ property $ do
     result <- evalIO $ runHandlerIO commandHandler
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right defs -> do
             let names = mapMaybe (lookupText "name") defs
             assert $ "bash" `elem` names
@@ -311,14 +379,14 @@ prop_agentHandler :: Property
 prop_agentHandler = withTests 20 $ property $ do
     result <- evalIO $ runHandlerIO agentHandler
     case result of
-        Left _ -> failure
-        Right _ -> success
+        Left _err -> failure
+        Right _result -> success
 
 prop_sessionStatusHandler :: Property
 prop_sessionStatusHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (sessionStatusHandler st Nothing)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right val -> do
             -- Returns an empty map (object {}) when no sessions are active
             -- The map has type Map<SessionID, SessionStatus>
@@ -333,30 +401,45 @@ prop_sessionLifecycleHandler = withTests 20 $ property $ do
         created <- runHandlerIO (sessionCreateHandler st Nothing input)
         listed <- runHandlerIO (sessionListHandler st Nothing Nothing Nothing Nothing Nothing)
         fetched <- case created of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionGetHandler st (sessionId ses))
         updated <- case created of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionUpdateHandler st (sessionId ses) (UpdateSessionInput (Just next) Nothing Nothing Nothing))
         deleted <- case created of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionDeleteHandler st (sessionId ses))
         fetched2 <- case created of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionGetHandler st (sessionId ses))
-        pure (created, listed, fetched, updated, deleted, fetched2)
+        pure
+            SessionLifecycleResult
+                { slrCreated = created
+                , slrListed = listed
+                , slrFetched = fetched
+                , slrUpdated = updated
+                , slrDeleted = deleted
+                , slrFetched2 = fetched2
+                }
     case result of
-        (Left _, _, _, _, _, _) -> failure
-        (_, Left _, _, _, _, _) -> failure
-        (_, _, Left _, _, _, _) -> failure
-        (_, _, _, Left _, _, _) -> failure
-        (_, _, _, _, Left _, _) -> failure
-        (Right created, Right listed, Right fetched, Right updated, Right deleted, Left _) -> do
-            assert $ any (\s -> sessionId s == sessionId created) listed
-            sessionId fetched === sessionId created
-            sessionTitle updated === next
-            deleted === True
-        _ -> failure
+        SessionLifecycleResult{slrCreated = Left _err} -> failure
+        SessionLifecycleResult{slrListed = Left _err} -> failure
+        SessionLifecycleResult{slrFetched = Left _err} -> failure
+        SessionLifecycleResult{slrUpdated = Left _err} -> failure
+        SessionLifecycleResult{slrDeleted = Left _err} -> failure
+        SessionLifecycleResult
+            { slrCreated = Right created
+            , slrListed = Right listed
+            , slrFetched = Right fetched
+            , slrUpdated = Right updated
+            , slrDeleted = Right deleted
+            , slrFetched2 = Left _err
+            } -> do
+                assert $ any (\s -> sessionId s == sessionId created) listed
+                sessionId fetched === sessionId created
+                sessionTitle updated === next
+                deleted === True
+        _otherResult -> failure
 
 prop_sessionChildrenHandler :: Property
 prop_sessionChildrenHandler = withTests 20 $ property $ do
@@ -365,16 +448,16 @@ prop_sessionChildrenHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> do
         parent <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just parentTitle) Nothing))
         child <- case parent of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just childTitle) (Just (sessionId ses))))
         kids <- case parent of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionChildrenHandler st (sessionId ses) Nothing)
         pure (parent, child, kids)
     case result of
-        (Left _, _, _) -> failure
-        (_, Left _, _) -> failure
-        (_, _, Left _) -> failure
+        (Left _err, _, _) -> failure
+        (_, Left _err, _) -> failure
+        (_, _, Left _err) -> failure
         (Right parent, Right child, Right kids) ->
             assert $ any (\s -> sessionId s == sessionId child && sessionParentID s == Just (sessionId parent)) kids
 
@@ -387,7 +470,7 @@ prop_sessionTodoHandler = withTests 20 $ property $ do
         Storage.write (stStorage st) (todoKey sid) todos
         runHandlerIO (sessionTodoHandler st sid)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right todos -> todos === [object ["text" .= item]]
 
 prop_sessionInitHandler :: Property
@@ -401,7 +484,7 @@ prop_sessionInitHandler = withTests 20 $ property $ do
         evt <- waitVar 1000000 var
         pure (res, evt)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, evt) -> do
             -- Handler now returns Bool (true on success)
             val === True
@@ -413,12 +496,12 @@ prop_sessionForkHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> do
         parent <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just title) Nothing))
         forked <- case parent of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionForkHandler st (sessionId ses) (ForkSessionInput Nothing))
         pure (parent, forked)
     case result of
-        (Left _, _) -> failure
-        (_, Left _) -> failure
+        (Left _err, _) -> failure
+        (_, Left _err) -> failure
         (Right parent, Right forked) -> do
             sessionParentID forked === Just (sessionId parent)
             assert $ "Fork of" `T.isPrefixOf` sessionTitle forked
@@ -434,26 +517,26 @@ prop_sessionAbortHandler = withTests 20 $ property $ do
         evt <- waitVar 1000000 var
         pure (res, evt)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right True, evt) -> do
             assert $ isJust evt
-        _ -> failure
+        _otherResult -> failure
 
 prop_sessionShareHandlers :: Property
 prop_sessionShareHandlers = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> do
         created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "share") Nothing))
         shared <- case created of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionShareCreateHandler st (sessionId ses))
         deleted <- case created of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionShareDeleteHandler st (sessionId ses))
         pure (created, shared, deleted)
     case result of
-        (Left _, _, _) -> failure
-        (_, Left _, _) -> failure
-        (_, _, Left _) -> failure
+        (Left _err, _, _) -> failure
+        (_, Left _err, _) -> failure
+        (_, _, Left _err) -> failure
         (Right created, Right shared, Right deleted) -> do
             -- After sharing, the session should have a share URL containing the session ID
             case sessionShare shared of
@@ -475,7 +558,7 @@ prop_sessionDiffHandler = withTests 20 $ property $ do
         (_, Just e) -> do
             annotate $ show e
             failure
-        (Left _, Nothing) -> failure
+        (Left _err, Nothing) -> failure
         (Right diffs, Nothing) -> do
             -- Handler now returns [FileDiff] - check it's a valid list
             -- (can be empty if no changes in working directory)
@@ -489,7 +572,7 @@ prop_sessionSummarizeHandler = withTests 20 $ property $ do
         ( do
             created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "sum") Nothing))
             summarized <- case created of
-                Left err -> pure (Left err)
+                Left _err -> pure (Left _err)
                 Right ses -> runHandlerIO (sessionSummarizeHandler st (sessionId ses))
             pure (summarized, Nothing)
         )
@@ -498,7 +581,7 @@ prop_sessionSummarizeHandler = withTests 20 $ property $ do
         (_, Just e) -> do
             annotate $ show e
             failure
-        (Left _, Nothing) -> failure
+        (Left _err, Nothing) -> failure
         (Right ok, Nothing) -> ok === True
 
 prop_sessionRevertHandlers :: Property
@@ -507,15 +590,15 @@ prop_sessionRevertHandlers = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> do
         created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "rev") Nothing))
         reverted <- case created of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionRevertHandler st (sessionId ses) (SessionRevert mid Nothing Nothing Nothing))
         unreverted <- case created of
-            Left err -> pure (Left err)
+            Left _err -> pure (Left _err)
             Right ses -> runHandlerIO (sessionUnrevertHandler st (sessionId ses))
         pure (reverted, unreverted)
     case result of
-        (Left _, _) -> failure
-        (_, Left _) -> failure
+        (Left _err, _) -> failure
+        (_, Left _err) -> failure
         (Right reverted, Right unreverted) -> do
             -- After revert, the session should have a revert with the message ID
             case sessionRevert reverted of
@@ -537,7 +620,7 @@ prop_sessionPermissionHandler = withTests 20 $ property $ do
         evt <- waitVar 1000000 var
         pure (res, evt)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, evt) -> do
             val === True
             assert $ isJust evt
@@ -554,10 +637,10 @@ prop_sessionMessageHandlers = withTests 20 $ property $ do
             fetched <- runHandlerIO (sessionMessageGetHandler st "session" "msg_1")
             pure (listed, fetched)
     case result of
-        (Left _, _) -> failure
-        (_, Left _) -> failure
+        (Left _err, _) -> failure
+        (_, Left _err) -> failure
         (Right listed, Right fetched) -> do
-            assert $ length listed >= 2
+            assert $ listLength listed >= 2
             msgId (msgInfo fetched) === "msg_1"
             let assistants = filter (\m -> msgRole (msgInfo m) == ("assistant" :: Text)) listed
             assert $ not (all (null . msgParts) assistants)
@@ -584,8 +667,8 @@ prop_sessionMessagePartHandlers = withTests 20 $ property $ do
             deleted <- runHandlerIO (sessionMessagePartDeleteHandler st "session" "msg_1" pid)
             pure (updated, deleted)
     case result of
-        (Left _, _) -> failure
-        (_, Left _) -> failure
+        (Left _err, _) -> failure
+        (_, Left _err) -> failure
         (Right updated, Right deleted) -> do
             lookupText "text" updated === Just next
             deleted === True
@@ -594,8 +677,8 @@ prop_lspHandler :: Property
 prop_lspHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (lspHandler st)
     case result of
-        Left _ -> failure
-        Right _ -> success
+        Left _err -> failure
+        Right _result -> success
 
 prop_permissionHandlers :: Property
 prop_permissionHandlers = withTests 20 $ property $ do
@@ -605,7 +688,7 @@ prop_permissionHandlers = withTests 20 $ property $ do
         _ <- runHandlerIO (permissionReplyHandler st rid Nothing payload)
         runHandlerIO (permissionHandler st Nothing)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right vals -> do
             let hits = filter (\v -> lookupText "requestID" v == Just rid) vals
             assert $ not (null hits)
@@ -619,7 +702,7 @@ prop_questionHandlers = withTests 20 $ property $ do
         _ <- runHandlerIO (questionRejectHandler st (rid <> "_r") Nothing payload)
         runHandlerIO (questionHandler st Nothing)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right vals -> do
             let hits = filter (\v -> lookupText "requestID" v == Just rid) vals
             assert $ not (null hits)
@@ -633,7 +716,7 @@ prop_fileStatusHandler = withTests 20 $ property $ do
         TIO.writeFile path "ok"
         runHandlerIO (fileStatusHandler st (Just (stDirectory st)) (Just name))
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right vals -> do
             let matches = filter (\v -> lookupText "path" v == Just name) vals
             assert $ not (null matches)
@@ -658,28 +741,57 @@ prop_tuiHandlers = withTests 20 $ property $ do
         controlNext <- runHandlerIO (tuiControlHandler st "next" Nothing (object ["ok" .= True]))
         controlResponse <- runHandlerIO (tuiControlHandler st "response" Nothing (object ["ok" .= True]))
         lastVal <- TuiStore.getLast (stStorage st)
-        pure (appended, prompt, submitted, cleared, openHelp, openSessions, openThemes, openModels, exec, toast, publish, select, controlNext, controlResponse, lastVal)
+        pure
+            TuiHandlersResult
+                { thrAppended = appended
+                , thrPrompt = prompt
+                , thrSubmitted = submitted
+                , thrCleared = cleared
+                , thrOpenHelp = openHelp
+                , thrOpenSessions = openSessions
+                , thrOpenThemes = openThemes
+                , thrOpenModels = openModels
+                , thrExec = exec
+                , thrToast = toast
+                , thrPublish = publish
+                , thrSelect = select
+                , thrControlNext = controlNext
+                , thrControlResponse = controlResponse
+                , thrLast = lastVal
+                }
     case result of
-        -- All TUI handlers now return Bool (True on success)
-        (Right True, prompt, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, Right True, lastVal) -> do
-            -- Just verify prompt was set and last value exists
-            assert $ T.length prompt >= 0
-            assert $ isJust lastVal
-        _ -> failure
+        TuiHandlersResult
+            { thrAppended = Right True
+            , thrSubmitted = Right True
+            , thrCleared = Right True
+            , thrOpenHelp = Right True
+            , thrOpenSessions = Right True
+            , thrOpenThemes = Right True
+            , thrOpenModels = Right True
+            , thrExec = Right True
+            , thrToast = Right True
+            , thrPublish = Right True
+            , thrSelect = Right True
+            , thrControlNext = Right True
+            , thrControlResponse = Right True
+            , thrLast = lastVal
+            } -> do
+                assert $ isJust lastVal
+        _otherResult -> failure
 
 prop_skillHandler :: Property
 prop_skillHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (skillHandler st Nothing)
     case result of
-        Left _ -> failure
-        Right _ -> success
+        Left _err -> failure
+        Right _result -> success
 
 prop_formatterHandler :: Property
 prop_formatterHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> runHandlerIO (formatterHandler st Nothing)
     case result of
-        Left _ -> failure
-        Right _ -> success
+        Left _err -> failure
+        Right _result -> success
 
 prop_experimentalWorktreeHandlers :: Property
 prop_experimentalWorktreeHandlers = withTests 20 $ property $ do
@@ -688,16 +800,21 @@ prop_experimentalWorktreeHandlers = withTests 20 $ property $ do
         let input = object ["root" .= ("test" :: Text), "ready" .= True]
         set1 <- runHandlerIO (experimentalWorktreePostHandler st input)
         reset1 <- runHandlerIO (experimentalWorktreeResetHandler st Nothing)
-        pure (get1, set1, reset1, stDirectory st)
+        pure
+            ExperimentalWorktreeResult
+                { ewrGet = get1
+                , ewrSet = set1
+                , ewrReset = reset1
+                , ewrRoot = stDirectory st
+                }
     case result of
-        (Left _, _, _, _) -> failure
-        (_, Left _, _, _) -> failure
-        (_, _, Left _, _) -> failure
-        (Right get1, Right set1, Right True, _root) -> do
-            -- get1 is [Text] - the list of worktrees (currently empty)
+        ExperimentalWorktreeResult{ewrGet = Left _err} -> failure
+        ExperimentalWorktreeResult{ewrSet = Left _err} -> failure
+        ExperimentalWorktreeResult{ewrReset = Left _err} -> failure
+        ExperimentalWorktreeResult{ewrGet = Right get1, ewrSet = Right set1, ewrReset = Right True} -> do
             get1 === ([] :: [Text])
             set1 === object ["root" .= ("test" :: Text), "ready" .= True]
-        _ -> failure
+        _otherResult -> failure
 
 prop_fileListHandler :: Property
 prop_fileListHandler = withTests 20 $ property $ do
@@ -708,7 +825,7 @@ prop_fileListHandler = withTests 20 $ property $ do
         TIO.writeFile (root </> T.unpack name) "ok"
         runHandlerIO (fileListHandler (Just (T.pack root)) ".")
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right nodes -> do
             assert $ any (\node -> fnName node == name) nodes
             assert $ any (\node -> fnName node == dir && fnType node == FileTypeDirectory) nodes
@@ -721,7 +838,7 @@ prop_fileReadHandler = withTests 20 $ property $ do
         TIO.writeFile (root </> T.unpack name) content
         runHandlerIO (fileReadHandler (Just (T.pack root)) name)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right file -> do
             fcType file === ContentTypeText
             fcContent file === content
@@ -734,7 +851,7 @@ prop_fileReadHandlerBinary = withTests 20 $ property $ do
         BS.writeFile (root </> T.unpack name) bytes
         runHandlerIO (fileReadHandler (Just (T.pack root)) name)
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right file -> do
             fcType file === ContentTypeBinary
             let encoded = TE.decodeUtf8 (B64.encode bytes)
@@ -747,7 +864,7 @@ prop_chatHandlerAnthropicMissing = withTests 20 $ property $ do
         withEnv "ANTHROPIC_API_KEY" Nothing $
             runHandlerIO (chatHandler st (ChatInput msg Nothing))
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right val -> lookupText "error" val === Just "ANTHROPIC_API_KEY not set"
 
 prop_chatHandlerOpenRouterMissing :: Property
@@ -757,7 +874,7 @@ prop_chatHandlerOpenRouterMissing = withTests 20 $ property $ do
         withEnv "OPENROUTER_API_KEY" Nothing $
             runHandlerIO (chatHandler st (ChatInput msg (Just "openrouter/test-model")))
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right val -> lookupText "error" val === Just "OPENROUTER_API_KEY not set"
 
 prop_sessionCommandHandler :: Property
@@ -777,7 +894,7 @@ prop_sessionCommandHandler = withTests 20 $ property $ do
         evt <- waitVar 1000000 var
         pure (res, evt)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, evt) -> do
             -- Response structure is { "info": AssistantMessage, "parts": [Part] }
             assert $ hasKey "info" val
@@ -810,7 +927,7 @@ prop_sessionShellHandler = withTests 10 $ property $ do
         -- Short wait - event should arrive immediately since publish is synchronous
         evt <- waitVar 100000 var
         case res of
-            Left _ -> pure (res, evt)
+            Left _err -> pure (res, evt)
             Right val -> do
                 case lookupText "id" val of
                     Nothing -> pure (res, evt)
@@ -818,13 +935,13 @@ prop_sessionShellHandler = withTests 10 $ property $ do
                         _ <- Pty.remove (stPtyManager st) pid
                         pure (res, evt)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, evt) -> do
             let pid = lookupText "id" val
             -- PTY creation must succeed - require pid to be present
             case pid of
                 Nothing -> failure
-                Just _ -> assert $ isJust evt
+                Just _event -> assert $ isJust evt
 
 prop_promptAsyncIndex :: Property
 prop_promptAsyncIndex = withTests 20 $ property $ do
@@ -833,14 +950,14 @@ prop_promptAsyncIndex = withTests 20 $ property $ do
         let input = CreateMessageInput Nothing parts
         res <- runHandlerIO (sessionPromptAsyncHandler st "session" input)
         case res of
-            Left _ -> pure (res, False)
+            Left _err -> pure (res, False)
             Right val -> do
                 let reqId = lookupText "requestID" val
                 ids <- Storage.read (stStorage st) (PromptAsync.promptAsyncIndexKey "session") :: IO [Text]
                 pure (res, maybe False (`elem` ids) reqId)
     case result of
-        (Left _, _) -> failure
-        (Right _, ok) -> assert ok
+        (Left _err, _) -> failure
+        (Right _result, ok) -> assert ok
 
 prop_ptyHandlersLifecycle :: Property
 prop_ptyHandlersLifecycle = withTests 20 $ property $ do
@@ -849,37 +966,49 @@ prop_ptyHandlersLifecycle = withTests 20 $ property $ do
         let input = object ["command" .= ("sleep" :: Text), "args" .= (["infinity"] :: [Text]), "sandbox" .= False]
         created <- runHandlerIO (ptyCreateHandler st input)
         case created of
-            Left _ -> pure (created, Nothing)
+            Left _err -> pure (PtyLifecycleResult created Nothing)
             Right val -> do
                 let pid = lookupText "id" val
                 case pid of
-                    Nothing -> pure (created, Nothing)
+                    Nothing -> pure (PtyLifecycleResult created Nothing)
                     Just ptyId -> do
                         listed <- runHandlerIO (ptyListHandler st)
                         fetched <- runHandlerIO (ptyGetHandler st ptyId)
                         updated <- runHandlerIO (ptyUpdateHandler st ptyId (object ["title" .= ("Test" :: Text)]))
                         deleted <- runHandlerIO (ptyDeleteHandler st ptyId)
                         fetched2 <- runHandlerIO (ptyGetHandler st ptyId)
-                        pure (created, Just (ptyId, listed, fetched, updated, deleted, fetched2))
+                        pure $
+                            PtyLifecycleResult
+                                created
+                                ( Just
+                                    PtyLifecycleDetails
+                                        { pldId = ptyId
+                                        , pldListed = listed
+                                        , pldFetched = fetched
+                                        , pldUpdated = updated
+                                        , pldDeleted = deleted
+                                        , pldFetched2 = fetched2
+                                        }
+                                )
     case result of
-        (Left _, _) -> failure
-        (Right val, Nothing) -> do
+        PtyLifecycleResult{plCreated = Left _err} -> failure
+        PtyLifecycleResult{plCreated = Right val, plDetails = Nothing} -> do
             assert $ isJust (lookupText "error" val)
-        (Right _, Just (ptyId, listed, fetched, updated, deleted, fetched2)) -> do
-            case listed of
-                Left _ -> failure
-                Right xs -> assert $ any (\v -> lookupText "id" v == Just ptyId) xs
-            case fetched of
-                Left _ -> failure
-                Right val -> lookupText "id" val === Just ptyId
-            case updated of
-                Left _ -> failure
+        PtyLifecycleResult{plCreated = Right _result, plDetails = Just details} -> do
+            case pldListed details of
+                Left _err -> failure
+                Right xs -> assert $ any (\v -> lookupText "id" v == Just (pldId details)) xs
+            case pldFetched details of
+                Left _err -> failure
+                Right val -> lookupText "id" val === Just (pldId details)
+            case pldUpdated details of
+                Left _err -> failure
                 Right val -> lookupText "title" val === Just "Test"
-            case deleted of
-                Left _ -> failure
+            case pldDeleted details of
+                Left _err -> failure
                 Right ok -> ok === True
-            case fetched2 of
-                Left _ -> failure
+            case pldFetched2 details of
+                Left _err -> failure
                 Right val -> assert $ isJust (lookupText "error" val)
 
 prop_ptyHandlersUnsandboxedChanges :: Property
@@ -889,7 +1018,7 @@ prop_ptyHandlersUnsandboxedChanges = withTests 20 $ property $ do
         let input = object ["command" .= ("sleep" :: Text), "args" .= (["infinity"] :: [Text]), "sandbox" .= False]
         created <- runHandlerIO (ptyCreateHandler st input)
         case created of
-            Left _ -> pure (created, Nothing, Nothing)
+            Left _err -> pure (created, Nothing, Nothing)
             Right val -> do
                 let pid = lookupText "id" val
                 case pid of
@@ -900,17 +1029,17 @@ prop_ptyHandlersUnsandboxedChanges = withTests 20 $ property $ do
                         _ <- runHandlerIO (ptyDeleteHandler st ptyId)
                         pure (created, Just changes, Just commit)
     case result of
-        (Left _, _, _) -> failure
+        (Left _err, _, _) -> failure
         (Right val, Nothing, _) -> do
             assert $ isJust (lookupText "error" val)
-        (Right _, Just changes, Just commit) -> do
+        (Right _result, Just changes, Just commit) -> do
             case changes of
-                Left _ -> failure
+                Left _err -> failure
                 Right val -> assert $ isJust (lookupText "error" val)
             case commit of
-                Left _ -> failure
+                Left _err -> failure
                 Right val -> assert $ isJust (lookupText "error" val)
-        _ -> failure
+        _otherResult -> failure
 
 prop_ptyConnectHandler :: Property
 prop_ptyConnectHandler = withTests 20 $ property $ do
@@ -950,8 +1079,8 @@ prop_findHandler = withTests 20 $ property $ do
             )
             `catch` \(e :: SearchError) -> pure (T.pack path, Right [], Just e)
     case result of
-        (_, Left _, _) -> failure
-        (_, Right _, Just e) -> do
+        (_, Left _err, _) -> failure
+        (_, Right _result, Just e) -> do
             annotate $ show e
             failure
         (path, Right vals, Nothing) -> do
@@ -971,8 +1100,8 @@ prop_findFileHandler = withTests 20 $ property $ do
             )
             `catch` \(e :: SearchError) -> pure (T.pack path, Right [], Just e)
     case result of
-        (_, Left _, _) -> failure
-        (_, Right _, Just e) -> do
+        (_, Left _err, _) -> failure
+        (_, Right _result, Just e) -> do
             annotate $ show e
             failure
         (path, Right vals, Nothing) -> do
@@ -992,8 +1121,8 @@ prop_findSymbolHandler = withTests 20 $ property $ do
             )
             `catch` \(e :: SearchError) -> pure (T.pack path, Right [], Just e)
     case result of
-        (_, Left _, _) -> failure
-        (_, Right _, Just e) -> do
+        (_, Left _err, _) -> failure
+        (_, Right _result, Just e) -> do
             annotate $ show e
             failure
         (path, Right vals, Nothing) -> do
@@ -1008,20 +1137,20 @@ prop_vcsHandler = withTests 20 $ property $ do
             Nothing -> do
                 res <- runHandlerIO (vcsHandler st)
                 pure (res, Nothing)
-            Just _ -> do
+            Just _existingPid -> do
                 let root = T.unpack (stDirectory st)
                 (code, _, _) <- readProcessWithExitCode "git" ["-C", root, "init", "-b", "main"] ""
                 case code of
                     ExitSuccess -> pure ()
-                    ExitFailure _ -> do
+                    ExitFailure _exitCode -> do
                         _ <- readProcessWithExitCode "git" ["-C", root, "init"] ""
                         pure ()
                 res <- runHandlerIO (vcsHandler st)
                 pure (res, Just ())
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right info, Nothing) -> branch info === Nothing
-        (Right info, Just _) -> assert $ isJust (branch info)
+        (Right info, Just _existingBranch) -> assert $ isJust (branch info)
 
 prop_instanceDisposeHandler :: Property
 prop_instanceDisposeHandler = withTests 20 $ property $ do
@@ -1033,7 +1162,7 @@ prop_instanceDisposeHandler = withTests 20 $ property $ do
         evt <- waitVar 1000000 var
         pure (res, evt)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, evt) -> do
             val === True
             assert $ isJust evt
@@ -1044,9 +1173,9 @@ prop_logHandler = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st ->
         runHandlerIO (logHandler st Nothing (object ["msg" .= msg]))
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right True -> success
-        _ -> failure
+        _otherResult -> failure
 
 prop_globalEventHandler :: Property
 prop_globalEventHandler = withTests 20 $ property $ do
@@ -1111,7 +1240,7 @@ prop_experimentalToolIdsHandler :: Property
 prop_experimentalToolIdsHandler = withTests 20 $ property $ do
     result <- evalIO $ runHandlerIO experimentalToolIdsHandler
     case result of
-        Left _ -> failure
+        Left _err -> failure
         Right ids -> assert $ "bash" `elem` ids
 
 prop_experimentalToolHandler :: Property
@@ -1123,7 +1252,7 @@ prop_experimentalToolHandler = withTests 20 $ property $ do
         stored <- Storage.read (stStorage st) ["experimental-tool", name] :: IO Value
         pure (res, stored)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, stored) -> val === stored
 
 prop_authCreateHandler :: Property
@@ -1136,7 +1265,7 @@ prop_authCreateHandler = withTests 20 $ property $ do
         stored <- Storage.read (stStorage st) ["auth", pid] :: IO Value
         pure (res, stored)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, stored) -> do
             val === True
             lookupText "token" stored === Just token
@@ -1154,7 +1283,7 @@ prop_authUpdateHandler = withTests 20 $ property $ do
         stored <- Storage.read (stStorage st) ["auth", pid] :: IO Value
         pure (res, stored)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, stored) -> do
             val === True
             lookupText "token" stored === Just tok2
@@ -1171,10 +1300,13 @@ prop_authDeleteHandler = withTests 20 $ property $ do
         let removed = not $ any (\key -> key == ["auth", pid]) keys
         pure (res, removed)
     case result of
-        (Left _, _) -> failure
+        (Left _err, _) -> failure
         (Right val, removed) -> do
             val === True -- delete always returns true
             assert removed
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =

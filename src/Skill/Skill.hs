@@ -114,12 +114,12 @@ projectSkillRoots root = do
         ]
 
 walkUp :: FilePath -> [FilePath]
-walkUp start = go start []
+walkUp start = go start id
   where
     go dir acc =
         let parent = takeDirectory dir
-            next = dir : acc
-         in if parent == dir then reverse next else go parent next
+            next = acc . (dir :)
+         in if parent == dir then next [] else go parent next
 
 findSkills :: FilePath -> IO [FilePath]
 findSkills dir = do
@@ -161,9 +161,9 @@ parseFrontmatter lines' = case lines' of
         [] -> Nothing
         (line : more)
             | T.strip line == "---" ->
-                let meta = Map.fromList (reverse (mapMaybe parseMeta acc))
+                let meta = Map.fromList (mapMaybe parseMeta acc)
                  in Just (meta, more)
-            | otherwise -> go more (line : acc)
+            | otherwise -> go more (acc <> [line])
 
 parseMeta :: Text -> Maybe (Text, Text)
 parseMeta line =

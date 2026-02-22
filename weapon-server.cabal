@@ -141,7 +141,7 @@ library
     -Wall -Wcompat -Widentities -Wincomplete-record-updates
     -Wincomplete-uni-patterns -Wmissing-export-lists
     -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
-    -Werror -O2
+    -Werror -O2 -fwrite-ide-info -hiedir=.hie
 
   build-depends:
     , aeson               >=2.0
@@ -198,6 +198,7 @@ executable weapon-server
   default-language:   GHC2021
   ghc-options:
     -Wall -Wcompat -Werror -O2 -threaded -rtsopts "-with-rtsopts=-N -T"
+    -fwrite-ide-info -hiedir=.hie
 
   build-depends:
     , aeson
@@ -234,6 +235,7 @@ test-suite weapon-server-test
   default-language:   GHC2021
   ghc-options:
     -Wall -Wcompat -Werror -threaded -rtsopts -with-rtsopts=-N
+    -fwrite-ide-info -hiedir=.hie
 
   other-modules:
     ApiCompatibilitySpec

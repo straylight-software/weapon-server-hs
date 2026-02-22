@@ -2,6 +2,7 @@
 
 module Property.ProjectDiscoveryProps where
 
+import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Hedgehog
@@ -25,10 +26,13 @@ prop_discoverProjects = property $ do
         projects <- Discovery.discoverProjects tmpDir
         removeDirectoryRecursive tmpDir
         pure projects
-    assert $ length result >= 2
+    assert $ listLength result >= 2
 
 genText :: Gen Text
 genText = Gen.text (Range.linear 3 10) Gen.alphaNum
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =

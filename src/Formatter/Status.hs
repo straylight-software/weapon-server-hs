@@ -85,7 +85,8 @@ formattersFor cfg = case CT.cfgFormatter cfg of
                                     , fiEnabled = const (pure True)
                                     }
                          in Map.insert name info acc
-                _ -> acc
+                Just _cmd -> acc
+                Nothing -> acc
     hasCommand entry = case CT.feCommand entry of
         Just cmd -> not (null cmd)
         Nothing -> False

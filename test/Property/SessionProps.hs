@@ -5,7 +5,7 @@ module Property.SessionProps where
 
 import Bus.Bus qualified as Bus
 import Control.Monad (replicateM, replicateM_)
-import Data.List (sortOn)
+import Data.List qualified as List
 import Data.Ord (Down (..))
 import Data.Text qualified as T
 import Hedgehog
@@ -109,7 +109,7 @@ prop_listReturnsCreated = property $ do
         Session.list ctx Nothing Nothing Nothing Nothing
 
     -- Should find all created sessions
-    length sessions === count
+    listLength sessions === count
 
 prop_listContainsCreatedId :: Property
 prop_listContainsCreatedId = property $ do
@@ -173,9 +173,9 @@ prop_listSearchFilter = property $ do
         nonMatching <- Session.list ctx Nothing Nothing Nothing (Just "delta")
         pure (matching, nonMatching)
     -- Should find 2 sessions matching "project"
-    length matching === 2
+    listLength matching === 2
     -- Should find 0 sessions matching "delta"
-    length nonMatching === 0
+    listLength nonMatching === 0
 
 -- | Property: list with limit restricts results
 prop_listLimitFilter :: Property
@@ -187,7 +187,7 @@ prop_listLimitFilter = property $ do
         -- List with limit
         Session.list ctx Nothing (Just limitVal) Nothing Nothing
     -- Should return at most limitVal sessions
-    assert $ length sessions <= limitVal
+    assert $ listLength sessions <= limitVal
 
 -- | Property: list returns sessions ordered by updated timestamp (descending)
 prop_listSortedByUpdated :: Property
@@ -210,7 +210,7 @@ prop_listSortedByUpdated = property $ do
             updatedSessions
         Session.list ctx Nothing Nothing Nothing Nothing
     let listedTimes = map (ST.stUpdated . ST.sessionTime) listed
-    listedTimes === sortOn Down times
+    listedTimes === List.sortOn Down times
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Edge Case Tests
@@ -246,7 +246,7 @@ prop_listRootsFilter = property $ do
         roots <- Session.list ctx (Just True) Nothing Nothing Nothing
         -- List all
         allSessions <- Session.list ctx Nothing Nothing Nothing Nothing
-        pure (length roots, length allSessions)
+        pure (listLength roots, listLength allSessions)
     -- Should have 3 roots (parent + 2 roots) and 4 total (+ 1 child)
     rootCount === 3
     allCount === 4
@@ -288,3 +288,6 @@ tests =
         , testProperty "list with roots filter" prop_listRootsFilter
         , testProperty "touch updates timestamp" prop_touchUpdatesTimestamp
         ]
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0

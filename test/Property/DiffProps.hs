@@ -2,6 +2,7 @@
 
 module Property.DiffProps where
 
+import Data.List qualified as List
 import Data.Text qualified as T
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -16,11 +17,11 @@ prop_parseNumstatTotals = property $ do
     entries <- forAll $ Gen.list (Range.linear 0 20) genEntry
     let text = T.intercalate "\n" (map toLine entries)
     let summary = Diff.parseNumstat text
-    let adds = sum (map fst entries)
-    let dels = sum (map snd entries)
+    let adds = sumInts (map fst entries)
+    let dels = sumInts (map snd entries)
     ST.ssAdditions summary === adds
     ST.ssDeletions summary === dels
-    ST.ssFiles summary === Just (length entries)
+    ST.ssFiles summary === Just (listLength entries)
   where
     toLine (a, d) = T.pack (show a) <> "\t" <> T.pack (show d) <> "\tfile.txt"
 
@@ -39,6 +40,12 @@ prop_parseNumstatEmpty = property $ do
     ST.ssAdditions summary === 0
     ST.ssDeletions summary === 0
     ST.ssFiles summary === Just 0
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
+
+sumInts :: [Int] -> Int
+sumInts = List.foldl' (+) 0
 
 genEntry :: Gen (Int, Int)
 genEntry = do

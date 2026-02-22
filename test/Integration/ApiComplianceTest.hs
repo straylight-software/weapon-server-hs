@@ -1,11 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 
 module Integration.ApiComplianceTest where
 
 import ApiCompatibilitySpec (Endpoint (..), haskellEndpoints)
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
+import Data.List qualified as List
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Hedgehog
@@ -103,7 +105,7 @@ prop_generateValidRequests :: Property
 prop_generateValidRequests = property $ do
     endpoint <- forAll $ Gen.element haskellEndpoints
     let pathParams = extractPathParams (ApiCompatibilitySpec.path endpoint)
-    generatedParams <- forAll $ mapM (\_ -> Gen.text (Range.linear 3 20) Gen.alphaNum) pathParams
+    generatedParams <- forAll $ mapM (\_paramName -> Gen.text (Range.linear 3 20) Gen.alphaNum) pathParams
     let url = buildUrl (ApiCompatibilitySpec.path endpoint) generatedParams []
     assert $ T.isPrefixOf "/" url
   where
@@ -186,13 +188,16 @@ spec = do
             if haskellRunning && typescriptRunning
                 then do
                     results <- compareEndpoints haskellServer typescriptServer haskellEndpoints
-                    let passed = length $ filter snd results
-                        total = length results
+                    let passed = listLength $ filter snd results
+                        total = listLength results
                     putStrLn $ "  " ++ show passed ++ "/" ++ show total ++ " endpoints match"
                     if passed == total
                         then return ()
                         else expectationFailure $ show (total - passed) ++ " endpoints differ"
                 else pendingWith "Both servers must be running for comparison"
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- | Main entry point for standalone execution
 main :: IO ()

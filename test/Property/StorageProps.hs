@@ -5,6 +5,7 @@ module Property.StorageProps where
 
 import Control.Exception (catch)
 import Data.Aeson (object, (.=))
+import Data.List qualified as List
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -66,7 +67,7 @@ prop_listWithPrefix = withTests 50 $ property $ do
         Storage.list storage [prefix]
 
     -- Should find all the keys we created
-    length keys === count
+    listLength keys === count
 
 -- | Property: remove deletes the value
 prop_removeDeletes :: Property
@@ -118,6 +119,9 @@ prop_listRespectsPrefix = withTests 50 $ property $ do
     assert $ all (\k -> take 1 k == [prefix]) keys
   where
     genTestValue = Gen.text (Range.linear 0 100) Gen.alphaNum
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- Helper functions
 

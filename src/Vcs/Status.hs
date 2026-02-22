@@ -9,6 +9,7 @@ module Vcs.Status (
 
 import Control.Applicative ((<|>))
 import Data.Aeson (ToJSON (..), object, (.=))
+import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Util.Git (runGit, withGit)
@@ -37,9 +38,9 @@ parsePorcelain input =
          in FileStatus path (codeStatus code)
 
     parsePath raw =
-        case T.splitOn " -> " raw of
-            [] -> raw
-            parts -> last parts
+        case List.unsnoc (T.splitOn " -> " raw) of
+            Nothing -> raw
+            Just (_prefix, suffix) -> suffix
 
     codeStatus code
         | code == "??" = "untracked"

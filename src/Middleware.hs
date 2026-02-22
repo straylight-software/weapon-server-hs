@@ -54,5 +54,5 @@ supplyEmptyBody app req callback
     hasNoBody = case requestBodyLength req of
         KnownLength 0 -> True
         ChunkedBody -> False -- Can't know, assume it has body
-        KnownLength _ -> False
+        KnownLength _len -> False
     hasContentType = any (\(h, _) -> h == hContentType) (requestHeaders req)

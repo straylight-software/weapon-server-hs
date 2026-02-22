@@ -20,10 +20,11 @@ import Control.Exception (Exception, catch, throwIO)
 import Control.Monad (unless)
 import Data.Aeson (FromJSON, ToJSON, eitherDecodeFileStrict, encode)
 import Data.ByteString.Lazy qualified as BL
+import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import System.Directory
-import System.FilePath (dropExtension, splitDirectories, takeDirectory, (</>))
+import System.FilePath (dropExtension, splitDirectories, takeDirectory, takeExtension, (</>))
 import System.IO (hClose, hFlush)
 import System.IO.Error (isDoesNotExistError)
 import System.Posix.Temp (mkstemp)
@@ -124,11 +125,10 @@ list cfg prefix = do
             let jsonFiles = filter (\f -> takeExtension f == (".json" :: String)) files
             pure $ map (toKey prefix dir) jsonFiles
   where
-    takeExtension f = case reverse f of
-        'n' : 'o' : 's' : 'j' : '.' : _ -> ".json"
-        _ -> ""
-
     toKey pfx base file =
-        let rel = drop (length base + 1) file
+        let rel = drop (listLength base + 1) file
             parts = splitDirectories (dropExtension rel)
          in pfx ++ map T.pack parts
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0

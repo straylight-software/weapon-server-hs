@@ -48,6 +48,7 @@ main = do
     _ <- installHandler sigTERM Ignore Nothing
     _ <- installHandler sigHUP Ignore Nothing
     apiTests <- testSpec "API Unit Tests" ApiSpec.spec
+    haskemathesisTests <- HaskemathesisTest.tests
     defaultMain $
         testGroup
             "All Tests"
@@ -88,5 +89,5 @@ main = do
                 , MiddlewareProps.tests
                 ]
             , apiTests
-            , HaskemathesisTest.tests
+            , haskemathesisTests
             ]

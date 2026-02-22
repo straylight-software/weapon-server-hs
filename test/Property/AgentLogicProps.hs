@@ -6,7 +6,8 @@ module Property.AgentLogicProps where
 import Agent.Agent qualified as Agent
 import Agent.Types (Agent (..), agentName)
 import Data.Foldable (forM_)
-import Data.List (nub)
+import Data.List qualified as List
+import Data.Set qualified as Set
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
@@ -28,7 +29,7 @@ prop_builtinAgentsUniqueNames :: Property
 prop_builtinAgentsUniqueNames = withTests 1 $ property $ do
     let agents = Agent.builtinAgents
     let names = map agentName agents
-    length names === length (nub names)
+    listLength names === Set.size (Set.fromList names)
 
 -- | Property: get returns correct agent for known names
 prop_getReturnsBuiltin :: Property
@@ -56,7 +57,10 @@ prop_listReturnsAllBuiltins :: Property
 prop_listReturnsAllBuiltins = withTests 1 $ property $ do
     listed <- evalIO Agent.list
     let builtins = Agent.builtinAgents
-    length listed === length builtins
+    listLength listed === listLength builtins
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Test Tree

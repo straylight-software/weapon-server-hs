@@ -197,7 +197,7 @@ instance FromJSON FormatterConfig where
     parseJSON v = case v of
         Bool False -> pure FormatterDisabled
         Object obj -> FormatterConfig <$> parseFormatterEntries obj
-        _ -> fail "invalid formatter config"
+        otherValue -> fail $ "invalid formatter config: " <> show otherValue
       where
         parseFormatterEntries obj =
             Map.fromList

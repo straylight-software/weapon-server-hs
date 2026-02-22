@@ -22,7 +22,7 @@ ptyConnectHandler st ptyId = Tagged $ \_req respond' -> do
                     status400
                     [("Content-Type", "text/plain")]
                     "PTY not found"
-        Just _ -> do
+        Just _info -> do
             respond' $
                 responseLBS
                     status400

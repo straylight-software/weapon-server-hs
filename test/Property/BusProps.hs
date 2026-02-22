@@ -9,6 +9,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM
 import Control.Monad (replicateM, replicateM_, void)
 import Data.Aeson (Value (..))
+import Data.List qualified as List
 import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -41,7 +42,7 @@ prop_publishSubscribe = withTests 20 $ property $ do
         readTVarIO receivedVar
 
     -- All events should have been received
-    length received === eventCount
+    listLength received === eventCount
     -- All should be the same event type
     all (== eventType) received === True
 
@@ -65,7 +66,7 @@ prop_subscribeAll = withTests 20 $ property $ do
         readTVarIO receivedVar
 
     -- Should receive all events
-    length received === length eventTypes
+    listLength received === listLength eventTypes
 
 -- | Property: multiple subscribers receive the same events
 prop_multipleSubscribers :: Property
@@ -90,12 +91,12 @@ prop_multipleSubscribers = withTests 20 $ property $ do
         waitForAll vars (30 :: Int)
 
     -- All subscribers should have received the event
-    all (\r -> length r == 1) results === True
-    all (\case [x] -> x == eventType; _ -> False) results === True
+    all (\r -> listLength r == 1) results === True
+    all (\case [x] -> x == eventType; _otherResults -> False) results === True
   where
     waitForAll vars attempts = do
         results <- mapM readTVarIO vars
-        if all (\r -> length r == 1) results
+        if all (\r -> listLength r == 1) results
             then pure results
             else do
                 if attempts <= 0
@@ -111,11 +112,11 @@ prop_subscribeAllOrder = withTests 20 $ property $ do
         bus <- Bus.newBus
         receivedVar <- newTVarIO []
         void $ Bus.subscribeAll bus $ \event ->
-            atomically $ modifyTVar' receivedVar (Bus.beType event :)
+            atomically $ modifyTVar' receivedVar (\events -> events <> [Bus.beType event])
         mapM_ (\et -> Bus.publish bus et Null) eventTypes
         threadDelay 5000
         readTVarIO receivedVar
-    reverse received === eventTypes
+    received === eventTypes
 
 prop_unsubscribeStopsDelivery :: Property
 prop_unsubscribeStopsDelivery = withTests 20 $ property $ do
@@ -123,7 +124,7 @@ prop_unsubscribeStopsDelivery = withTests 20 $ property $ do
     received <- evalIO $ do
         bus <- Bus.newBus
         receivedVar <- newTVarIO (0 :: Int)
-        unsubscribe <- Bus.subscribe bus eventType $ \_ ->
+        unsubscribe <- Bus.subscribe bus eventType $ \_event ->
             atomically $ modifyTVar' receivedVar (+ 1)
         Bus.publish bus eventType Null
         threadDelay 2000
@@ -158,3 +159,6 @@ tests =
         , testProperty "subscribeAll order" prop_subscribeAllOrder
         , testProperty "unsubscribe stops delivery" prop_unsubscribeStopsDelivery
         ]
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0

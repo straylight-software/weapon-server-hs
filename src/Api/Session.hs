@@ -81,7 +81,7 @@ instance FromJSON FileDiffStatus where
         "added" -> pure Added
         "deleted" -> pure Deleted
         "modified" -> pure Modified
-        _ -> fail "Invalid FileDiffStatus"
+        _otherStatus -> fail "Invalid FileDiffStatus"
 
 data FileDiff = FileDiff
     { fdFile :: Text

@@ -25,6 +25,7 @@ module Session.Session (
 import Control.Monad (forM)
 import Data.Aeson (object, (.=))
 import Data.List (sortOn)
+import Data.List qualified as List
 import Data.Maybe (catMaybes, fromMaybe, isNothing)
 import Data.Ord (Down (..))
 import Data.Text (Text)
@@ -142,13 +143,15 @@ list :: SessionContext -> Maybe Bool -> Maybe Int -> Maybe Double -> Maybe Text 
 list ctx mRoots mLimit mStart mSearch = do
     keys <- Storage.list (scStorage ctx) (sessionPrefix (scProjectID ctx))
     sessions <- forM keys $ \key -> do
-        let sid = last key
-        get ctx sid
+        case List.unsnoc key of
+            Nothing -> pure Nothing
+            Just (_prefix, sid) -> get ctx sid
     let valid = catMaybes sessions
     -- Filter by roots (no parent)
     let rootFiltered = case mRoots of
             Just True -> filter (isNothing . sessionParentID) valid
-            _ -> valid
+            Just False -> valid
+            Nothing -> valid
     -- Filter by start timestamp (sessions updated on or after)
     let startFiltered = case mStart of
             Just ts -> filter (\s -> stUpdated (sessionTime s) >= ts) rootFiltered

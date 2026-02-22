@@ -2,6 +2,7 @@
 
 module Property.VcsStatusProps where
 
+import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Hedgehog
@@ -21,7 +22,7 @@ prop_parseStatusMapping = property $ do
         [s] -> do
             VcsStatus.fsPath s === path
             VcsStatus.fsStatus s === expected status
-        _ -> failure
+        _otherResults -> failure
   where
     expected code
         | code == "??" = "untracked"
@@ -41,7 +42,7 @@ prop_parseRenamePath = property $ do
     let parsed = VcsStatus.parsePorcelain line
     case parsed of
         [s] -> VcsStatus.fsPath s === newPath
-        _ -> failure
+        _otherResults -> failure
 
 prop_parseCountMatchesLines :: Property
 prop_parseCountMatchesLines = property $ do
@@ -49,7 +50,7 @@ prop_parseCountMatchesLines = property $ do
     let lines' = replicate count "?? file.txt"
     let input = T.intercalate "\n" lines'
     let result = VcsStatus.parsePorcelain input
-    length result === count
+    listLength result === count
 
 prop_statusInAllowedSet :: Property
 prop_statusInAllowedSet = property $ do
@@ -71,6 +72,9 @@ genPath = do
     name <- Gen.text (Range.linear 1 12) Gen.alphaNum
     ext <- Gen.text (Range.linear 1 3) Gen.alphaNum
     pure (name <> "." <> ext)
+
+listLength :: [a] -> Int
+listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =
