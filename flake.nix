@@ -62,6 +62,7 @@
                 ghcid
                 haskell-language-server
                 haskellPackages.stan
+                liburing # io_uring bindings
               ]);
           };
         };
