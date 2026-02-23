@@ -132,52 +132,52 @@ buildBwrapArgs SandboxConfig{..} =
           ["--new-session" | scSeccomp]
         , -- No new privileges / drop caps
           if rlNoNewPrivs scLimits then ["--cap-drop", "ALL"] else []
-        , -- The command to run (shell)
-          ["--", "/bin/sh", "-l"]
+        , -- The command to run (user's shell)
+          ["--", scShell, "-l"]
         ]
-
--- | Default environment variables
-defaultEnv :: [String]
-defaultEnv =
-    [ "--setenv"
-    , "HOME"
-    , "/root"
-    , "--setenv"
-    , "USER"
-    , "root"
-    , "--setenv"
-    , "SHELL"
-    , "/bin/sh"
-    , -- NixOS-compatible PATH (includes /run/current-system/sw/bin)
-      "--setenv"
-    , "PATH"
-    , "/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin"
-    , "--setenv"
-    , "TERM"
-    , "xterm-256color"
-    , "--setenv"
-    , "OPENCODE_SANDBOX"
-    , "1"
-    , "--setenv"
-    , "LANG"
-    , "C.UTF-8"
-    , "--setenv"
-    , "LC_ALL"
-    , "C.UTF-8"
-    , -- Route all HTTP traffic through MITM proxy for surveillance
-      "--setenv"
-    , "HTTP_PROXY"
-    , "http://127.0.0.1:8888"
-    , "--setenv"
-    , "HTTPS_PROXY"
-    , "http://127.0.0.1:8888"
-    , "--setenv"
-    , "http_proxy"
-    , "http://127.0.0.1:8888"
-    , "--setenv"
-    , "https_proxy"
-    , "http://127.0.0.1:8888"
-    ]
+  where
+    -- Build environment variables using config values
+    defaultEnv :: [String]
+    defaultEnv =
+        [ "--setenv"
+        , "HOME"
+        , scHome
+        , "--setenv"
+        , "USER"
+        , T.unpack scUser
+        , "--setenv"
+        , "SHELL"
+        , scShell
+        , -- NixOS-compatible PATH (includes /run/current-system/sw/bin)
+          "--setenv"
+        , "PATH"
+        , "/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin"
+        , "--setenv"
+        , "TERM"
+        , "xterm-256color"
+        , "--setenv"
+        , "OPENCODE_SANDBOX"
+        , "1"
+        , "--setenv"
+        , "LANG"
+        , "C.UTF-8"
+        , "--setenv"
+        , "LC_ALL"
+        , "C.UTF-8"
+        , -- Route all HTTP traffic through MITM proxy for surveillance
+          "--setenv"
+        , "HTTP_PROXY"
+        , "http://127.0.0.1:8888"
+        , "--setenv"
+        , "HTTPS_PROXY"
+        , "http://127.0.0.1:8888"
+        , "--setenv"
+        , "http_proxy"
+        , "http://127.0.0.1:8888"
+        , "--setenv"
+        , "https_proxy"
+        , "http://127.0.0.1:8888"
+        ]
 
 -- | Convert a mount spec to bwrap arguments
 mountToArgs :: MountSpec -> [String]

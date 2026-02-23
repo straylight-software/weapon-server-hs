@@ -37,6 +37,15 @@ source-repository head
   location: https://github.com/straylight-software/weapon-server-hs.git
 
 -- ════════════════════════════════════════════════════════════════════════════
+--                                                                     // flags
+-- ════════════════════════════════════════════════════════════════════════════
+
+flag production
+  description: Enable production mode (INFO log level instead of DEBUG)
+  default:     False
+  manual:      True
+
+-- ════════════════════════════════════════════════════════════════════════════
 --                                                                  // library
 -- ════════════════════════════════════════════════════════════════════════════
 
@@ -226,6 +235,9 @@ executable weapon-server
     -Wall -Wcompat -Werror -O2 -threaded -rtsopts "-with-rtsopts=-N -T"
     -fwrite-ide-info -hiedir=.hie
 
+  if flag(production)
+    cpp-options: -DPRODUCTION
+
   build-depends:
     , aeson
     , base            >=4.17 && <5
@@ -247,6 +259,7 @@ executable weapon-server
     , websockets
 
   default-extensions:
+    CPP
     OverloadedStrings
     RecordWildCards
 

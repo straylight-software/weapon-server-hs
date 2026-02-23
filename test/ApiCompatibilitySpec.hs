@@ -104,6 +104,7 @@ haskellEndpoints =
     , Endpoint "GET" "/experimental/worktree"
     , Endpoint "POST" "/experimental/worktree"
     , Endpoint "POST" "/experimental/worktree/reset"
+    , Endpoint "GET" "/experimental/session"
     , Endpoint "POST" "/chat"
     ]
 

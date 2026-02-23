@@ -46,6 +46,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Word (Word64)
 import System.Directory (findExecutable)
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.Posix.Pty (Pty, closePty, readPty, resizePty, spawnWithPty, writePty)
 import System.Posix.Signals qualified as Sig
@@ -133,12 +134,19 @@ create mgr@PtyManager{..} input = do
 -- | Create a sandboxed PTY using bwrap with real PTY
 createSandboxed :: PtyManager -> Text -> FilePath -> Text -> [(Text, Text)] -> Bool -> CreatePtyInput -> IO (Either Text PtyInfo)
 createSandboxed PtyManager{..} ptyId cwd title env network input = do
-    -- Build sandbox config
+    -- Get user environment for sandbox
+    preferredShell <- getPreferredShell
+    home <- fromMaybe "/tmp" <$> lookupEnv "HOME"
+    user <- fromMaybe "nobody" <$> lookupEnv "USER"
+    -- Build sandbox config with actual user values
     let config =
             (defaultConfig cwd)
                 { scNetwork = if network then NetworkSlirp else NetworkNone
                 , scEnv = env
                 , scMounts = maybe [] (map toMountSpec) (cpiMounts input)
+                , scShell = preferredShell
+                , scHome = home
+                , scUser = T.pack user
                 }
     slirpPath <- if scNetwork config == NetworkSlirp then findExecutable "slirp4netns" else pure (Just "")
     case (scNetwork config, slirpPath) of
@@ -152,7 +160,6 @@ createSandboxed PtyManager{..} ptyId cwd title env network input = do
                 Right (overlayDir, _) -> do
                     -- Build the full bwrap command
                     let bwrapArgs = Sandbox.buildBwrapArgs config
-                        _envList = map (bimap T.unpack T.unpack) env ++ defaultEnvList
 
                     -- Spawn with PTY
                     ptyResult <-
@@ -209,9 +216,13 @@ createSandboxed PtyManager{..} ptyId cwd title env network input = do
 -- | Create an unsandboxed PTY
 createUnsandboxed :: PtyManager -> Text -> FilePath -> Text -> [(Text, Text)] -> CreatePtyInput -> IO (Either Text PtyInfo)
 createUnsandboxed PtyManager{..} ptyId cwd title env input = do
-    let cmd = T.unpack $ fromMaybe "/bin/sh" (cpiCommand input)
+    -- Get preferred shell from $SHELL or fall back
+    preferredShell <- getPreferredShell
+    let cmd = T.unpack $ fromMaybe (T.pack preferredShell) (cpiCommand input)
         args = map T.unpack $ fromMaybe ["-l"] (cpiArgs input)
-        envList = Just $ map (bimap T.unpack T.unpack) env ++ defaultEnvList
+    -- Build environment with actual user values
+    defaultEnv <- getDefaultEnvList
+    let envList = Just $ map (bimap T.unpack T.unpack) env ++ defaultEnv
 
     ptyResult <-
         try @SomeException $
@@ -252,23 +263,49 @@ createUnsandboxed PtyManager{..} ptyId cwd title env input = do
 
             pure $ Right info
 
--- | Default environment variables
-defaultEnvList :: [(String, String)]
-defaultEnvList =
-    [ ("HOME", "/root")
-    , ("USER", "root")
-    , ("SHELL", "/bin/sh")
-    , -- NixOS-compatible PATH
-      ("PATH", "/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin")
-    , ("TERM", "xterm-256color")
-    , ("LANG", "C.UTF-8")
-    , ("LC_ALL", "C.UTF-8")
-    , -- Route all HTTP traffic through MITM proxy
-      ("HTTP_PROXY", "http://127.0.0.1:8888")
-    , ("HTTPS_PROXY", "http://127.0.0.1:8888")
-    , ("http_proxy", "http://127.0.0.1:8888")
-    , ("https_proxy", "http://127.0.0.1:8888")
-    ]
+-- | Get the preferred shell from $SHELL or fall back to /bin/sh
+getPreferredShell :: IO String
+getPreferredShell = do
+    mShell <- lookupEnv "SHELL"
+    case mShell of
+        Just shell | not (null shell) -> pure shell
+        Just _emptyShell -> findBashOrSh
+        Nothing -> findBashOrSh
+  where
+    findBashOrSh = do
+        -- Try to find bash, fall back to /bin/sh
+        mBash <- findExecutable "bash"
+        pure $ fromMaybe "/bin/sh" mBash
+
+-- | Get default environment variables with actual user values
+getDefaultEnvList :: IO [(String, String)]
+getDefaultEnvList = do
+    -- Read actual values from environment
+    home <- fromMaybe "/tmp" <$> lookupEnv "HOME"
+    user <- fromMaybe "nobody" <$> lookupEnv "USER"
+    shell <- getPreferredShell
+    -- Inherit PATH from environment or use sensible default
+    path <- fromMaybe defaultPath <$> lookupEnv "PATH"
+    -- Inherit LANG/LC_ALL or use defaults
+    lang <- fromMaybe "C.UTF-8" <$> lookupEnv "LANG"
+    lcAll <- fromMaybe lang <$> lookupEnv "LC_ALL"
+    pure
+        [ ("HOME", home)
+        , ("USER", user)
+        , ("SHELL", shell)
+        , ("PATH", path)
+        , ("TERM", "xterm-256color")
+        , ("LANG", lang)
+        , ("LC_ALL", lcAll)
+        , -- Route all HTTP traffic through MITM proxy
+          ("HTTP_PROXY", "http://127.0.0.1:8888")
+        , ("HTTPS_PROXY", "http://127.0.0.1:8888")
+        , ("http_proxy", "http://127.0.0.1:8888")
+        , ("https_proxy", "http://127.0.0.1:8888")
+        ]
+  where
+    -- NixOS-compatible default PATH
+    defaultPath = "/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin"
 
 -- | Convert mount tuple to MountSpec
 toMountSpec :: (Text, Text, Bool) -> MountSpec

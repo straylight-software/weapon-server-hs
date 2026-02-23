@@ -149,13 +149,21 @@ data SandboxConfig = SandboxConfig
     -- ^ Enable seccomp-bpf filtering
     , scTmpfsSize :: Word64
     -- ^ Size of tmpfs overlay (bytes)
+    , scShell :: FilePath
+    -- ^ Shell to run inside sandbox (from $SHELL or fallback)
+    , scHome :: FilePath
+    -- ^ User's home directory
+    , scUser :: Text
+    -- ^ Username
     }
     deriving (Eq, Show, Generic)
 
 instance ToJSON SandboxConfig
 instance FromJSON SandboxConfig
 
--- | Default sandbox configuration
+{- | Default sandbox configuration
+Note: Use defaultConfigIO to get actual user values from environment
+-}
 defaultConfig :: FilePath -> SandboxConfig
 defaultConfig workdir =
     SandboxConfig
@@ -168,6 +176,9 @@ defaultConfig workdir =
         , scCoeffects = pureCoeffects
         , scSeccomp = True
         , scTmpfsSize = 512 * 1024 * 1024 -- 512MB tmpfs
+        , scShell = "/bin/sh" -- Placeholder, should be set by caller
+        , scHome = "/tmp" -- Placeholder, should be set by caller
+        , scUser = "nobody" -- Placeholder, should be set by caller
         }
 
 -- | Sandbox status

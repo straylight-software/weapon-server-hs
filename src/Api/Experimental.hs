@@ -18,11 +18,14 @@ module Api.Experimental (
     ExperimentalWorktreePostAPI,
     ExperimentalWorktreeResetAPI,
     ExperimentalWorktreeDeleteAPI,
+    ExperimentalSessionListAPI,
 ) where
 
 import Data.Aeson (Value)
 import Data.Text (Text)
 import Servant
+
+import Session.Types (GlobalSession)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //
@@ -62,3 +65,30 @@ type ExperimentalWorktreeResetAPI = "experimental" :> "worktree" :> "reset" :> Q
 
 -- delete worktree
 type ExperimentalWorktreeDeleteAPI = "experimental" :> "worktree" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Delete '[JSON] Bool
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- session endpoints (global cross-project session listing)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+{- | List sessions globally across all projects
+GET /experimental/session
+Query params:
+  directory: Filter by project directory
+  roots: Only return root sessions (no parentID)
+  start: Filter sessions updated on or after this timestamp (ms since epoch)
+  cursor: Return sessions updated before this timestamp (ms since epoch)
+  search: Filter by title (case-insensitive)
+  limit: Maximum sessions to return
+  archived: Include archived sessions (default false)
+-}
+type ExperimentalSessionListAPI =
+    "experimental"
+        :> "session"
+        :> QueryParam "directory" Text
+        :> QueryParam "roots" Bool
+        :> QueryParam "start" Double
+        :> QueryParam "cursor" Double
+        :> QueryParam "search" Text
+        :> QueryParam "limit" Int
+        :> QueryParam "archived" Bool
+        :> Get '[JSON] [GlobalSession]

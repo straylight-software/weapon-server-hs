@@ -8,6 +8,8 @@ module Session.Session (
     Session.Types.Session (..),
     Session.Types.SessionTime (..),
     Session.Types.CreateSessionInput (..),
+    Session.Types.GlobalSession (..),
+    Session.Types.ProjectSummary (..),
 
     -- * Operations
     create,
@@ -15,6 +17,7 @@ module Session.Session (
     update,
     delete,
     list,
+    listGlobal,
     touch,
 
     -- * Context
@@ -138,20 +141,38 @@ delete ctx sid = do
             Bus.publish (scBus ctx) "session.deleted" (object ["info" .= session])
             pure True
 
--- | List all sessions for the current project
-list :: SessionContext -> Maybe Bool -> Maybe Int -> Maybe Double -> Maybe Text -> IO [Session]
-list ctx mRoots mLimit mStart mSearch = do
+{- | List all sessions for the current project
+Parameters:
+  mDir: Filter by directory (must match session's directory)
+  mRoots: If True, only return sessions without a parent
+  mLimit: Maximum number of sessions to return
+  mStart: Filter sessions updated on or after this timestamp
+  mSearch: Filter by title (case-insensitive)
+-}
+list ::
+    SessionContext ->
+    Maybe Text -> -- directory filter
+    Maybe Bool -> -- roots only
+    Maybe Int -> -- limit
+    Maybe Double -> -- start timestamp
+    Maybe Text -> -- search
+    IO [Session]
+list ctx mDir mRoots mLimit mStart mSearch = do
     keys <- Storage.list (scStorage ctx) (sessionPrefix (scProjectID ctx))
     sessions <- forM keys $ \key -> do
         case List.unsnoc key of
             Nothing -> pure Nothing
             Just (_prefix, sid) -> get ctx sid
     let valid = catMaybes sessions
+    -- Filter by directory if specified
+    let dirFiltered = case mDir of
+            Just dir -> filter (\s -> sessionDirectory s == dir) valid
+            Nothing -> valid
     -- Filter by roots (no parent)
     let rootFiltered = case mRoots of
-            Just True -> filter (isNothing . sessionParentID) valid
-            Just False -> valid
-            Nothing -> valid
+            Just True -> filter (isNothing . sessionParentID) dirFiltered
+            Just False -> dirFiltered
+            Nothing -> dirFiltered
     -- Filter by start timestamp (sessions updated on or after)
     let startFiltered = case mStart of
             Just ts -> filter (\s -> stUpdated (sessionTime s) >= ts) rootFiltered
@@ -173,3 +194,79 @@ touch :: SessionContext -> Text -> IO ()
 touch ctx sid = do
     _ <- update ctx sid id
     pure ()
+
+{- | List sessions globally (for /experimental/session endpoint)
+This is similar to `list` but returns GlobalSession with project info
+and supports additional filtering (cursor, archived)
+-}
+listGlobal ::
+    SessionContext ->
+    Maybe Text -> -- directory filter
+    Maybe Bool -> -- roots only
+    Maybe Double -> -- start timestamp
+    Maybe Double -> -- cursor (sessions before this timestamp)
+    Maybe Text -> -- search
+    Maybe Int -> -- limit
+    Maybe Bool -> -- include archived
+    IO [GlobalSession]
+listGlobal ctx mDir mRoots mStart mCursor mSearch mLimit mArchived = do
+    -- Get all sessions for the project
+    keys <- Storage.list (scStorage ctx) (sessionPrefix (scProjectID ctx))
+    sessions <- forM keys $ \key -> do
+        case List.unsnoc key of
+            Nothing -> pure Nothing
+            Just (_prefix, sid) -> get ctx sid
+    let valid = catMaybes sessions
+
+    -- Filter by directory if specified
+    let dirFiltered = case mDir of
+            Just dir -> filter (\s -> sessionDirectory s == dir) valid
+            Nothing -> valid
+
+    -- Filter by roots (no parent)
+    let rootFiltered = case mRoots of
+            Just True -> filter (isNothing . sessionParentID) dirFiltered
+            Just False -> dirFiltered
+            Nothing -> dirFiltered
+
+    -- Filter by start timestamp (sessions updated on or after)
+    let startFiltered = case mStart of
+            Just ts -> filter (\s -> stUpdated (sessionTime s) >= ts) rootFiltered
+            Nothing -> rootFiltered
+
+    -- Filter by cursor (sessions updated before this timestamp)
+    let cursorFiltered = case mCursor of
+            Just ts -> filter (\s -> stUpdated (sessionTime s) < ts) startFiltered
+            Nothing -> startFiltered
+
+    -- Filter by archived status (default: exclude archived)
+    let archivedFiltered = case mArchived of
+            Just True -> cursorFiltered -- Include all (archived and non-archived)
+            Just False -> filter (isNothing . stArchived . sessionTime) cursorFiltered
+            Nothing -> filter (isNothing . stArchived . sessionTime) cursorFiltered
+
+    -- Filter by search (case-insensitive title match)
+    let searchFiltered = case mSearch of
+            Just q -> filter (\s -> T.toLower q `T.isInfixOf` T.toLower (sessionTitle s)) archivedFiltered
+            Nothing -> archivedFiltered
+
+    -- Sort by most recently updated
+    let sorted = sortOn (Down . stUpdated . sessionTime) searchFiltered
+
+    -- Apply limit (default 100)
+    let limit = fromMaybe 100 mLimit
+    let limited = take limit sorted
+
+    -- Convert to GlobalSession with project info
+    -- For now, we create a simple ProjectSummary from the session's project info
+    let toGlobal s =
+            let projSummary =
+                    Just
+                        ProjectSummary
+                            { psId = sessionProjectID s
+                            , psName = Nothing -- We don't have project name in storage yet
+                            , psWorktree = sessionDirectory s
+                            }
+             in toGlobalSession s projSummary
+
+    pure $ map toGlobal limited

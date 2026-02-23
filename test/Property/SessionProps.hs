@@ -107,7 +107,7 @@ prop_listReturnsCreated = property $ do
                         }
             Session.create ctx input
         -- List all sessions
-        Session.list ctx Nothing Nothing Nothing Nothing
+        Session.list ctx Nothing Nothing Nothing Nothing Nothing
 
     -- Should find all created sessions
     listLength sessions === count
@@ -122,7 +122,7 @@ prop_listContainsCreatedId = property $ do
                     { ST.csiTitle = Just "test"
                     , ST.csiParentID = Nothing
                     }
-        allSessions <- Session.list ctx Nothing Nothing Nothing Nothing
+        allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
         pure (session, allSessions)
     assert $ any (\s -> ST.sessionId s == ST.sessionId created) sessions
 
@@ -172,8 +172,8 @@ prop_listSearchFilter = property $ do
         -- Small delay to let filesystem settle in sandbox environments
         threadDelay 50000
         -- Search for "project" (case-insensitive)
-        matching <- Session.list ctx Nothing Nothing Nothing (Just "project")
-        nonMatching <- Session.list ctx Nothing Nothing Nothing (Just "delta")
+        matching <- Session.list ctx Nothing Nothing Nothing Nothing (Just "project")
+        nonMatching <- Session.list ctx Nothing Nothing Nothing Nothing (Just "delta")
         pure (matching, nonMatching)
     -- Should find 2 sessions matching "project"
     listLength matching === 2
@@ -188,7 +188,7 @@ prop_listLimitFilter = property $ do
         -- Create 5 sessions
         replicateM_ 5 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
         -- List with limit
-        Session.list ctx Nothing (Just limitVal) Nothing Nothing
+        Session.list ctx Nothing Nothing (Just limitVal) Nothing Nothing
     -- Should return at most limitVal sessions
     assert $ listLength sessions <= limitVal
 
@@ -213,7 +213,7 @@ prop_listSortedByUpdated = property $ do
             updatedSessions
         -- Small delay to let filesystem settle in sandbox environments
         threadDelay 50000
-        Session.list ctx Nothing Nothing Nothing Nothing
+        Session.list ctx Nothing Nothing Nothing Nothing Nothing
     let listedTimes = map (ST.stUpdated . ST.sessionTime) listed
     listedTimes === List.sortOn Down times
 
@@ -250,9 +250,9 @@ prop_listRootsFilter = property $ do
         -- Small delay to let filesystem settle in sandbox environments
         threadDelay 50000
         -- List roots only
-        roots <- Session.list ctx (Just True) Nothing Nothing Nothing
+        roots <- Session.list ctx Nothing (Just True) Nothing Nothing Nothing
         -- List all
-        allSessions <- Session.list ctx Nothing Nothing Nothing Nothing
+        allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
         pure (listLength roots, listLength allSessions)
     -- Should have 3 roots (parent + 2 roots) and 4 total (+ 1 child)
     rootCount === 3
@@ -274,6 +274,29 @@ prop_touchUpdatesTimestamp = property $ do
     -- Time should have been updated (or at least not decreased)
     assert $ timeAfter >= timeBefore
 
+-- | Property: list with directory filter only returns sessions matching directory
+prop_listDirectoryFilter :: Property
+prop_listDirectoryFilter = property $ do
+    (matchCount, nonMatchCount, allCount) <- evalIO $ withTestContext $ \ctx -> do
+        -- Create sessions (they will have the context's directory)
+        replicateM_ 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        threadDelay 50000
+        -- Get the directory from context
+        let dir = Session.scDirectory ctx
+        -- List with matching directory
+        matching <- Session.list ctx (Just dir) Nothing Nothing Nothing Nothing
+        -- List with non-matching directory
+        nonMatching <- Session.list ctx (Just "/nonexistent/path") Nothing Nothing Nothing Nothing
+        -- List all (no directory filter)
+        allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
+        pure (listLength matching, listLength nonMatching, listLength allSessions)
+    -- Matching directory should return all sessions
+    matchCount === 3
+    -- Non-matching directory should return no sessions
+    nonMatchCount === 0
+    -- All sessions should be returned when no filter
+    allCount === 3
+
 -- Generators
 -- Test tree
 tests :: TestTree
@@ -293,6 +316,7 @@ tests =
           testProperty "update nonexistent returns Nothing" prop_updateNonexistent
         , testProperty "delete nonexistent returns False" prop_deleteNonexistent
         , testProperty "list with roots filter" prop_listRootsFilter
+        , testProperty "list with directory filter" prop_listDirectoryFilter
         , testProperty "touch updates timestamp" prop_touchUpdatesTimestamp
         ]
 

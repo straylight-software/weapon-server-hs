@@ -67,6 +67,9 @@ genSandboxConfig =
         <*> genCoeffects
         <*> Gen.bool
         <*> Gen.word64 (Range.linear (64 * 1024 * 1024) (2 * 1024 * 1024 * 1024))
+        <*> genFilePath -- scShell
+        <*> genFilePath -- scHome
+        <*> genText -- scUser
 
 genSandboxStatus :: Gen SandboxStatus
 genSandboxStatus =

@@ -4,6 +4,9 @@
 module Property.SessionTypesProps where
 
 import Data.Aeson (decode, encode)
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KM
 import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -149,6 +152,103 @@ prop_sessionTimeUpdatedNonNegative = property $ do
     st <- forAll genSessionTime
     assert $ stUpdated st >= 0
 
+-- ============================================================================
+-- Null field omission properties
+-- ============================================================================
+
+-- | Helper to check if a JSON object contains null values
+hasNullValues :: Aeson.Value -> Bool
+hasNullValues (Aeson.Object obj) = any isNull (KM.elems obj)
+  where
+    isNull Aeson.Null = True
+    isNull _ = False
+hasNullValues _ = False
+
+-- | Helper to get keys with null values
+nullKeys :: Aeson.Value -> [Text]
+nullKeys (Aeson.Object obj) =
+    [Key.toText k | (k, v) <- KM.toList obj, v == Aeson.Null]
+nullKeys _ = []
+
+-- | Property: Session JSON omits null optional fields (parentID, summary, share, revert)
+prop_sessionOmitsNullFields :: Property
+prop_sessionOmitsNullFields = property $ do
+    -- Generate a session with all optional fields as Nothing
+    session <- forAll $ do
+        Session
+            <$> genNonEmptyText
+            <*> genNonEmptyText
+            <*> genNonEmptyText
+            <*> genNonEmptyText
+            <*> pure Nothing -- parentID
+            <*> genText
+            <*> genNonEmptyText
+            <*> (SessionTime <$> genTimestamp <*> genTimestamp <*> pure Nothing <*> pure Nothing)
+            <*> pure Nothing -- summary
+            <*> pure Nothing -- share
+            <*> pure Nothing -- revert
+    let json = Aeson.toJSON session
+    -- Verify no null values in the JSON
+    annotateShow (nullKeys json)
+    assert $ not (hasNullValues json)
+    -- Also check nested time object
+    case json of
+        Aeson.Object obj -> case KM.lookup "time" obj of
+            Just timeJson -> do
+                annotateShow (nullKeys timeJson)
+                assert $ not (hasNullValues timeJson)
+            Nothing -> failure
+        Aeson.Array _ -> failure
+        Aeson.String _ -> failure
+        Aeson.Number _ -> failure
+        Aeson.Bool _ -> failure
+        Aeson.Null -> failure
+
+-- | Property: SessionTime JSON omits null optional fields (compacting, archived)
+prop_sessionTimeOmitsNullFields :: Property
+prop_sessionTimeOmitsNullFields = property $ do
+    st <- forAll $ SessionTime <$> genTimestamp <*> genTimestamp <*> pure Nothing <*> pure Nothing
+    let json = Aeson.toJSON st
+    annotateShow (nullKeys json)
+    assert $ not (hasNullValues json)
+
+-- | Property: SessionSummary JSON omits null optional fields (files)
+prop_sessionSummaryOmitsNullFields :: Property
+prop_sessionSummaryOmitsNullFields = property $ do
+    ss <- forAll $ SessionSummary <$> Gen.int (Range.linear 0 100) <*> Gen.int (Range.linear 0 100) <*> pure Nothing
+    let json = Aeson.toJSON ss
+    annotateShow (nullKeys json)
+    assert $ not (hasNullValues json)
+
+-- | Property: SessionRevert JSON omits null optional fields (partID, snapshot, diff)
+prop_sessionRevertOmitsNullFields :: Property
+prop_sessionRevertOmitsNullFields = property $ do
+    sr <- forAll $ SessionRevert <$> genNonEmptyText <*> pure Nothing <*> pure Nothing <*> pure Nothing
+    let json = Aeson.toJSON sr
+    annotateShow (nullKeys json)
+    assert $ not (hasNullValues json)
+
+-- | Property: GlobalSession JSON omits null optional fields
+prop_globalSessionOmitsNullFields :: Property
+prop_globalSessionOmitsNullFields = property $ do
+    gs <- forAll $ do
+        GlobalSession
+            <$> genNonEmptyText
+            <*> genNonEmptyText
+            <*> genNonEmptyText
+            <*> genNonEmptyText
+            <*> pure Nothing -- parentID
+            <*> genText
+            <*> genNonEmptyText
+            <*> (SessionTime <$> genTimestamp <*> genTimestamp <*> pure Nothing <*> pure Nothing)
+            <*> pure Nothing -- summary
+            <*> pure Nothing -- share
+            <*> pure Nothing -- revert
+            <*> pure Nothing -- project
+    let json = Aeson.toJSON gs
+    annotateShow (nullKeys json)
+    assert $ not (hasNullValues json)
+
 -- Test tree
 tests :: TestTree
 tests =
@@ -164,4 +264,9 @@ tests =
         , testProperty "SessionSummary deletions non-negative" prop_sessionSummaryDeletionsNonNegative
         , testProperty "SessionTime created non-negative" prop_sessionTimeCreatedNonNegative
         , testProperty "SessionTime updated non-negative" prop_sessionTimeUpdatedNonNegative
+        , testProperty "Session omits null fields" prop_sessionOmitsNullFields
+        , testProperty "SessionTime omits null fields" prop_sessionTimeOmitsNullFields
+        , testProperty "SessionSummary omits null fields" prop_sessionSummaryOmitsNullFields
+        , testProperty "SessionRevert omits null fields" prop_sessionRevertOmitsNullFields
+        , testProperty "GlobalSession omits null fields" prop_globalSessionOmitsNullFields
         ]

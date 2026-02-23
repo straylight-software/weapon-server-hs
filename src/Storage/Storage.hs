@@ -81,7 +81,7 @@ readMaybe cfg key =
     ( (Just <$> read cfg key)
         `catch` \(NotFoundError _) -> pure Nothing
     )
-        `catch` \(StorageDecodeError _ _) -> pure Nothing
+        `catch` \(StorageDecodeError _path _err) -> pure Nothing
 
 {- | Write a JSON value to storage
 Uses direct write for performance. For crash-safe atomic writes,

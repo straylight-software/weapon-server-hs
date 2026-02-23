@@ -294,6 +294,7 @@ buildRequest ParsedReq{..} clientAddr bodyRef =
             , rawPathInfo = path
             , rawQueryString = query
             , pathInfo = decodePathSegments path -- Servant uses pathInfo for routing
+            , queryString = parseQuery query -- Servant uses queryString for QueryParam
             , requestHeaders = map (first CI.mk) prHeaders
             , isSecure = False
             , remoteHost = clientAddr

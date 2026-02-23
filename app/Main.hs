@@ -12,6 +12,7 @@
 -- with WebSocket support for PTY connections, CORS middleware, and the Servant API.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
@@ -120,8 +121,16 @@ bridgePtyToWebSocket ptyConnection websocketConnection = do
 --                                                                      // main
 -- ════════════════════════════════════════════════════════════════════════════
 
+-- | Default log level based on build mode
+defaultLogLevel :: Katip.Severity
+#ifdef PRODUCTION
+defaultLogLevel = Katip.InfoS
+#else
+defaultLogLevel = Katip.DebugS
+#endif
+
 main :: IO ()
-main = Log.withLogger "weapon" $ \logger -> do
+main = Log.withLoggerLevel "weapon" defaultLogLevel $ \logger -> do
     hSetBuffering stdout LineBuffering
 
     let serverLogger = Log.withNS logger "server"

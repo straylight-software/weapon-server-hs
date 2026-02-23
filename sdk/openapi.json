@@ -1142,6 +1142,92 @@
         ]
       }
     },
+    "/experimental/session": {
+      "get": {
+        "operationId": "experimental.session.list",
+        "summary": "List sessions globally",
+        "description": "Get a list of all sessions across projects, sorted by most recently updated. Archived sessions are excluded by default.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter sessions by project directory"
+          },
+          {
+            "in": "query",
+            "name": "roots",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Only return root sessions (no parentID)"
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "schema": {
+              "type": "number"
+            },
+            "description": "Filter sessions updated on or after this timestamp (milliseconds since epoch)"
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "number"
+            },
+            "description": "Return sessions updated before this timestamp (milliseconds since epoch)"
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter sessions by title (case-insensitive)"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum number of sessions to return"
+          },
+          {
+            "in": "query",
+            "name": "archived",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Include archived sessions (default false)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GlobalSession"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createWeaponClient } from \"@weapon-ai/sdk\n\nconst client = createWeaponClient()\nawait client.experimental.session.list({\n  roots: true,\n  limit: 50\n})"
+          }
+        ]
+      }
+    },
     "/session": {
       "get": {
         "operationId": "session.list",
@@ -7548,6 +7634,46 @@
           }
         },
         "required": ["id", "slug", "projectID", "directory", "title", "version", "time"]
+      },
+      "ProjectSummary": {
+        "type": "object",
+        "description": "Summary information about a project",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "worktree": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "worktree"]
+      },
+      "GlobalSession": {
+        "type": "object",
+        "description": "Session with project information for cross-project listing",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Session"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "project": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ProjectSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ]
       },
       "Event.session.created": {
         "type": "object",

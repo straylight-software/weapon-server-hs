@@ -158,6 +158,7 @@ type OpencodeAPI =
         :<|> ExperimentalWorktreePostAPI
         :<|> ExperimentalWorktreeResetAPI
         :<|> ExperimentalWorktreeDeleteAPI
+        :<|> ExperimentalSessionListAPI
         -- llm
         :<|> ChatAPI
 

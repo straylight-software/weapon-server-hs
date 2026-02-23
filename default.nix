@@ -128,6 +128,8 @@ mkDerivation {
     warp
     websockets
   ];
+  # Enable production mode for nix builds (INFO log level instead of DEBUG)
+  configureFlags = [ "-f production" ];
   testHaskellDepends = lib.filter (x: x != null) [
     aeson
     base

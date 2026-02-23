@@ -119,6 +119,7 @@ module Handlers (
     experimentalWorktreePostHandler,
     experimentalWorktreeResetHandler,
     experimentalWorktreeDeleteHandler,
+    experimentalSessionListHandler,
 
     -- * Chat Handlers
     chatHandler,
@@ -185,6 +186,7 @@ import Pty.Types qualified as PtyT
 import Request.Store qualified as RequestStore
 import Servant
 import Session.Session qualified as Sess
+import Session.Types (GlobalSession)
 import Skill.Skill qualified as Skill
 import State
 import Storage.Storage qualified as Storage
@@ -511,9 +513,9 @@ sessionStatusHandler _st _mDir = liftIO $ do
     return $ Object mempty
 
 sessionListHandler :: AppState -> Maybe Text -> Maybe Bool -> Maybe Double -> Maybe Double -> Maybe Text -> Handler [Session]
-sessionListHandler st _mDir mRoots mLimit mStart mSearch = liftIO $ do
+sessionListHandler st mDir mRoots mLimit mStart mSearch = liftIO $ do
     let ctx = sessionContext st
-    Sess.list ctx mRoots (round <$> mLimit) mStart mSearch
+    Sess.list ctx mDir mRoots (round <$> mLimit) mStart mSearch
 
 sessionCreateHandler :: AppState -> Maybe Text -> CreateSessionInput -> Handler Session
 sessionCreateHandler st _mDir input = liftIO $ do
@@ -559,7 +561,7 @@ sessionUpdateHandler st sid input = withSessionUpdate st sid (applyUpdate input)
 sessionChildrenHandler :: AppState -> Text -> Maybe Text -> Handler [Session]
 sessionChildrenHandler st sid _mDir = liftIO $ do
     let ctx = sessionContext st
-    sessions <- Sess.list ctx Nothing Nothing Nothing Nothing
+    sessions <- Sess.list ctx Nothing Nothing Nothing Nothing Nothing
     let children = filter (\s -> sessionParentID s == Just sid) sessions
     return children
 
@@ -1617,6 +1619,21 @@ experimentalWorktreeDeleteHandler st mDir input = liftIO $ do
         Left _err -> return False
         Right () -> return True
 
+-- | List sessions globally across all projects (GET /experimental/session)
+experimentalSessionListHandler ::
+    AppState ->
+    Maybe Text -> -- directory
+    Maybe Bool -> -- roots
+    Maybe Double -> -- start
+    Maybe Double -> -- cursor
+    Maybe Text -> -- search
+    Maybe Int -> -- limit
+    Maybe Bool -> -- archived
+    Handler [GlobalSession]
+experimentalSessionListHandler st mDir mRoots mStart mCursor mSearch mLimit mArchived = liftIO $ do
+    let ctx = sessionContext st
+    Sess.listGlobal ctx mDir mRoots mStart mCursor mSearch mLimit mArchived
+
 -- * PTY Handlers (sandboxed terminals)
 
 ptyListHandler :: AppState -> Handler [Value]
@@ -1861,5 +1878,6 @@ server st =
         :<|> experimentalWorktreePostHandler st
         :<|> experimentalWorktreeResetHandler st
         :<|> experimentalWorktreeDeleteHandler st
+        :<|> experimentalSessionListHandler st
         -- LLM
         :<|> chatHandler st

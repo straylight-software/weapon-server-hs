@@ -11,9 +11,15 @@ module Session.Types (
     SessionShare (..),
     SessionRevert (..),
     CreateSessionInput (..),
+
+    -- * Global session types (for /experimental/session)
+    GlobalSession (..),
+    ProjectSummary (..),
+    toGlobalSession,
 ) where
 
 import Data.Aeson
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
@@ -28,12 +34,14 @@ data SessionTime = SessionTime
 
 instance ToJSON SessionTime where
     toJSON st =
-        object
+        object $
             [ "created" .= stCreated st
             , "updated" .= stUpdated st
-            , "compacting" .= stCompacting st
-            , "archived" .= stArchived st
             ]
+                ++ catMaybes
+                    [ ("compacting" .=) <$> stCompacting st
+                    , ("archived" .=) <$> stArchived st
+                    ]
 
 instance FromJSON SessionTime where
     parseJSON = withObject "SessionTime" $ \v ->
@@ -53,11 +61,13 @@ data SessionSummary = SessionSummary
 
 instance ToJSON SessionSummary where
     toJSON ss =
-        object
+        object $
             [ "additions" .= ssAdditions ss
             , "deletions" .= ssDeletions ss
-            , "files" .= ssFiles ss
             ]
+                ++ catMaybes
+                    [ ("files" .=) <$> ssFiles ss
+                    ]
 
 instance FromJSON SessionSummary where
     parseJSON = withObject "SessionSummary" $ \v ->
@@ -91,12 +101,13 @@ data SessionRevert = SessionRevert
 
 instance ToJSON SessionRevert where
     toJSON sr =
-        object
-            [ "messageID" .= revertMessageID sr
-            , "partID" .= revertPartID sr
-            , "snapshot" .= revertSnapshot sr
-            , "diff" .= revertDiff sr
-            ]
+        object $
+            ("messageID" .= revertMessageID sr)
+                : catMaybes
+                    [ ("partID" .=) <$> revertPartID sr
+                    , ("snapshot" .=) <$> revertSnapshot sr
+                    , ("diff" .=) <$> revertDiff sr
+                    ]
 
 instance FromJSON SessionRevert where
     parseJSON = withObject "SessionRevert" $ \v ->
@@ -124,19 +135,21 @@ data Session = Session
 
 instance ToJSON Session where
     toJSON s =
-        object
+        object $
             [ "id" .= sessionId s
             , "slug" .= sessionSlug s
             , "projectID" .= sessionProjectID s
             , "directory" .= sessionDirectory s
-            , "parentID" .= sessionParentID s
             , "title" .= sessionTitle s
             , "version" .= sessionVersion s
             , "time" .= sessionTime s
-            , "summary" .= sessionSummary s
-            , "share" .= sessionShare s
-            , "revert" .= sessionRevert s
             ]
+                ++ catMaybes
+                    [ ("parentID" .=) <$> sessionParentID s
+                    , ("summary" .=) <$> sessionSummary s
+                    , ("share" .=) <$> sessionShare s
+                    , ("revert" .=) <$> sessionRevert s
+                    ]
 
 instance FromJSON Session where
     parseJSON = withObject "Session" $ \v ->
@@ -172,3 +185,102 @@ instance ToJSON CreateSessionInput where
             [ "title" .= csiTitle csi
             , "parentID" .= csiParentID csi
             ]
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Global Session Types (for /experimental/session endpoint)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Project summary info included in GlobalSession
+data ProjectSummary = ProjectSummary
+    { psId :: Text
+    , psName :: Maybe Text
+    , psWorktree :: Text
+    }
+    deriving (Show, Eq, Generic)
+
+instance ToJSON ProjectSummary where
+    toJSON ps =
+        object
+            [ "id" .= psId ps
+            , "name" .= psName ps
+            , "worktree" .= psWorktree ps
+            ]
+
+instance FromJSON ProjectSummary where
+    parseJSON = withObject "ProjectSummary" $ \v ->
+        ProjectSummary
+            <$> v .: "id"
+            <*> v .:? "name"
+            <*> v .: "worktree"
+
+{- | Global session info (Session + project summary)
+Used by /experimental/session endpoint for cross-project session listing
+-}
+data GlobalSession = GlobalSession
+    { gsId :: Text
+    , gsSlug :: Text
+    , gsProjectID :: Text
+    , gsDirectory :: Text
+    , gsParentID :: Maybe Text
+    , gsTitle :: Text
+    , gsVersion :: Text
+    , gsTime :: SessionTime
+    , gsSummary :: Maybe SessionSummary
+    , gsShare :: Maybe SessionShare
+    , gsRevert :: Maybe SessionRevert
+    , gsProject :: Maybe ProjectSummary
+    }
+    deriving (Show, Eq, Generic)
+
+instance ToJSON GlobalSession where
+    toJSON gs =
+        object $
+            [ "id" .= gsId gs
+            , "slug" .= gsSlug gs
+            , "projectID" .= gsProjectID gs
+            , "directory" .= gsDirectory gs
+            , "title" .= gsTitle gs
+            , "version" .= gsVersion gs
+            , "time" .= gsTime gs
+            ]
+                ++ catMaybes
+                    [ ("parentID" .=) <$> gsParentID gs
+                    , ("summary" .=) <$> gsSummary gs
+                    , ("share" .=) <$> gsShare gs
+                    , ("revert" .=) <$> gsRevert gs
+                    , ("project" .=) <$> gsProject gs
+                    ]
+
+instance FromJSON GlobalSession where
+    parseJSON = withObject "GlobalSession" $ \v ->
+        GlobalSession
+            <$> v .: "id"
+            <*> v .: "slug"
+            <*> v .: "projectID"
+            <*> v .: "directory"
+            <*> v .:? "parentID"
+            <*> v .: "title"
+            <*> v .: "version"
+            <*> v .: "time"
+            <*> v .:? "summary"
+            <*> v .:? "share"
+            <*> v .:? "revert"
+            <*> v .:? "project"
+
+-- | Convert a Session to GlobalSession with optional project info
+toGlobalSession :: Session -> Maybe ProjectSummary -> GlobalSession
+toGlobalSession s mProj =
+    GlobalSession
+        { gsId = sessionId s
+        , gsSlug = sessionSlug s
+        , gsProjectID = sessionProjectID s
+        , gsDirectory = sessionDirectory s
+        , gsParentID = sessionParentID s
+        , gsTitle = sessionTitle s
+        , gsVersion = sessionVersion s
+        , gsTime = sessionTime s
+        , gsSummary = sessionSummary s
+        , gsShare = sessionShare s
+        , gsRevert = sessionRevert s
+        , gsProject = mProj
+        }
