@@ -747,7 +747,11 @@ createMessageIO st sid input = do
     let msgTime = SessionTime t t Nothing Nothing
 
     -- Major #5: Extract model and agent from input with defaults
-    let modelId = fromMaybe "anthropic/claude-opus-4.5" (cmiModel input)
+    -- Model is now a {providerID, modelID} object
+    let (providerId, modelId) = case cmiModel input of
+            Just ms -> (msProviderID ms, msModelID ms)
+            Nothing -> ("anthropic", "claude-opus-4.5")
+    let fullModelId = providerId <> "/" <> modelId
     let agentName = fromMaybe "armed" (cmiAgent input)
 
     -- Major #7: Look up agent to get system prompt
@@ -756,22 +760,66 @@ createMessageIO st sid input = do
 
     -- Extract user text for logging
     let userText = extractUserText (cmiParts input)
-    Log.logMsg lg Katip.InfoS $ "create session=" <> sid <> " model=" <> modelId <> " agent=" <> agentName <> " text=" <> T.take 50 userText
+    Log.logMsg lg Katip.InfoS $ "create session=" <> sid <> " model=" <> fullModelId <> " agent=" <> agentName <> " text=" <> T.take 50 userText
+
+    -- Publish session.status busy event (Critical for TUI Ctrl+C support)
+    Log.logMsg lg Katip.InfoS $ "publishing session.status busy for session: " <> sid
+    Bus.publish (stBus st) "session.status" $
+        object
+            [ "sessionID" .= sid
+            , "status" .= object ["type" .= ("busy" :: Text)]
+            ]
+
+    -- Get working directory for path info
+    cwd <- getCurrentDirectory
 
     -- 1. User Message
     let uMsgId = fromMaybe (pack ("msg_" ++ show (round t :: Integer))) (cmiMessageId input)
+    let uMsgInfo =
+            UserMessageInfo
+                { umiId = uMsgId
+                , umiSessionId = sid
+                , umiTime = msgTime
+                , umiAgent = Just agentName
+                }
     let uMsg =
             Message
-                { msgInfo = MessageInfo uMsgId sid "user" msgTime
+                { msgInfo = UserInfo uMsgInfo
                 , msgParts = cmiParts input
                 }
 
     -- 2. Assistant Message (incomplete initially)
     let aMsgId = pack ("msg_" ++ show (round t + 1 :: Integer))
     let partId = pack ("part_" ++ show (round t :: Integer))
+    let aMsgInfo =
+            AssistantMessageInfo
+                { amiId = aMsgId
+                , amiSessionId = sid
+                , amiTime = msgTime
+                , amiParentId = uMsgId
+                , amiModelId = modelId
+                , amiProviderId = providerId
+                , amiMode = "normal"
+                , amiAgent = agentName
+                , amiPath = MessagePath (pack cwd) (pack cwd)
+                , amiCost = 0.0
+                , amiTokens =
+                    MessageTokens
+                        { mtTotal = Nothing
+                        , mtInput = 0
+                        , mtOutput = 0
+                        , mtReasoning = 0
+                        , mtCache = TokenCache 0 0
+                        }
+                , amiSummary = Nothing
+                , amiVariant = Nothing
+                , amiFinish = Nothing
+                , amiError = Nothing
+                , amiStructured = Nothing
+                }
     let aMsg =
             Message
-                { msgInfo = MessageInfo aMsgId sid "assistant" msgTime
+                { msgInfo = AssistantInfo aMsgInfo
                 , msgParts = []
                 }
 
@@ -792,7 +840,9 @@ createMessageIO st sid input = do
                 , "time" .= object ["created" .= t]
                 , "parentID" .= (Nothing :: Maybe Text)
                 ]
+    Log.logMsg lg Katip.InfoS $ "publishing message.updated for user message: " <> uMsgId
     Bus.publish (stBus st) "message.updated" (object ["info" .= userInfo])
+    Log.logMsg lg Katip.InfoS "message.updated published"
 
     -- Publish user message parts via SSE (Critical #3)
     forM_ (cmiParts input) $ \part -> do
@@ -807,6 +857,7 @@ createMessageIO st sid input = do
                 Number n -> Number n
                 Bool b -> Bool b
                 Null -> Null
+        Log.logMsg lg Katip.InfoS "publishing message.part.updated"
         Bus.publish (stBus st) "message.part.updated" (object ["part" .= partWithIds])
 
     -- Publish assistant message (incomplete - no time.completed)
@@ -832,7 +883,9 @@ createMessageIO st sid input = do
                         , "cache" .= object ["read" .= (0 :: Int), "write" .= (0 :: Int)]
                         ]
                 ]
+    Log.logMsg lg Katip.InfoS $ "publishing message.updated for assistant message: " <> aMsgId
     Bus.publish (stBus st) "message.updated" (object ["info" .= assistantInfo])
+    Log.logMsg lg Katip.InfoS "assistant message.updated published"
 
     -- Spawn LLM streaming task
     _ <-
@@ -1154,7 +1207,7 @@ processPromptAsync st job = do
     case result of
         Nothing -> pure ()
         Just msg -> do
-            let mid = msgId (msgInfo msg)
+            let mid = messageInfoId (msgInfo msg)
             let payload = PromptAsync.completedPayload sid reqId mid
             Storage.write (stStorage st) (PromptAsync.promptAsyncKey sid reqId) payload
             Bus.publish (stBus st) "prompt.async.completed" payload
@@ -1220,7 +1273,7 @@ loadConversationHistory st sid = do
 -- | Convert a stored Message to OpenRouter.Message format (Critical #2)
 messageToOpenRouter :: Message -> OpenRouter.ChatMessage
 messageToOpenRouter msg =
-    let role = case msgRole (msgInfo msg) of
+    let role = case messageInfoRole (msgInfo msg) of
             "user" -> OpenRouter.User
             "assistant" -> OpenRouter.Assistant
             "system" -> OpenRouter.System
@@ -1266,7 +1319,14 @@ completeMessage st sid msgId parentMsgId modelId agentName startTime = do
                 ]
     Bus.publish (stBus st) "message.updated" (object ["info" .= completedInfo])
 
-    -- Publish session idle
+    -- Publish session.status idle (for TUI to know processing is done)
+    Bus.publish (stBus st) "session.status" $
+        object
+            [ "sessionID" .= sid
+            , "status" .= object ["type" .= ("idle" :: Text)]
+            ]
+
+    -- Publish session idle (deprecated but kept for compatibility)
     Bus.publish (stBus st) "session.idle" (object ["sessionID" .= sid])
 
 -- * File Handlers

@@ -12,7 +12,7 @@ import Data.Text (Text)
 data SessionStatusType
     = StatusIdle
     | StatusRetry Int Text Int -- attempt, message, next
-    | StatusActive Text -- stepID
+    | StatusBusy
     deriving (Eq, Show)
 
 -- | Session status for a single session
@@ -32,8 +32,5 @@ instance ToJSON SessionStatus where
                 , "message" .= msg
                 , "next" .= next
                 ]
-        StatusActive stepID ->
-            object
-                [ "type" .= ("active" :: Text)
-                , "stepID" .= stepID
-                ]
+        StatusBusy ->
+            object ["type" .= ("busy" :: Text)]

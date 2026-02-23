@@ -59,7 +59,7 @@ data ConnContext = ConnContext
 newConnContext :: Int -> IO ConnContext
 newConnContext maxConns = do
     recvPool <- newBufferPool maxConns bufferSize
-    sendPool <- newBufferPool maxConns 4096 -- enough for typical response
+    sendPool <- newBufferPool maxConns (256 * 1024) -- 256KB for JSON responses
     pure $ ConnContext recvPool sendPool
 
 -- | Start handling a new connection

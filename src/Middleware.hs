@@ -8,18 +8,32 @@
 
 module Middleware (
     supplyEmptyBody,
+    requestLogger,
 ) where
 
 import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
+import Katip qualified
+import Log (Logger, logMsg)
 import Network.HTTP.Types (hContentType, methodDelete, methodPatch, methodPost, methodPut)
 import Network.Wai (
     Middleware,
     Request (..),
     RequestBodyLength (..),
+    pathInfo,
     requestBodyLength,
     requestMethod,
     setRequestBodyChunks,
  )
+
+-- | Middleware to log all incoming requests
+requestLogger :: Logger -> Middleware
+requestLogger logger app req callback = do
+    let method = TE.decodeUtf8 (requestMethod req)
+        path = "/" <> T.intercalate "/" (pathInfo req)
+    logMsg logger Katip.InfoS $ "HTTP " <> method <> " " <> path
+    app req callback
 
 {- | Middleware to supply an empty JSON body when no body is provided.
 

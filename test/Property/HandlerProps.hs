@@ -645,9 +645,124 @@ prop_sessionMessageHandlers = withTests 20 $ property $ do
         (_, Left _err) -> failure
         (Right listed, Right fetched) -> do
             assert $ listLength listed >= 2
-            msgId (msgInfo fetched) === "msg_1"
-            let assistants = filter (\m -> msgRole (msgInfo m) == ("assistant" :: Text)) listed
+            messageInfoId (msgInfo fetched) === "msg_1"
+            let assistants = filter (\m -> messageInfoRole (msgInfo m) == ("assistant" :: Text)) listed
             assert $ not (all (null . msgParts) assistants)
+
+{- | Property: Message creation publishes message.updated events to the bus.
+This is critical for SSE event delivery - the TUI relies on these events
+to know when messages are created/updated. Without them, Ctrl+C won't work
+because the TUI doesn't know the assistant is responding.
+-}
+prop_sessionMessageCreatePublishesEvents :: Property
+prop_sessionMessageCreatePublishesEvents = withTests 20 $ property $ do
+    msg <- forAll genText
+    result <- evalIO $ withState $ \st ->
+        withEnv "OPENROUTER_API_KEY" Nothing $ do
+            -- Collect all message.updated events
+            eventsVar <- newTVarIO ([] :: [Bus.BusEvent])
+            unsubscribe <- Bus.subscribe (stBus st) "message.updated" $ \event ->
+                atomically $ modifyTVar' eventsVar (event :)
+
+            -- Also collect message.part.updated events
+            partsVar <- newTVarIO ([] :: [Bus.BusEvent])
+            unsubscribeParts <- Bus.subscribe (stBus st) "message.part.updated" $ \event ->
+                atomically $ modifyTVar' partsVar (event :)
+
+            let parts = [object ["id" .= ("part_1" :: Text), "type" .= ("text" :: Text), "text" .= msg]]
+            let input = CreateMessageInput (Just "msg_test") parts Nothing Nothing
+            _ <- runHandlerIO (sessionMessageCreateHandler st "session_test" input)
+
+            -- Wait for events to be delivered
+            threadDelay 50000 -- 50ms
+            unsubscribe
+            unsubscribeParts
+
+            msgEvents <- readTVarIO eventsVar
+            partEvents <- readTVarIO partsVar
+            pure (msgEvents, partEvents)
+    case result of
+        (msgEvents, partEvents) -> do
+            -- Should have at least 2 message.updated events (user + assistant)
+            annotate $ "message.updated events: " ++ show (listLength msgEvents)
+            assert $ listLength msgEvents >= 2
+            -- Should have at least 1 message.part.updated event (user's text part)
+            annotate $ "message.part.updated events: " ++ show (listLength partEvents)
+            assert $ listLength partEvents >= 1
+
+{- | Property: Message events are forwarded from bus to eventChan (SSE delivery path).
+This verifies the State.hs subscription that forwards bus events to eventChan,
+which is what SSE handlers read from.
+-}
+prop_messageEventsForwardedToEventChan :: Property
+prop_messageEventsForwardedToEventChan = withTests 20 $ property $ do
+    msg <- forAll genText
+    result <- evalIO $ withState $ \st ->
+        withEnv "OPENROUTER_API_KEY" Nothing $ do
+            -- Create a reader from eventChan (like SSE handler does)
+            reader <- atomically $ dupTChan (stEventChan st)
+            eventsVar <- newTVarIO ([] :: [Value])
+
+            -- Start collecting events in background
+            collectTid <- forkIO $ do
+                let collectLoop = do
+                        val <- atomically $ readTChan reader
+                        atomically $ modifyTVar' eventsVar (val :)
+                        collectLoop
+                collectLoop
+
+            -- Create a message
+            let parts = [object ["id" .= ("part_1" :: Text), "type" .= ("text" :: Text), "text" .= msg]]
+            let input = CreateMessageInput (Just "msg_sse") parts Nothing Nothing
+            _ <- runHandlerIO (sessionMessageCreateHandler st "session_sse" input)
+
+            -- Wait for events to propagate
+            threadDelay 100000 -- 100ms
+            killThread collectTid
+
+            events <- readTVarIO eventsVar
+            let messageEvents = filter isMessageEvent events
+            pure messageEvents
+    case result of
+        events -> do
+            annotate $ "Events received via eventChan: " ++ show (listLength events)
+            -- Should receive message.updated events via eventChan
+            assert $ listLength events >= 2
+  where
+    isMessageEvent val = case val of
+        Object obj -> case KM.lookup "type" obj of
+            Just (String t) -> "message" `T.isPrefixOf` t
+            _ -> False
+        _ -> False
+
+{- | Property: Message creation publishes session.status events.
+This is critical for TUI Ctrl+C support - the TUI needs to know when
+a session is busy (processing) vs idle (done).
+-}
+prop_sessionStatusEventsPublished :: Property
+prop_sessionStatusEventsPublished = withTests 20 $ property $ do
+    msg <- forAll genText
+    result <- evalIO $ withState $ \st ->
+        withEnv "OPENROUTER_API_KEY" Nothing $ do
+            -- Collect session.status events
+            statusEvents <- newTVarIO ([] :: [Bus.BusEvent])
+            unsubscribe <- Bus.subscribe (stBus st) "session.status" $ \event ->
+                atomically $ modifyTVar' statusEvents (event :)
+
+            let parts = [object ["id" .= ("part_1" :: Text), "type" .= ("text" :: Text), "text" .= msg]]
+            let input = CreateMessageInput (Just "msg_status") parts Nothing Nothing
+            _ <- runHandlerIO (sessionMessageCreateHandler st "session_status_test" input)
+
+            -- Wait for events
+            threadDelay 100000 -- 100ms
+            unsubscribe
+
+            readTVarIO statusEvents
+    case result of
+        events -> do
+            -- Should have at least 2 session.status events (busy at start, idle at end)
+            annotate $ "session.status events: " ++ show (listLength events)
+            assert $ listLength events >= 2
 
 prop_sessionMessagePartHandlers :: Property
 prop_sessionMessagePartHandlers = withTests 20 $ property $ do
@@ -1341,6 +1456,9 @@ tests =
         , testProperty "session revert handlers" prop_sessionRevertHandlers
         , testProperty "session permission handler" prop_sessionPermissionHandler
         , testProperty "session message handlers" prop_sessionMessageHandlers
+        , testProperty "session message create publishes events" prop_sessionMessageCreatePublishesEvents
+        , testProperty "message events forwarded to eventChan" prop_messageEventsForwardedToEventChan
+        , testProperty "session.status events published" prop_sessionStatusEventsPublished
         , testProperty "session message part handlers" prop_sessionMessagePartHandlers
         , testProperty "lsp handler" prop_lspHandler
         , testProperty "permission handlers" prop_permissionHandlers

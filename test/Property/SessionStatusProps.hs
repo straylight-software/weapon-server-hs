@@ -43,14 +43,16 @@ prop_retryStatusJson = property $ do
   where
     decodeValue bytes = fromMaybe Null (decode bytes)
 
--- | Test that active status includes stepID
-prop_activeStatusJson :: Property
-prop_activeStatusJson = property $ do
-    let status = SessionStatus (StatusActive "step-123")
+-- | Test that busy status serializes correctly
+prop_busyStatusJson :: Property
+prop_busyStatusJson = property $ do
+    let status = SessionStatus StatusBusy
     case decodeValue (encode status) of
         Object obj -> do
             assert $ KM.member (Key.fromText "type") obj
-            assert $ KM.member (Key.fromText "stepID") obj
+            case KM.lookup (Key.fromText "type") obj of
+                Just (String "busy") -> success
+                _otherValue -> failure
         _otherValue -> failure
   where
     decodeValue bytes = fromMaybe Null (decode bytes)
@@ -61,5 +63,5 @@ tests =
         "Session Status Property Tests"
         [ testProperty "idle status JSON" prop_idleStatusJson
         , testProperty "retry status JSON" prop_retryStatusJson
-        , testProperty "active status JSON" prop_activeStatusJson
+        , testProperty "busy status JSON" prop_busyStatusJson
         ]

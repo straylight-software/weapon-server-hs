@@ -8,7 +8,7 @@ import Bus.Bus qualified as Bus
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM
 import Control.Monad (replicateM, replicateM_, void)
-import Data.Aeson (Value (..))
+import Data.Aeson (Value (..), toJSON)
 import Data.List qualified as List
 import Data.Text (Text)
 import Hedgehog
@@ -134,6 +134,135 @@ prop_unsubscribeStopsDelivery = withTests 20 $ property $ do
         readTVarIO receivedVar
     received === 1
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // Bus to TChan forwarding (SSE integration pattern) //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Property: Events published to bus are forwarded to a TChan subscriber.
+This tests the pattern used in State.hs where bus events are forwarded to
+eventChan for SSE delivery.
+-}
+prop_busToTChanForwarding :: Property
+prop_busToTChanForwarding = withTests 20 $ property $ do
+    eventTypes <- forAll $ Gen.list (Range.linear 1 5) genEventType
+
+    received <- evalIO $ do
+        bus <- Bus.newBus
+        -- Create a broadcast TChan (like eventChan in State.hs)
+        eventChan <- newBroadcastTChanIO
+
+        -- Subscribe to bus and forward to TChan (like State.mkAppState does)
+        void $ Bus.subscribeAll bus $ \event ->
+            atomically $ writeTChan eventChan (toJSON event)
+
+        -- Create a reader (like SSE handler does with dupTChan)
+        reader <- atomically $ dupTChan eventChan
+        receivedVar <- newTVarIO (0 :: Int)
+
+        -- Publish events
+        mapM_ (\et -> Bus.publish bus et Null) eventTypes
+
+        -- Wait and collect
+        threadDelay 10000
+
+        -- Try to read all available events
+        let readAll = do
+                mval <- atomically $ tryReadTChan reader
+                case mval of
+                    Nothing -> pure ()
+                    Just _ -> do
+                        atomically $ modifyTVar' receivedVar (+ 1)
+                        readAll
+        readAll
+
+        readTVarIO receivedVar
+
+    -- All events should have been forwarded
+    received === listLength eventTypes
+
+{- | Property: Multiple TChan readers all receive forwarded bus events.
+This tests that multiple SSE connections all receive the same events.
+-}
+prop_multipleTChanReaders :: Property
+prop_multipleTChanReaders = withTests 20 $ property $ do
+    eventType <- forAll genEventType
+    readerCount <- forAll $ Gen.int (Range.linear 2 5)
+
+    results <- evalIO $ do
+        bus <- Bus.newBus
+        eventChan <- newBroadcastTChanIO
+
+        -- Forward bus events to TChan
+        void $ Bus.subscribeAll bus $ \event ->
+            atomically $ writeTChan eventChan (toJSON event)
+
+        -- Create multiple readers (like multiple SSE connections)
+        readers <- replicateM readerCount $ atomically $ dupTChan eventChan
+        counters <- replicateM readerCount $ newTVarIO (0 :: Int)
+
+        -- Publish one event
+        Bus.publish bus eventType Null
+
+        threadDelay 10000
+
+        -- Read from each reader
+        mapM_
+            ( \(reader, counter) -> do
+                mval <- atomically $ tryReadTChan reader
+                case mval of
+                    Just _ -> atomically $ modifyTVar' counter (+ 1)
+                    Nothing -> pure ()
+            )
+            (zip readers counters)
+
+        mapM readTVarIO counters
+
+    -- All readers should have received exactly one event
+    all (== 1) results === True
+    listLength results === readerCount
+
+{- | Property: TChan readers created after publish don't receive old events.
+This verifies broadcast semantics - only events after subscription are received.
+-}
+prop_tchanBroadcastSemantics :: Property
+prop_tchanBroadcastSemantics = withTests 20 $ property $ do
+    beforeCount <- forAll $ Gen.int (Range.linear 1 3)
+    afterCount <- forAll $ Gen.int (Range.linear 1 3)
+
+    (beforeReceived, afterReceived) <- evalIO $ do
+        bus <- Bus.newBus
+        eventChan <- newBroadcastTChanIO
+
+        -- Forward bus events to TChan
+        void $ Bus.subscribeAll bus $ \event ->
+            atomically $ writeTChan eventChan (toJSON event)
+
+        -- Publish "before" events
+        replicateM_ beforeCount $ Bus.publish bus "before.event" Null
+        threadDelay 5000
+
+        -- NOW create a reader
+        reader <- atomically $ dupTChan eventChan
+
+        -- Publish "after" events
+        replicateM_ afterCount $ Bus.publish bus "after.event" Null
+        threadDelay 5000
+
+        -- Count events received
+        let countEvents = do
+                mval <- atomically $ tryReadTChan reader
+                case mval of
+                    Nothing -> pure 0
+                    Just _ -> (+ 1) <$> countEvents
+        count <- countEvents
+
+        pure (0 :: Int, count) -- before events should not be received
+
+    -- Reader should NOT receive events published before it was created
+    beforeReceived === 0
+    -- Reader should receive all events published after creation
+    afterReceived === afterCount
+
 -- Generators
 genEventType :: Gen Text
 genEventType =
@@ -158,6 +287,12 @@ tests =
         , testProperty "multiple subscribers" prop_multipleSubscribers
         , testProperty "subscribeAll order" prop_subscribeAllOrder
         , testProperty "unsubscribe stops delivery" prop_unsubscribeStopsDelivery
+        , testGroup
+            "Bus to TChan forwarding (SSE pattern)"
+            [ testProperty "events forwarded to TChan" prop_busToTChanForwarding
+            , testProperty "multiple TChan readers" prop_multipleTChanReaders
+            , testProperty "broadcast semantics (no old events)" prop_tchanBroadcastSemantics
+            ]
         ]
 
 listLength :: [a] -> Int

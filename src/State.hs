@@ -14,6 +14,7 @@ import Data.Text (Text)
 
 import Bus.Bus qualified as Bus
 import Data.Text qualified as Text
+import Katip qualified
 import Log qualified
 import Prompt.Async (PromptAsyncJob)
 import Proxy.Proxy qualified as Proxy
@@ -45,7 +46,8 @@ mkAppState proxy homeDir storageDir projectID directory logger = do
     promptQueue <- newTQueueIO
 
     -- Subscribe bus to also write to event channel for SSE
-    _ <- Bus.subscribeAll bus $ \event ->
+    _ <- Bus.subscribeAll bus $ \event -> do
+        Log.logMsg logger Katip.InfoS $ "State: bus->eventChan forwarding: " <> Bus.beType event
         atomically $ writeTChan eventChan (toJSON event)
 
     pure $
