@@ -5,10 +5,14 @@
 
     haskemathesis.url = "git+ssh://git@github.com/straylight-software/haskemathesis.git";
     treefmt-nix.url = "github:numtide/treefmt-nix";
+
+    weapon = {
+      url = "git+ssh://git@github.com/straylight-software/weapon.git";
+    };
   };
 
   outputs =
-    inputs@{ flake-parts, self, ... }:
+    inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -19,6 +23,7 @@
 
       imports = [
         ./nix/formatter.nix
+        ./nix/ui.nix
       ];
 
       flake = {
@@ -30,7 +35,6 @@
         {
           pkgs,
           inputs',
-          system,
           ...
         }:
         let

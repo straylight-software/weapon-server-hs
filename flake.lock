@@ -166,12 +166,29 @@
         "type": "github"
       }
     },
+    "nixpkgs_5": {
+      "locked": {
+        "lastModified": 1770843696,
+        "narHash": "sha256-LovWTGDwXhkfCOmbgLVA10bvsi/P8eDDpRudgk68HA8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "2343bbb58f99267223bc2aac4fc9ea301a155a16",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "flake-parts": "flake-parts",
         "haskemathesis": "haskemathesis",
         "nixpkgs": "nixpkgs_3",
-        "treefmt-nix": "treefmt-nix_2"
+        "treefmt-nix": "treefmt-nix_2",
+        "weapon": "weapon"
       }
     },
     "treefmt-nix": {
@@ -208,6 +225,24 @@
         "owner": "numtide",
         "repo": "treefmt-nix",
         "type": "github"
+      }
+    },
+    "weapon": {
+      "inputs": {
+        "nixpkgs": "nixpkgs_5"
+      },
+      "locked": {
+        "lastModified": 1771808056,
+        "narHash": "sha256-bYNFg+Vi5D1gKeEQkayr2UApckI0z/lARasL92fjy5A=",
+        "ref": "refs/heads/dev",
+        "rev": "5b2fc7d8054318b1407b26b07734875110e4465d",
+        "revCount": 9240,
+        "type": "git",
+        "url": "ssh://git@github.com/straylight-software/weapon.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "ssh://git@github.com/straylight-software/weapon.git"
       }
     }
   },
