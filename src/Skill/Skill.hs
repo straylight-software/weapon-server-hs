@@ -17,7 +17,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -26,7 +26,7 @@ import Network.HTTP.Client (Manager, httpLbs, parseRequest, responseBody, respon
 import Network.HTTP.Client.TLS (newTlsManager)
 import Network.HTTP.Types.Status (statusCode)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getHomeDirectory, listDirectory, makeAbsolute)
-import System.FilePath (isAbsolute, takeDirectory, takeFileName, (</>))
+import System.FilePath (takeDirectory, takeFileName, (</>))
 
 data SkillInfo = SkillInfo
     { skillName :: Text
@@ -50,16 +50,33 @@ listSkills root = do
     cfg <- Config.get root
     home <- getHomeDirectory
     projectDirs <- projectSkillRoots root
-    configDirs <- skillDirsFromConfig cfg root home
-    urlDirs <- skillDirsFromUrls cfg
+    -- Get skills from config (Dhall SkillConfig records)
+    let configSkills = skillsFromConfig cfg
+    -- Scan directory-based skills
     let globalDirs =
             [ home </> ".config" </> "weapon" </> "skills"
             , home </> ".claude" </> "skills"
             , home </> ".agents" </> "skills"
             ]
-    files <- fmap concat (mapM findSkills (globalDirs ++ projectDirs ++ configDirs ++ urlDirs))
-    infos <- foldM addSkill Map.empty files
-    pure (Map.elems infos)
+    files <- fmap concat (mapM findSkills (globalDirs ++ projectDirs))
+    fileInfos <- foldM addSkill Map.empty files
+    -- Merge config skills with file skills (config takes precedence)
+    let merged = Map.union (Map.fromList [(skillName s, s) | s <- configSkills]) fileInfos
+    pure (Map.elems merged)
+
+-- | Convert SkillConfig records from Dhall config to SkillInfo
+skillsFromConfig :: CT.Config -> [SkillInfo]
+skillsFromConfig cfg = case CT.cfgSkill cfg of
+    Nothing -> []
+    Just skillMap -> map toSkillInfo (Map.toList skillMap)
+  where
+    toSkillInfo (name, sc) =
+        SkillInfo
+            { skillName = CT.skillName sc
+            , skillDescription = CT.skillDescription sc
+            , skillLocation = "config:" <> name
+            , skillContent = CT.skillPrompt sc
+            }
 
 parseSkill :: FilePath -> Text -> Maybe SkillInfo
 parseSkill path content = do
@@ -172,32 +189,9 @@ parseMeta line =
             then Nothing
             else Just (T.strip key, T.strip (T.drop 1 rest))
 
-skillDirsFromConfig :: CT.Config -> FilePath -> FilePath -> IO [FilePath]
-skillDirsFromConfig cfg root home = do
-    let paths = case CT.cfgSkills cfg of
-            Nothing -> []
-            Just skills -> fromMaybe [] (CT.scPaths skills)
-    concat
-        <$> mapM
-            ( \path -> do
-                let expanded = expandPath home root (T.unpack path)
-                exists <- doesDirectoryExist expanded
-                if exists then pure [expanded] else pure []
-            )
-            paths
-
-skillDirsFromUrls :: CT.Config -> IO [FilePath]
-skillDirsFromUrls cfg = do
-    let urls = case CT.cfgSkills cfg of
-            Nothing -> []
-            Just skills -> fromMaybe [] (CT.scUrls skills)
-    concat <$> mapM (pullSkills . T.unpack) urls
-
-expandPath :: FilePath -> FilePath -> FilePath -> FilePath
-expandPath home root path
-    | "~/" `T.isPrefixOf` T.pack path = home </> drop 2 path
-    | isAbsolute path = path
-    | otherwise = root </> path
+-- URL-based skill fetching (for remote skill indexes)
+-- This is kept for backwards compatibility but skills in config
+-- are now defined inline via Dhall
 
 pullSkills :: String -> IO [FilePath]
 pullSkills url = do
@@ -217,17 +211,17 @@ pullSkills url = do
 
 downloadSkill :: Manager -> FilePath -> String -> SkillIndexEntry -> IO [FilePath]
 downloadSkill manager cache base entry = do
-    let skillName = sieName entry
-    let root = cache </> T.unpack skillName
+    let name = sieName entry
+    let root = cache </> T.unpack name
     createDirectoryIfMissing True root
-    mapM_ (downloadFile manager base root skillName) (sieFiles entry)
+    mapM_ (downloadFile manager base root name) (sieFiles entry)
     let md = root </> "SKILL.md"
     exists <- doesFileExist md
     if exists then pure [root] else pure []
 
 downloadFile :: Manager -> String -> FilePath -> Text -> Text -> IO ()
-downloadFile manager base root skillName file = do
-    let url = base <> T.unpack skillName <> "/" <> T.unpack file
+downloadFile manager base root name file = do
+    let url = base <> T.unpack name <> "/" <> T.unpack file
     req <- parseRequest url
     resp <- httpLbs req manager
     if statusCode (responseStatus resp) /= 200
@@ -243,3 +237,7 @@ skillCacheDir = do
     let dir = home </> ".cache" </> "opencode" </> "skills"
     createDirectoryIfMissing True dir
     pure dir
+
+-- Silence unused warning for pullSkills (kept for potential future use)
+_unusedPullSkills :: String -> IO [FilePath]
+_unusedPullSkills = pullSkills

@@ -26,7 +26,6 @@ module Api.Types (
     HealthAPI,
     PathAPI,
     GlobalConfigAPI,
-    GlobalConfigUpdateAPI,
     ProjectListAPI,
     ProjectGetAPI,
     ProjectUpdateAPI,
@@ -41,7 +40,6 @@ module Api.Types (
     AuthDeleteAPI,
     AgentAPI,
     ConfigAPI,
-    ConfigUpdateAPI,
     CommandAPI,
     LspAPI,
     VcsAPI,
@@ -212,7 +210,6 @@ instance FromJSON ChatInput where
 type HealthAPI = "global" :> "health" :> Get '[JSON] Health
 type PathAPI = "path" :> Get '[JSON] PathInfo
 type GlobalConfigAPI = "global" :> "config" :> Get '[JSON] Value
-type GlobalConfigUpdateAPI = "global" :> "config" :> ReqBody '[JSON] Value :> Patch '[JSON] Value
 
 -- project
 type ProjectListAPI = "project" :> Get '[JSON] [Project]
@@ -235,7 +232,6 @@ type AuthDeleteAPI = "auth" :> Capture "providerID" Text :> Delete '[JSON] Bool
 -- agent and config
 type AgentAPI = "agent" :> Get '[JSON] [Value]
 type ConfigAPI = "config" :> Get '[JSON] Value
-type ConfigUpdateAPI = "config" :> ReqBody '[JSON] Value :> Patch '[JSON] Value
 type CommandAPI = "command" :> Get '[JSON] [Value]
 
 -- lsp and vcs

@@ -56,7 +56,6 @@ type OpencodeAPI =
     HealthAPI
         :<|> PathAPI
         :<|> GlobalConfigAPI
-        :<|> GlobalConfigUpdateAPI
         -- project
         :<|> ProjectListAPI
         :<|> ProjectGetAPI
@@ -74,7 +73,6 @@ type OpencodeAPI =
         -- agent and config
         :<|> AgentAPI
         :<|> ConfigAPI
-        :<|> ConfigUpdateAPI
         :<|> CommandAPI
         -- session
         :<|> SessionStatusAPI

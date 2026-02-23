@@ -333,7 +333,7 @@ Storage uses a simple file-based approach:
 │   │       └── msg_002.json
 │   └── ses_def456/
 │       └── ...
-└── config.json
+└── config.dhall
 ```
 
 Operations are atomic via write-to-temp-then-rename pattern.

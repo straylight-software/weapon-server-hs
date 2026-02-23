@@ -22,7 +22,7 @@ prop_discoverProjects = property $ do
         tmpDir <- createTempDirectory "/tmp" "project-discovery"
         let subDir = tmpDir </> T.unpack name
         createDirectoryIfMissing True subDir
-        writeFile (subDir </> "weapon.json") "{}"
+        writeFile (subDir </> "weapon.dhall") "{=}"
         projects <- Discovery.discoverProjects tmpDir
         removeDirectoryRecursive tmpDir
         pure projects

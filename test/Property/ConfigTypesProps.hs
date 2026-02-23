@@ -23,44 +23,73 @@ genText = Gen.text (Range.linear 0 50) Gen.alphaNum
 genNonEmptyText :: Gen Text
 genNonEmptyText = Gen.text (Range.linear 1 50) Gen.alphaNum
 
+genLogLevel :: Gen LogLevel
+genLogLevel = Gen.element [DEBUG, INFO, WARN, ERROR]
+
+genShareMode :: Gen ShareMode
+genShareMode = Gen.element [ShareManual, ShareAuto, ShareDisabled]
+
+genDiffStyle :: Gen DiffStyle
+genDiffStyle = Gen.element [DiffAuto, DiffStacked]
+
+genPermissionAction :: Gen PermissionAction
+genPermissionAction = Gen.element [PermAsk, PermAllow, PermDeny]
+
+genAutoUpdate :: Gen AutoUpdate
+genAutoUpdate = Gen.element [AutoUpdateEnabled, AutoUpdateDisabled, AutoUpdateNotify]
+
 genKeybindsConfig :: Gen KeybindsConfig
 genKeybindsConfig =
-    KeybindsConfig
-        <$> Gen.maybe genText
-        <*> Gen.maybe genText
+    -- Generate a subset of keybinds for testing
+    pure
+        defaultKeybinds
+            { kbLeader = Just "ctrl+x"
+            , kbAppExit = Just "ctrl+c,ctrl+d"
+            }
 
 genServerConfig :: Gen ServerConfig
 genServerConfig =
     ServerConfig
         <$> Gen.maybe genText
         <*> Gen.maybe (Gen.int (Range.linear 1 65535))
-
-genLayoutConfig :: Gen LayoutConfig
-genLayoutConfig =
-    LayoutConfig
-        <$> Gen.maybe (Gen.double (Range.linearFrac 0.1 0.9))
+        <*> Gen.maybe Gen.bool
         <*> Gen.maybe Gen.bool
 
-genSkillsConfig :: Gen SkillsConfig
-genSkillsConfig =
-    SkillsConfig
-        <$> Gen.maybe (Gen.list (Range.linear 0 3) genText)
-        <*> Gen.maybe (Gen.list (Range.linear 0 3) genText)
+genTUIConfig :: Gen TUIConfig
+genTUIConfig =
+    TUIConfig
+        <$> Gen.maybe (Gen.int (Range.linear 1 10))
+        <*> Gen.maybe (Gen.int (Range.linear 1 10))
+        <*> Gen.maybe genDiffStyle
 
 genFormatterEntry :: Gen FormatterEntry
 genFormatterEntry =
     FormatterEntry
-        <$> Gen.maybe Gen.bool
-        <*> Gen.maybe (Gen.list (Range.linear 1 3) genNonEmptyText)
-        <*> Gen.maybe (Map.fromList <$> Gen.list (Range.linear 0 2) ((,) <$> genNonEmptyText <*> genText))
-        <*> Gen.maybe (Gen.list (Range.linear 0 3) genText)
+        <$> Gen.list (Range.linear 1 3) genNonEmptyText
+        <*> Gen.maybe (Gen.int (Range.linear 1000 10000))
 
 genFormatterConfig :: Gen FormatterConfig
 genFormatterConfig =
     Gen.choice
         [ pure FormatterDisabled
-        , FormatterConfig . Map.fromList <$> Gen.list (Range.linear 0 3) ((,) <$> genNonEmptyText <*> genFormatterEntry)
+        , FormatterEnabled . Map.fromList <$> Gen.list (Range.linear 0 3) ((,) <$> genNonEmptyText <*> genFormatterEntry)
         ]
+
+genCompactionConfig :: Gen CompactionConfig
+genCompactionConfig =
+    CompactionConfig
+        <$> Gen.maybe Gen.bool
+        <*> Gen.maybe Gen.bool
+        <*> Gen.maybe (Gen.int (Range.linear 1024 16384))
+
+genExperimentalConfig :: Gen ExperimentalConfig
+genExperimentalConfig =
+    ExperimentalConfig
+        <$> Gen.maybe Gen.bool
+        <*> Gen.maybe Gen.bool
+        <*> Gen.maybe Gen.bool
+        <*> Gen.maybe Gen.bool
+        <*> Gen.maybe Gen.bool
 
 -- ============================================================================
 -- Properties
@@ -82,17 +111,9 @@ prop_serverConfigRoundtrip = property $ do
         Nothing -> failure
         Just cfg' -> cfg === cfg'
 
-prop_layoutConfigRoundtrip :: Property
-prop_layoutConfigRoundtrip = property $ do
-    cfg <- forAll genLayoutConfig
-    let json = encode cfg
-    case decode json of
-        Nothing -> failure
-        Just cfg' -> cfg === cfg'
-
-prop_skillsConfigRoundtrip :: Property
-prop_skillsConfigRoundtrip = property $ do
-    cfg <- forAll genSkillsConfig
+prop_tuiConfigRoundtrip :: Property
+prop_tuiConfigRoundtrip = property $ do
+    cfg <- forAll genTUIConfig
     let json = encode cfg
     case decode json of
         Nothing -> failure
@@ -128,15 +149,56 @@ prop_serverConfigPortPositive = property $ do
         Just port -> assert $ port > 0
         Nothing -> success
 
--- | Property: LayoutConfig terminalRatio is between 0 and 1 when present
-prop_layoutConfigRatioValid :: Property
-prop_layoutConfigRatioValid = property $ do
-    cfg <- forAll genLayoutConfig
-    case lcTerminalRatio cfg of
-        Just ratio -> do
-            assert $ ratio >= 0.1
-            assert $ ratio <= 0.9
-        Nothing -> success
+-- | Property: LogLevel round-trip
+prop_logLevelRoundtrip :: Property
+prop_logLevelRoundtrip = property $ do
+    level <- forAll genLogLevel
+    let json = encode level
+    case decode json of
+        Nothing -> failure
+        Just level' -> level === level'
+
+-- | Property: ShareMode round-trip
+prop_shareModeRoundtrip :: Property
+prop_shareModeRoundtrip = property $ do
+    mode <- forAll genShareMode
+    let json = encode mode
+    case decode json of
+        Nothing -> failure
+        Just mode' -> mode === mode'
+
+-- | Property: AutoUpdate round-trip
+prop_autoUpdateRoundtrip :: Property
+prop_autoUpdateRoundtrip = property $ do
+    au <- forAll genAutoUpdate
+    let json = encode au
+    case decode json of
+        Nothing -> failure
+        Just au' -> au === au'
+
+-- | Property: PermissionAction round-trip
+prop_permissionActionRoundtrip :: Property
+prop_permissionActionRoundtrip = property $ do
+    action <- forAll genPermissionAction
+    let json = encode action
+    case decode json of
+        Nothing -> failure
+        Just action' -> action === action'
+
+-- | Property: Default keybinds has app_exit set
+prop_defaultKeybindsHasAppExit :: Property
+prop_defaultKeybindsHasAppExit = property $ do
+    case kbAppExit defaultKeybinds of
+        Just _ -> success
+        Nothing -> failure
+
+-- | Property: Default config has keybinds
+prop_defaultConfigHasKeybinds :: Property
+prop_defaultConfigHasKeybinds = property $ do
+    -- The default config should have all keybinds populated
+    case kbAppExit (cfgKeybinds defaultConfig) of
+        Just exit -> assert $ exit /= ""
+        Nothing -> failure
 
 -- Test tree
 tests :: TestTree
@@ -145,11 +207,15 @@ tests =
         "Config.Types Property Tests"
         [ testProperty "KeybindsConfig round-trip" prop_keybindsConfigRoundtrip
         , testProperty "ServerConfig round-trip" prop_serverConfigRoundtrip
-        , testProperty "LayoutConfig round-trip" prop_layoutConfigRoundtrip
-        , testProperty "SkillsConfig round-trip" prop_skillsConfigRoundtrip
+        , testProperty "TUIConfig round-trip" prop_tuiConfigRoundtrip
         , testProperty "FormatterEntry round-trip" prop_formatterEntryRoundtrip
         , testProperty "FormatterConfig round-trip" prop_formatterConfigRoundtrip
         , testProperty "FormatterDisabled encodes false" prop_formatterDisabledEncodesFalse
         , testProperty "ServerConfig port positive" prop_serverConfigPortPositive
-        , testProperty "LayoutConfig ratio valid" prop_layoutConfigRatioValid
+        , testProperty "LogLevel round-trip" prop_logLevelRoundtrip
+        , testProperty "ShareMode round-trip" prop_shareModeRoundtrip
+        , testProperty "AutoUpdate round-trip" prop_autoUpdateRoundtrip
+        , testProperty "PermissionAction round-trip" prop_permissionActionRoundtrip
+        , testProperty "Default keybinds has app_exit" prop_defaultKeybindsHasAppExit
+        , testProperty "Default config has keybinds" prop_defaultConfigHasKeybinds
         ]

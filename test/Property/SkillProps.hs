@@ -12,7 +12,7 @@ import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Skill.Skill (SkillIndex (..), SkillInfo (..), listSkills, parseSkill, parseSkillIndex)
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import System.IO.Temp (createTempDirectory)
 import Test.Tasty
@@ -39,13 +39,17 @@ prop_parseSkillMissingFrontmatter = property $ do
     let content = "no-frontmatter\n" <> body
     parseSkill "/tmp/SKILL.md" content === Nothing
 
-prop_skillDiscoveryFromConfigPath :: Property
-prop_skillDiscoveryFromConfigPath = property $ do
+{- | Test skill discovery from project .weapon/skills directory
+(This is the standard discovery path, not config-based)
+-}
+prop_skillDiscoveryFromProjectDir :: Property
+prop_skillDiscoveryFromProjectDir = property $ do
     name <- forAll genNonEmptyText
     desc <- forAll genNonEmptyText
     result <- evalIO $ do
-        tmp <- createTempDirectory "/tmp" "skill-config"
-        let skillsDir = tmp </> "skills" </> T.unpack name
+        tmp <- createTempDirectory "/tmp" "skill-project"
+        -- Use the standard project skill directory
+        let skillsDir = tmp </> ".weapon" </> "skills" </> T.unpack name
         createDirectoryIfMissing True skillsDir
         let path = skillsDir </> "SKILL.md"
         let content =
@@ -57,16 +61,10 @@ prop_skillDiscoveryFromConfigPath = property $ do
                     , "Body"
                     ]
         TIO.writeFile path content
-        let cfg =
-                object
-                    [ "skills"
-                        .= object
-                            [ "paths" .= ["skills" :: Text]
-                            ]
-                    ]
-        BSL.writeFile (tmp </> "weapon.json") (encode cfg)
         skills <- listSkills tmp
-        pure (any (\skill -> skillName skill == name) skills)
+        let found = any (\skill -> skillName skill == name) skills
+        removeDirectoryRecursive tmp
+        pure found
     assert result
 
 prop_parseSkillIndex :: Property
@@ -123,7 +121,7 @@ tests =
         "Skill Property Tests"
         [ testProperty "parse skill frontmatter" prop_parseSkillFrontmatter
         , testProperty "missing frontmatter" prop_parseSkillMissingFrontmatter
-        , testProperty "discover skills from config paths" prop_skillDiscoveryFromConfigPath
+        , testProperty "discover skills from project dir" prop_skillDiscoveryFromProjectDir
         , testProperty "parse skill index" prop_parseSkillIndex
         , testProperty "parse skill index multiple" prop_parseSkillIndexMultiple
         , testProperty "parse skill index invalid" prop_parseSkillIndexInvalid

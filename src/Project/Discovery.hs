@@ -14,7 +14,7 @@ import System.FilePath ((</>))
 discoverProjects :: FilePath -> IO [Project]
 discoverProjects root = do
     entries <- listDirectory root
-    sub <- filterM (\dir -> doesFileExist (root </> dir </> "weapon.json")) entries
+    sub <- filterM (\dir -> doesFileExist (root </> dir </> "weapon.dhall")) entries
     let current = ProjectBuild.projectFromDir root
     let projects = current : map (ProjectBuild.projectFromDir . (root </>)) sub
     pure $ nubBy sameWorktree projects

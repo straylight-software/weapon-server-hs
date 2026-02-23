@@ -10,7 +10,6 @@ module Handlers (
     healthHandler,
     pathHandler,
     globalConfigHandler,
-    globalConfigUpdateHandler,
     globalDisposeHandler,
     instanceDisposeHandler,
     logHandler,
@@ -34,7 +33,6 @@ module Handlers (
 
     -- * Config Handlers
     configHandler,
-    configUpdateHandler,
     commandHandler,
     agentHandler,
 
@@ -147,7 +145,7 @@ import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
-import Data.ByteString.Lazy qualified as BSL
+
 import Data.Foldable (for_)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
@@ -189,9 +187,9 @@ import Session.Session qualified as Sess
 import Skill.Skill qualified as Skill
 import State
 import Storage.Storage qualified as Storage
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getCurrentDirectory, getHomeDirectory, listDirectory, makeAbsolute)
+import System.Directory (doesDirectoryExist, doesFileExist, getCurrentDirectory, getHomeDirectory, listDirectory, makeAbsolute)
 import System.Environment (lookupEnv)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath ((</>))
 import System.Random (randomIO)
 import Tool.Defs qualified as Tool
 import Tool.Exec qualified as ToolExec
@@ -260,26 +258,10 @@ globalConfigHandler st = liftIO $ do
     cfg <- Config.loadFile path
     return $ Data.Aeson.toJSON $ fromMaybe Config.defaultConfig cfg
 
--- | Update global configuration (PATCH /global/config)
-globalConfigUpdateHandler :: AppState -> Value -> Handler Value
-globalConfigUpdateHandler st input = liftIO $ do
-    path <- getGlobalConfigPath st
-    -- Merge with existing config
-    existing <- Config.loadFile path
-    let merged = mergeConfigValue (maybe (Object KM.empty) Data.Aeson.toJSON existing) input
-    -- Ensure parent directory exists
-    createDirectoryIfMissing True (takeDirectory path)
-    -- Write the merged config
-    BSL.writeFile path (Data.Aeson.encode merged)
-    return merged
-  where
-    mergeConfigValue (Object base) (Object updates) = Object (KM.union updates base)
-    mergeConfigValue _ updates = updates
-
 -- | Get global config path, using stHomeDir override if set
 getGlobalConfigPath :: AppState -> IO FilePath
 getGlobalConfigPath st = case stHomeDir st of
-    Just home -> pure $ home </> ".config" </> "weapon" </> "weapon.json"
+    Just home -> pure $ home </> ".config" </> "weapon" </> "weapon.dhall"
     Nothing -> Config.globalConfigPath
 
 -- * Project Handlers
@@ -505,20 +487,6 @@ configHandler :: AppState -> Handler Value
 configHandler st = liftIO $ do
     cfg <- Config.get (unpack (stDirectory st))
     return $ Data.Aeson.toJSON cfg
-
--- | Update project configuration (PATCH /config)
-configUpdateHandler :: AppState -> Value -> Handler Value
-configUpdateHandler st input = liftIO $ do
-    let projectPath = Config.projectConfigPath (unpack (stDirectory st))
-    -- Merge with existing config
-    existing <- Config.loadFile projectPath
-    let merged = mergeConfigValue (maybe (Object KM.empty) Data.Aeson.toJSON existing) input
-    -- Write the merged config
-    BSL.writeFile projectPath (Data.Aeson.encode merged)
-    return merged
-  where
-    mergeConfigValue (Object base) (Object updates) = Object (KM.union updates base)
-    mergeConfigValue _ updates = updates
 
 commandHandler :: Handler [Value]
 commandHandler = return Tool.toolDefinitions
@@ -1730,7 +1698,6 @@ server st =
     healthHandler st
         :<|> pathHandler st
         :<|> globalConfigHandler st
-        :<|> globalConfigUpdateHandler st
         :<|> projectListHandler st
         :<|> projectGetHandler st
         :<|> projectUpdateHandler st
@@ -1745,7 +1712,6 @@ server st =
         :<|> authDeleteHandler st
         :<|> agentHandler
         :<|> configHandler st
-        :<|> configUpdateHandler st
         :<|> commandHandler
         :<|> sessionStatusHandler st
         :<|> sessionListHandler st

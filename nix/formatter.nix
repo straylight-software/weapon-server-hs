@@ -21,6 +21,8 @@
       cabal-fmt.enable = true;
 
       yamlfmt.enable = true;
+
+      dhall.enable = true;
     };
   };
 }
