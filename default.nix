@@ -52,10 +52,22 @@
   websockets,
   pkgs,
 }:
+let
+  sourceFiles = lib.fileset.difference ./. (
+    lib.fileset.unions [
+      ./nix
+      ./flake.nix
+      ./flake.lock
+    ]
+  );
+in
 mkDerivation {
   pname = "weapon-server";
   version = "0.1.0.0";
-  src = ./.;
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = sourceFiles;
+  };
   isLibrary = true;
   isExecutable = true;
   libraryHaskellDepends = [

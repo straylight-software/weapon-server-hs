@@ -2,7 +2,6 @@
 {
   config,
   lib,
-  pkgs,
   ...
 }:
 
@@ -52,7 +51,7 @@ in
   config = lib.mkIf cfg.enable {
     users.users.${cfg.user} = {
       isSystemUser = true;
-      group = cfg.group;
+      inherit (cfg) group;
       home = cfg.workDir;
       createHome = true;
     };

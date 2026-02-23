@@ -56,6 +56,18 @@ library
     Bus.Event
     Config.Config
     Config.Types
+    Evring.Event
+    Evring.Handle
+    Evring.Machine
+    Evring.Ring
+    Evring.Sigil
+    Evring.Trace
+    Evring.Wai
+    Evring.Wai.Conn
+    Evring.Wai.Loop
+    Evring.Wai.MultiCore
+    Evring.Wai.Pool
+    Evring.Wai.Server
     Experimental.Worktree
     Find.Parse
     Find.Search
@@ -95,6 +107,9 @@ library
     Skill.Skill
     State
     Storage.Storage
+    System.IoUring
+    System.IoUring.Internal.FFI
+    System.IoUring.URing
     Tool.Defs
     Tool.Exec
     Tool.Tool
@@ -105,23 +120,8 @@ library
     Util.StorageKeys
     Vcs.Diff
     Vcs.Status
-    -- // evring-wai (io_uring bindings)
-    Evring.Event
-    Evring.Handle
-    Evring.Machine
-    Evring.Ring
-    Evring.Sigil
-    Evring.Trace
-    Evring.Wai
-    Evring.Wai.Conn
-    Evring.Wai.Loop
-    Evring.Wai.MultiCore
-    Evring.Wai.Pool
-    Evring.Wai.Server
-    System.IoUring
-    System.IoUring.Internal.FFI
-    System.IoUring.URing
 
+  -- // evring-wai (io_uring bindings)
   c-sources:          cbits/uring_compat.c
   include-dirs:       cbits
   extra-libraries:    uring
@@ -184,7 +184,6 @@ library
     , primitive           >=0.7
     , process             >=1.6
     , random              >=1.2
-    , vector              >=0.12
     , servant             >=0.20
     , servant-server      >=0.20
     , stm                 >=2.5
@@ -194,6 +193,7 @@ library
     , unix                >=2.8
     , unliftio-core       >=0.2
     , vault               >=0.3
+    , vector              >=0.12
     , wai                 >=3.2
     , wai-websockets      >=3.0
     , warp                >=3.3

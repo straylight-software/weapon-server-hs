@@ -1,0 +1,21 @@
+# Stan configuration for weapon-server-hs
+# https://github.com/kowainik/stan
+
+# Exclude STAN-0302 (big tuple) for files that must use network library's
+# HostAddress6 type, which is defined as (Word32, Word32, Word32, Word32).
+# See: https://github.com/kowainik/stan/issues/505
+
+[[check]]
+type = "Exclude"
+id = "STAN-0302"
+file = "src/Evring/Wai.hs"
+
+[[check]]
+type = "Exclude"
+id = "STAN-0302"
+file = "src/Evring/Wai/MultiCore.hs"
+
+[[check]]
+type = "Exclude"
+id = "STAN-0302"
+file = "src/Evring/Wai/Server.hs"
