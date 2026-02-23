@@ -118,6 +118,7 @@ library
     Tui.Store
     Util.FileSystem
     Util.Git
+    Util.Identifier
     Util.StorageKeys
     Vcs.Diff
     Vcs.Status
@@ -280,6 +281,7 @@ test-suite weapon-server-test
     Property.FormatterProps
     Property.HandlerProps
     Property.HealthProps
+    Property.IdentifierProps
     Property.LLMProps
     Property.LLMTypesProps
     Property.LspProps

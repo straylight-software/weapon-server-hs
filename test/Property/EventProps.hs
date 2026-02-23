@@ -18,6 +18,26 @@ import Hedgehog.Range qualified as Range
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
+-- | Helper to fail with annotation on unexpected Value types
+failOnNonObject :: (MonadTest m) => String -> Value -> m ()
+failOnNonObject context val = do
+    annotate $ context ++ ": expected Object but got " ++ valueType val
+    failure
+  where
+    valueType :: Value -> String
+    valueType (Object _) = "Object"
+    valueType (Array _) = "Array"
+    valueType (String _) = "String"
+    valueType (Number _) = "Number"
+    valueType (Bool _) = "Bool"
+    valueType Null = "Null"
+
+-- | Helper to fail with annotation on unexpected Maybe types
+failOnNothing :: (MonadTest m) => String -> m ()
+failOnNothing context = do
+    annotate $ context ++ ": expected Just but got Nothing"
+    failure
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // wrapGlobalEvent properties //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -71,8 +91,20 @@ prop_wrapGlobalEvent_structure = property $ do
                 Nothing -> do
                     annotate "missing payload field"
                     failure
-        _ -> do
-            annotate "wrapGlobalEvent did not return an object"
+        Array _arr -> do
+            annotate "wrapGlobalEvent returned an array, expected object"
+            failure
+        String _str -> do
+            annotate "wrapGlobalEvent returned a string, expected object"
+            failure
+        Number _num -> do
+            annotate "wrapGlobalEvent returned a number, expected object"
+            failure
+        Bool _b -> do
+            annotate "wrapGlobalEvent returned a bool, expected object"
+            failure
+        Null -> do
+            annotate "wrapGlobalEvent returned null, expected object"
             failure
 
 -- | Property: wrapGlobalEvent is deterministic (same inputs -> same output)
@@ -112,8 +144,9 @@ prop_wrapGlobalEvent_preserves_directory = property $ do
     case result of
         Object obj -> case KM.lookup "directory" obj of
             Just (String d) -> d === dir
-            _ -> failure
-        _ -> failure
+            Just other -> failOnNonObject "directory field" other
+            Nothing -> failOnNothing "directory field"
+        other -> failOnNonObject "wrapGlobalEvent result" other
 
 -- | Property: wrapGlobalEvent preserves event type exactly
 prop_wrapGlobalEvent_preserves_type :: Property
@@ -128,9 +161,11 @@ prop_wrapGlobalEvent_preserves_type = property $ do
         Object obj -> case KM.lookup "payload" obj of
             Just (Object payload) -> case KM.lookup "type" payload of
                 Just (String t) -> t === eventType
-                _ -> failure
-            _ -> failure
-        _ -> failure
+                Just other -> failOnNonObject "type field" other
+                Nothing -> failOnNothing "type field"
+            Just other -> failOnNonObject "payload field" other
+            Nothing -> failOnNothing "payload field"
+        other -> failOnNonObject "wrapGlobalEvent result" other
 
 -- | Property: wrapGlobalEvent handles empty properties
 prop_wrapGlobalEvent_empty_properties :: Property
@@ -144,9 +179,11 @@ prop_wrapGlobalEvent_empty_properties = property $ do
         Object obj -> case KM.lookup "payload" obj of
             Just (Object payload) -> case KM.lookup "properties" payload of
                 Just (Object props) -> KM.null props === True
-                _ -> failure
-            _ -> failure
-        _ -> failure
+                Just other -> failOnNonObject "properties field" other
+                Nothing -> failOnNothing "properties field"
+            Just other -> failOnNonObject "payload field" other
+            Nothing -> failOnNothing "payload field"
+        other -> failOnNonObject "wrapGlobalEvent result" other
 
 -- | Property: wrapGlobalEvent handles complex nested properties
 prop_wrapGlobalEvent_nested_properties :: Property
@@ -161,9 +198,10 @@ prop_wrapGlobalEvent_nested_properties = property $ do
         Object obj -> case KM.lookup "payload" obj of
             Just (Object payload) -> case KM.lookup "properties" payload of
                 Just p -> p === props
-                Nothing -> failure
-            _ -> failure
-        _ -> failure
+                Nothing -> failOnNothing "properties field"
+            Just other -> failOnNonObject "payload field" other
+            Nothing -> failOnNothing "payload field"
+        other -> failOnNonObject "wrapGlobalEvent result" other
 
 -- | Property: Different directories produce different outputs
 prop_wrapGlobalEvent_different_directories :: Property

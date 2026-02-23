@@ -9,9 +9,9 @@ import Api (
     Message (..),
     MessageInfo (..),
     MessagePath (..),
+    MessageTime (..),
     MessageTokens (..),
     ModelSelection (..),
-    SessionTime (..),
     TokenCache (..),
     UserMessageInfo (..),
     messageInfoId,
@@ -29,6 +29,26 @@ import Hedgehog.Range qualified as Range
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
+-- | Helper to fail with annotation on unexpected Value types
+failOnNonObject :: (MonadTest m) => String -> Value -> m ()
+failOnNonObject context val = do
+    annotate $ context ++ ": expected Object but got " ++ valueType val
+    failure
+  where
+    valueType :: Value -> String
+    valueType (Object _) = "Object"
+    valueType (Array _) = "Array"
+    valueType (String _) = "String"
+    valueType (Number _) = "Number"
+    valueType (Bool _) = "Bool"
+    valueType Null = "Null"
+
+-- | Helper to fail on Nothing
+failOnNothing :: (MonadTest m) => String -> m ()
+failOnNothing context = do
+    annotate $ context ++ ": expected Just but got Nothing"
+    failure
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Generators
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -44,14 +64,6 @@ genDouble = Gen.double (Range.linearFrac 0 1000000)
 
 genNonNegativeDouble :: Gen Double
 genNonNegativeDouble = Gen.double (Range.linearFrac 0 1000000)
-
-genSessionTime :: Gen SessionTime
-genSessionTime =
-    SessionTime
-        <$> genDouble
-        <*> genDouble
-        <*> Gen.maybe genDouble
-        <*> Gen.maybe genDouble
 
 genMessagePath :: Gen MessagePath
 genMessagePath =
@@ -74,12 +86,18 @@ genMessageTokens =
         <*> genNonNegativeDouble
         <*> genTokenCache
 
+genMessageTime :: Gen MessageTime
+genMessageTime =
+    MessageTime
+        <$> genNonNegativeDouble
+        <*> Gen.maybe genNonNegativeDouble
+
 genUserMessageInfo :: Gen UserMessageInfo
 genUserMessageInfo =
     UserMessageInfo
         <$> genNonEmptyText
         <*> genNonEmptyText
-        <*> genSessionTime
+        <*> genMessageTime
         <*> Gen.maybe genNonEmptyText
 
 genAssistantMessageInfo :: Gen AssistantMessageInfo
@@ -87,7 +105,7 @@ genAssistantMessageInfo =
     AssistantMessageInfo
         <$> genNonEmptyText -- amiId
         <*> genNonEmptyText -- amiSessionId
-        <*> genSessionTime -- amiTime
+        <*> genMessageTime -- amiTime
         <*> genNonEmptyText -- amiParentId
         <*> genNonEmptyText -- amiModelId
         <*> genNonEmptyText -- amiProviderId
@@ -192,12 +210,13 @@ prop_userMessageInfoHasRoleUser = property $ do
     umi <- forAll genUserMessageInfo
     let json = encode umi
     case decode json :: Maybe Value of
-        Nothing -> failure
+        Nothing -> failOnNothing "decode UserMessageInfo"
         Just (Object obj) -> do
             case KM.lookup (Key.fromText "role") obj of
                 Just (String "user") -> success
-                _ -> failure
-        _ -> failure
+                Just other -> failOnNonObject "role field expected String 'user'" other
+                Nothing -> failOnNothing "role field"
+        Just other -> failOnNonObject "decoded UserMessageInfo" other
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- AssistantMessageInfo property tests
@@ -220,12 +239,13 @@ prop_assistantMessageInfoHasRoleAssistant = property $ do
     ami <- forAll genAssistantMessageInfo
     let json = encode ami
     case decode json :: Maybe Value of
-        Nothing -> failure
+        Nothing -> failOnNothing "decode AssistantMessageInfo"
         Just (Object obj) -> do
             case KM.lookup (Key.fromText "role") obj of
                 Just (String "assistant") -> success
-                _ -> failure
-        _ -> failure
+                Just other -> failOnNonObject "role field expected String 'assistant'" other
+                Nothing -> failOnNothing "role field"
+        Just other -> failOnNonObject "decoded AssistantMessageInfo" other
 
 -- | Property: AssistantMessageInfo contains all required fields per OpenAPI spec
 prop_assistantMessageInfoRequiredFields :: Property
@@ -233,7 +253,7 @@ prop_assistantMessageInfoRequiredFields = property $ do
     ami <- forAll genAssistantMessageInfo
     let json = encode ami
     case decode json :: Maybe Value of
-        Nothing -> failure
+        Nothing -> failOnNothing "decode AssistantMessageInfo"
         Just (Object obj) -> do
             -- Check all required fields from OpenAPI spec
             assert $ KM.member (Key.fromText "id") obj
@@ -248,7 +268,7 @@ prop_assistantMessageInfoRequiredFields = property $ do
             assert $ KM.member (Key.fromText "path") obj
             assert $ KM.member (Key.fromText "cost") obj
             assert $ KM.member (Key.fromText "tokens") obj
-        _ -> failure
+        Just other -> failOnNonObject "decoded AssistantMessageInfo" other
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- MessageInfo discriminated union property tests

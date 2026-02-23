@@ -1068,7 +1068,9 @@ instance FromJSON MCPConfig where
         mType <- o .:? "type" :: Parser (Maybe Text)
         case mType of
             Just "remote" -> MCPConfigRemote <$> parseJSON v
-            _ -> MCPConfigLocal <$> parseJSON v
+            Just "local" -> MCPConfigLocal <$> parseJSON v
+            Just _unknownType -> MCPConfigLocal <$> parseJSON v -- Default to local for unknown types
+            Nothing -> MCPConfigLocal <$> parseJSON v -- Default to local when type is not specified
     parseJSON other = fail $ "Unknown MCP config: " <> show other
 
 -- ════════════════════════════════════════════════════════════════════════════

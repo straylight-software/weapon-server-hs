@@ -16,6 +16,7 @@ import Property.FindParseProps qualified as FindParseProps
 import Property.FormatterProps qualified as FormatterProps
 import Property.HandlerProps qualified as HandlerProps
 import Property.HealthProps qualified as HealthProps
+import Property.IdentifierProps qualified as IdentifierProps
 import Property.LLMProps qualified as LLMProps
 import Property.LLMTypesProps qualified as LLMTypesProps
 import Property.LspProps qualified as LspProps
@@ -75,6 +76,7 @@ main = do
                 , ExperimentalProps.tests
                 , HandlerProps.tests
                 , HealthProps.tests
+                , IdentifierProps.tests
                 , PathProps.tests
                 , SessionProps.tests
                 , SessionStatusProps.tests

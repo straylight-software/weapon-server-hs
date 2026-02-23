@@ -8,6 +8,7 @@
   containers,
   crypton-connection,
   data-default-class,
+  dhall,
   directory,
   filepath,
   haskemathesis ? null, # Optional: only needed for tests
@@ -80,6 +81,7 @@ mkDerivation {
     crypton-connection
     data-default-class
     directory
+    dhall
     filepath
     http-client
     http-client-tls

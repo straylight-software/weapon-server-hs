@@ -147,6 +147,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
 
 import Data.Foldable (for_)
+import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text, pack, unpack)
@@ -154,7 +155,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
-import Data.Word (Word64)
+
 import Experimental.Worktree qualified as Worktree
 import Find.Search qualified as FindSearch
 import Formatter.Status qualified as Formatter
@@ -168,7 +169,7 @@ import Log qualified
 import Lsp.Store qualified as LspStore
 import Message.Parts qualified as Parts
 import Message.Todo qualified as Todo
-import Numeric (showHex)
+
 import Path.Build qualified as PathBuild
 import Project.Build qualified as ProjectBuild
 import Project.Discovery qualified as ProjectDiscovery
@@ -188,13 +189,14 @@ import Skill.Skill qualified as Skill
 import State
 import Storage.Storage qualified as Storage
 import System.Directory (doesDirectoryExist, doesFileExist, getCurrentDirectory, getHomeDirectory, listDirectory, makeAbsolute)
-import System.Environment (lookupEnv)
+
 import System.FilePath ((</>))
-import System.Random (randomIO)
+
 import Tool.Defs qualified as Tool
 import Tool.Exec qualified as ToolExec
 import Tool.Types qualified as ToolT
 import Tui.Store qualified as TuiStore
+import Util.Identifier qualified as Identifier
 import Util.StorageKeys (projectKey)
 import Vcs.Diff qualified as Diff
 import Vcs.Status qualified as VcsStatus
@@ -316,8 +318,8 @@ projectUpdateHandler st pid input = do
 -- * Provider/Config Handlers
 
 providerListHandler :: AppState -> Maybe Text -> Handler ConfigProviderList
-providerListHandler _st _mDir = liftIO $ do
-    providers <- Provider.list
+providerListHandler st _mDir = liftIO $ do
+    providers <- Provider.listWithModels (stStorage st)
     -- For config.providers, we need to add "source" field per the component schema
     let providerJson = map toConfigProvider providers
 
@@ -357,7 +359,8 @@ providerAuthHandler _st = liftIO $ do
 
 providerHandler :: AppState -> Maybe Text -> Handler ProviderList
 providerHandler st _mDir = liftIO $ do
-    providers <- Provider.list
+    -- Fetch providers with dynamically loaded models (e.g., from OpenRouter API)
+    providers <- Provider.listWithModels (stStorage st)
     let providerJson = map Data.Aeson.toJSON providers
 
     -- Get connected providers (those with stored auth)
@@ -697,10 +700,14 @@ sessionPermissionHandler st sid pid _mDir input = liftIO $ do
 
 sessionMessageListHandler :: AppState -> Text -> Maybe Int -> Handler [Message]
 sessionMessageListHandler st sid _mLimit = liftIO $ do
-    -- Read messages from storage
+    -- Read messages from storage and sort by ID (lexicographic order)
+    -- This ensures messages are returned oldest-first, matching TypeScript behavior
     let key = ["message", sid]
-    (Storage.list (stStorage st) key >>= mapM (Storage.read (stStorage st)))
-        `catch` \(Storage.NotFoundError _) -> return []
+    messages <-
+        (Storage.list (stStorage st) key >>= mapM (Storage.read (stStorage st)))
+            `catch` \(Storage.NotFoundError _) -> return []
+    -- Sort by message ID (IDs are lexicographically sortable with ascending timestamps)
+    pure $ sortOn (messageInfoId . msgInfo) messages
 
 sessionMessageCreateHandler :: AppState -> Text -> CreateMessageInput -> Handler Message
 sessionMessageCreateHandler st sid input = liftIO $ do
@@ -712,14 +719,16 @@ createMessageIO st sid input = do
 
     now <- getCurrentTime
     let t = realToFrac (utcTimeToPOSIXSeconds now) * 1000
-    let msgTime = SessionTime t t Nothing Nothing
+    let msgTime = MessageTime t Nothing -- created, no completed yet
 
     -- Major #5: Extract model and agent from input with defaults
     -- Model is now a {providerID, modelID} object
     let (providerId, modelId) = case cmiModel input of
             Just ms -> (msProviderID ms, msModelID ms)
-            Nothing -> ("anthropic", "claude-opus-4.5")
-    let fullModelId = providerId <> "/" <> modelId
+            Nothing -> ("anthropic", "claude-opus-4-20250514")
+    -- For OpenRouter, modelId already contains the full path (e.g., "moonshotai/kimi-k2.5")
+    -- For other providers, we need to prefix with providerId
+    let fullModelId = if providerId == "openrouter" then modelId else providerId <> "/" <> modelId
     let agentName = fromMaybe "armed" (cmiAgent input)
 
     -- Major #7: Look up agent to get system prompt
@@ -742,7 +751,8 @@ createMessageIO st sid input = do
     cwd <- getCurrentDirectory
 
     -- 1. User Message
-    let uMsgId = fromMaybe (pack ("msg_" ++ show (round t :: Integer))) (cmiMessageId input)
+    -- Use "msg" prefix to match TUI conventions for consistent sorting
+    uMsgId <- Identifier.ascendingWithPrefix "msg"
     let uMsgInfo =
             UserMessageInfo
                 { umiId = uMsgId
@@ -757,8 +767,9 @@ createMessageIO st sid input = do
                 }
 
     -- 2. Assistant Message (incomplete initially)
-    let aMsgId = pack ("msg_" ++ show (round t + 1 :: Integer))
-    let partId = pack ("part_" ++ show (round t :: Integer))
+    -- Use same "msg" prefix as user message for consistent sorting
+    aMsgId <- Identifier.ascendingWithPrefix "msg"
+    partId <- Identifier.ascendingWithPrefix "part"
     let aMsgInfo =
             AssistantMessageInfo
                 { amiId = aMsgId
@@ -800,6 +811,7 @@ createMessageIO st sid input = do
         Storage.write (stStorage st) ["todo", sid] todos
 
     -- Publish user message event (send just info, not full message)
+    -- Must include required fields: id, sessionID, role, time, agent, model
     let userInfo =
             object
                 [ "id" .= uMsgId
@@ -807,29 +819,72 @@ createMessageIO st sid input = do
                 , "role" .= ("user" :: Text)
                 , "time" .= object ["created" .= t]
                 , "parentID" .= (Nothing :: Maybe Text)
+                , "agent" .= agentName
+                , "model" .= object ["providerID" .= providerId, "modelID" .= modelId]
                 ]
     Log.logMsg lg Katip.InfoS $ "publishing message.updated for user message: " <> uMsgId
     Bus.publish (stBus st) "message.updated" (object ["info" .= userInfo])
     Log.logMsg lg Katip.InfoS "message.updated published"
 
     -- Publish user message parts via SSE (Critical #3)
-    forM_ (cmiParts input) $ \part -> do
-        -- Add sessionID and messageID to each part if not present
+    forM_ (zip [(0 :: Int) ..] (cmiParts input)) $ \(idx, part) -> do
+        -- Generate a part ID if not present
+        partId' <- genId
+        -- Add required fields: id, sessionID, messageID
         let partWithIds = case part of
                 Object obj ->
                     Object $
-                        KM.insert "sessionID" (String sid) $
-                            KM.insert "messageID" (String uMsgId) obj
-                Array arr -> Array arr
-                String s -> String s
-                Number n -> Number n
-                Bool b -> Bool b
-                Null -> Null
-        Log.logMsg lg Katip.InfoS "publishing message.part.updated"
+                        -- Only add id if not present
+                        (if KM.member "id" obj then Prelude.id else KM.insert "id" (String partId')) $
+                            KM.insert "sessionID" (String sid) $
+                                KM.insert "messageID" (String uMsgId) obj
+                Array _arr ->
+                    -- Array parts are not directly supported, wrap in object
+                    object
+                        [ "id" .= partId'
+                        , "sessionID" .= sid
+                        , "messageID" .= uMsgId
+                        , "type" .= ("text" :: Text)
+                        , "text" .= ("" :: Text)
+                        ]
+                String _str ->
+                    -- String parts get converted to text parts
+                    object
+                        [ "id" .= partId'
+                        , "sessionID" .= sid
+                        , "messageID" .= uMsgId
+                        , "type" .= ("text" :: Text)
+                        , "text" .= ("" :: Text)
+                        ]
+                Number _num ->
+                    object
+                        [ "id" .= partId'
+                        , "sessionID" .= sid
+                        , "messageID" .= uMsgId
+                        , "type" .= ("text" :: Text)
+                        , "text" .= ("" :: Text)
+                        ]
+                Bool _b ->
+                    object
+                        [ "id" .= partId'
+                        , "sessionID" .= sid
+                        , "messageID" .= uMsgId
+                        , "type" .= ("text" :: Text)
+                        , "text" .= ("" :: Text)
+                        ]
+                Null ->
+                    object
+                        [ "id" .= partId'
+                        , "sessionID" .= sid
+                        , "messageID" .= uMsgId
+                        , "type" .= ("text" :: Text)
+                        , "text" .= ("" :: Text)
+                        ]
+        Log.logMsg lg Katip.InfoS $ "publishing message.part.updated for user part " <> T.pack (show idx)
         Bus.publish (stBus st) "message.part.updated" (object ["part" .= partWithIds])
 
-    -- Publish assistant message (incomplete - no time.completed)
-    -- Major #5: Use actual model and agent from input
+    -- Publish assistant message (incomplete - no time.completed, no finish)
+    -- This lets the TUI know there's an assistant message being generated
     let assistantInfo =
             object
                 [ "id" .= aMsgId
@@ -838,7 +893,7 @@ createMessageIO st sid input = do
                 , "time" .= object ["created" .= t]
                 , "parentID" .= uMsgId
                 , "modelID" .= modelId
-                , "providerID" .= ("openrouter" :: Text)
+                , "providerID" .= providerId
                 , "mode" .= ("build" :: Text)
                 , "agent" .= agentName
                 , "path" .= object ["cwd" .= stDirectory st, "root" .= stDirectory st]
@@ -859,8 +914,10 @@ createMessageIO st sid input = do
     _ <-
         forkIO $
             ( do
-                apiKey <- lookupEnv "OPENROUTER_API_KEY"
-                case apiKey of
+                -- Always use OpenRouter as the unified LLM gateway
+                -- OpenRouter can proxy to Anthropic, OpenAI, etc. using "provider/model" format
+                mApiKey <- Provider.getApiKey (stStorage st) "openrouter"
+                case mApiKey of
                     Nothing -> do
                         -- No API key - send error
                         let errPart =
@@ -869,15 +926,17 @@ createMessageIO st sid input = do
                                     , "sessionID" .= sid
                                     , "messageID" .= aMsgId
                                     , "type" .= ("text" :: Text)
-                                    , "text" .= ("Error: OPENROUTER_API_KEY not set" :: Text)
+                                    , "text" .= ("Error: No OpenRouter API key configured. Set OPENROUTER_API_KEY or add via provider auth. OpenRouter provides access to all LLM providers." :: Text)
                                     ]
                         Bus.publish (stBus st) "message.part.updated" (object ["part" .= errPart])
                         -- Minor #10: Persist error parts to storage
                         let updatedMsg = aMsg{msgParts = [errPart]}
                         Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
-                        completeMessage st sid aMsgId uMsgId modelId agentName t
+                        completeMessage st sid aMsgId uMsgId providerId modelId agentName t
                     Just key -> do
-                        client <- OpenRouter.newClient (pack key)
+                        -- Always use OpenRouter - it can proxy to all providers
+                        -- Use full model ID: "providerId/modelId"
+                        client <- OpenRouter.newClient key
                         textRef <- newTVarIO ("" :: Text)
                         partsRef <- newTVarIO ([] :: [Value])
                         partIdRef <- newTVarIO partId
@@ -904,7 +963,7 @@ createMessageIO st sid input = do
 
                                 let req =
                                         OpenRouter.ChatRequest
-                                            { OpenRouter.crModel = modelId
+                                            { OpenRouter.crModel = fullModelId -- Use full "provider/model" format for OpenRouter
                                             , OpenRouter.crMessages = msgs
                                             , OpenRouter.crMaxTokens = Just 4096
                                             , OpenRouter.crTemperature = Nothing
@@ -1031,7 +1090,7 @@ createMessageIO st sid input = do
                         let updatedMsg = aMsg{msgParts = finalParts}
                         Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
 
-                        completeMessage st sid aMsgId uMsgId modelId agentName t
+                        completeMessage st sid aMsgId uMsgId providerId modelId agentName t
             )
                 `catch` \(e :: SomeException) -> do
                     -- Minor #9: Handle streaming errors properly - publish error and complete
@@ -1049,7 +1108,7 @@ createMessageIO st sid input = do
                     -- Minor #10: Persist error parts to storage
                     let updatedMsg = aMsg{msgParts = [errPart]}
                     Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
-                    completeMessage st sid aMsgId uMsgId modelId agentName t
+                    completeMessage st sid aMsgId uMsgId providerId modelId agentName t
 
     return aMsg
 
@@ -1213,12 +1272,9 @@ extractUserText parts = T.intercalate "\n" $ concatMap extractTextPart parts
     extractTextPart (Bool _) = []
     extractTextPart Null = []
 
--- | Generate a unique part/tool ID
+-- | Generate a unique part/tool ID using lexicographically sortable format
 genId :: IO Text
-genId = do
-    w1 <- randomIO :: IO Word64
-    w2 <- randomIO :: IO Word64
-    pure $ "id_" <> T.pack (showHex (w1 `mod` 0xFFFFFF) "") <> T.pack (showHex (w2 `mod` 0xFFFFFF) "")
+genId = Identifier.ascendingWithPrefix "part"
 
 -- | Parse tool input from JSON string (arguments come as string from OpenAI format)
 parseToolInput :: Text -> Value
@@ -1252,15 +1308,31 @@ messageToOpenRouter msg =
 {- | Mark message as complete and publish idle event
 Minor #8: parentID now correctly references the user message
 Major #5: modelId and agentName now come from the request
+Also updates the stored message with time.completed so the TUI can see it's done.
 -}
-completeMessage :: AppState -> Text -> Text -> Text -> Text -> Text -> Double -> IO ()
-completeMessage st sid msgId parentMsgId modelId agentName startTime = do
+completeMessage :: AppState -> Text -> Text -> Text -> Text -> Text -> Text -> Double -> IO ()
+completeMessage st sid msgId parentMsgId providerId modelId agentName startTime = do
     let lg = Log.withNS (stLogger st) "message"
 
     now <- getCurrentTime
     let endTime = realToFrac (utcTimeToPOSIXSeconds now) * 1000 :: Double
     let duration = (endTime - startTime) / 1000 -- seconds
     Log.logMsg lg Katip.InfoS $ "complete session=" <> sid <> " msg=" <> msgId <> " duration=" <> T.pack (show duration) <> "s"
+
+    -- Update the stored message with time.completed
+    -- This is important so the TUI sees the message as complete when it syncs
+    let msgKey = ["message", sid, msgId]
+    mStoredMsg <- Storage.readMaybe (stStorage st) msgKey :: IO (Maybe Message)
+    case mStoredMsg of
+        Just storedMsg -> do
+            -- Update the time in the message info to include completed
+            let updatedInfo = case msgInfo storedMsg of
+                    AssistantInfo ami ->
+                        AssistantInfo ami{amiTime = MessageTime startTime (Just endTime), amiFinish = Just "end_turn"}
+                    other -> other
+            let updatedMsg = storedMsg{msgInfo = updatedInfo}
+            Storage.write (stStorage st) msgKey updatedMsg
+        Nothing -> Log.logMsg lg Katip.WarningS $ "Could not find message to mark complete: " <> msgId
 
     -- Publish completed message info
     let completedInfo =
@@ -1271,7 +1343,7 @@ completeMessage st sid msgId parentMsgId modelId agentName startTime = do
                 , "time" .= object ["created" .= startTime, "completed" .= endTime]
                 , "parentID" .= parentMsgId
                 , "modelID" .= modelId
-                , "providerID" .= ("openrouter" :: Text)
+                , "providerID" .= providerId
                 , "mode" .= ("build" :: Text)
                 , "agent" .= agentName
                 , "path" .= object ["cwd" .= stDirectory st, "root" .= stDirectory st]
@@ -1615,20 +1687,20 @@ ptyChangesHandler st ptyId = liftIO $ do
 
 -- | Simple chat completion handler for testing LLM integration
 chatHandler :: AppState -> ChatInput -> Handler Value
-chatHandler _st input = liftIO $ do
+chatHandler st input = liftIO $ do
     let model = fromMaybe "anthropic/claude-sonnet-4-20250514" (ciModel input)
     if "anthropic/" `T.isPrefixOf` model
-        then chatWithAnthropic model (ciMessage input)
-        else chatWithOpenRouter model (ciMessage input)
+        then chatWithAnthropic (stStorage st) model (ciMessage input)
+        else chatWithOpenRouter (stStorage st) model (ciMessage input)
 
 -- | Chat using Anthropic API
-chatWithAnthropic :: Text -> Text -> IO Value
-chatWithAnthropic model message = do
-    apiKey <- lookupEnv "ANTHROPIC_API_KEY"
-    case apiKey of
-        Nothing -> return $ errorResponse "ANTHROPIC_API_KEY not set"
+chatWithAnthropic :: Storage.StorageConfig -> Text -> Text -> IO Value
+chatWithAnthropic storage model message = do
+    mApiKey <- Provider.getApiKey storage "anthropic"
+    case mApiKey of
+        Nothing -> return $ errorResponse "No Anthropic API key configured. Set ANTHROPIC_API_KEY or add via provider auth."
         Just key -> do
-            client <- Anthropic.newClient (pack key)
+            client <- Anthropic.newClient key
             let request =
                     LLMTypes.ChatRequest
                         { LLMTypes.crModel = dropPrefix "anthropic/" model
@@ -1658,13 +1730,13 @@ chatWithAnthropic model message = do
                                 ]
 
 -- | Chat using OpenRouter API
-chatWithOpenRouter :: Text -> Text -> IO Value
-chatWithOpenRouter model message = do
-    apiKey <- lookupEnv "OPENROUTER_API_KEY"
-    case apiKey of
-        Nothing -> return $ errorResponse "OPENROUTER_API_KEY not set"
+chatWithOpenRouter :: Storage.StorageConfig -> Text -> Text -> IO Value
+chatWithOpenRouter storage model message = do
+    mApiKey <- Provider.getApiKey storage "openrouter"
+    case mApiKey of
+        Nothing -> return $ errorResponse "No OpenRouter API key configured. Set OPENROUTER_API_KEY or add via provider auth."
         Just key -> do
-            client <- OpenRouter.newClient (pack key)
+            client <- OpenRouter.newClient key
             let request =
                     OpenRouter.ChatRequest
                         { OpenRouter.crModel = dropPrefix "openrouter/" model

@@ -633,19 +633,28 @@ prop_sessionMessageHandlers = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st ->
         withEnv "OPENROUTER_API_KEY" Nothing $ do
             let parts = [object ["id" .= ("part_1" :: Text), "type" .= ("text" :: Text), "text" .= msg]]
-            let input = CreateMessageInput (Just "msg_1") parts Nothing Nothing
-            _ <- runHandlerIO (sessionMessageCreateHandler st "session" input)
+            let input = CreateMessageInput Nothing parts Nothing Nothing
+            created <- runHandlerIO (sessionMessageCreateHandler st "session" input)
             -- Longer delay to let the forked LLM thread complete (it writes error when no API key)
             threadDelay 100000 -- 100ms
             listed <- runHandlerIO (sessionMessageListHandler st "session" Nothing)
-            fetched <- runHandlerIO (sessionMessageGetHandler st "session" "msg_1")
-            pure (listed, fetched)
+            -- Get the user message ID from the listed messages (first user message)
+            let userMsgs = case listed of
+                    Right msgs -> filter (\m -> messageInfoRole (msgInfo m) == ("user" :: Text)) msgs
+                    Left _ -> []
+            let userMsgId = case userMsgs of
+                    (m : _) -> messageInfoId (msgInfo m)
+                    [] -> "not_found"
+            fetched <- runHandlerIO (sessionMessageGetHandler st "session" userMsgId)
+            pure (created, listed, fetched)
     case result of
-        (Left _err, _) -> failure
-        (_, Left _err) -> failure
-        (Right listed, Right fetched) -> do
+        (Left _err, _, _) -> failure
+        (_, Left _err, _) -> failure
+        (_, _, Left _err) -> failure
+        (Right _created, Right listed, Right fetched) -> do
             assert $ listLength listed >= 2
-            messageInfoId (msgInfo fetched) === "msg_1"
+            -- Verify fetched message is a user message
+            messageInfoRole (msgInfo fetched) === "user"
             let assistants = filter (\m -> messageInfoRole (msgInfo m) == ("assistant" :: Text)) listed
             assert $ not (all (null . msgParts) assistants)
 
@@ -732,8 +741,17 @@ prop_messageEventsForwardedToEventChan = withTests 20 $ property $ do
     isMessageEvent val = case val of
         Object obj -> case KM.lookup "type" obj of
             Just (String t) -> "message" `T.isPrefixOf` t
-            _ -> False
-        _ -> False
+            Just (Object _) -> False
+            Just (Array _) -> False
+            Just (Number _) -> False
+            Just (Bool _) -> False
+            Just Null -> False
+            Nothing -> False
+        Array _ -> False
+        String _ -> False
+        Number _ -> False
+        Bool _ -> False
+        Null -> False
 
 {- | Property: Message creation publishes session.status events.
 This is critical for TUI Ctrl+C support - the TUI needs to know when
@@ -772,23 +790,34 @@ prop_sessionMessagePartHandlers = withTests 20 $ property $ do
         withEnv "OPENROUTER_API_KEY" Nothing $ do
             let pid = "part_1" :: Text
             let parts = [object ["id" .= pid, "type" .= ("text" :: Text), "text" .= txt]]
-            let input = CreateMessageInput (Just "msg_1") parts Nothing Nothing
+            let input = CreateMessageInput Nothing parts Nothing Nothing
             _ <- runHandlerIO (sessionMessageCreateHandler st "session" input)
+            -- Wait a bit for message storage
+            threadDelay 50000
+            -- Get the user message ID from listed messages (create returns assistant message)
+            listed <- runHandlerIO (sessionMessageListHandler st "session" Nothing)
+            let userMsgId = case listed of
+                    Right msgs ->
+                        case filter (\m -> messageInfoRole (msgInfo m) == ("user" :: Text)) msgs of
+                            (m : _) -> messageInfoId (msgInfo m)
+                            [] -> "not_found"
+                    Left _ -> "not_found"
             let update =
                     object
                         [ "id" .= pid
                         , "sessionID" .= ("session" :: Text)
-                        , "messageID" .= ("msg_1" :: Text)
+                        , "messageID" .= userMsgId
                         , "type" .= ("text" :: Text)
                         , "text" .= next
                         ]
-            updated <- runHandlerIO (sessionMessagePartUpdateHandler st "session" "msg_1" pid update)
-            deleted <- runHandlerIO (sessionMessagePartDeleteHandler st "session" "msg_1" pid)
-            pure (updated, deleted)
+            updated <- runHandlerIO (sessionMessagePartUpdateHandler st "session" userMsgId pid update)
+            deleted <- runHandlerIO (sessionMessagePartDeleteHandler st "session" userMsgId pid)
+            pure (listed, updated, deleted)
     case result of
-        (Left _err, _) -> failure
-        (_, Left _err) -> failure
-        (Right updated, Right deleted) -> do
+        (Left _err, _, _) -> failure
+        (_, Left _err, _) -> failure
+        (_, _, Left _err) -> failure
+        (Right _listed, Right updated, Right deleted) -> do
             lookupText "text" updated === Just next
             deleted === True
 
@@ -984,7 +1013,7 @@ prop_chatHandlerAnthropicMissing = withTests 20 $ property $ do
             runHandlerIO (chatHandler st (ChatInput msg Nothing))
     case result of
         Left _err -> failure
-        Right val -> lookupText "error" val === Just "ANTHROPIC_API_KEY not set"
+        Right val -> lookupText "error" val === Just "No Anthropic API key configured. Set ANTHROPIC_API_KEY or add via provider auth."
 
 prop_chatHandlerOpenRouterMissing :: Property
 prop_chatHandlerOpenRouterMissing = withTests 20 $ property $ do
@@ -994,7 +1023,7 @@ prop_chatHandlerOpenRouterMissing = withTests 20 $ property $ do
             runHandlerIO (chatHandler st (ChatInput msg (Just "openrouter/test-model")))
     case result of
         Left _err -> failure
-        Right val -> lookupText "error" val === Just "OPENROUTER_API_KEY not set"
+        Right val -> lookupText "error" val === Just "No OpenRouter API key configured. Set OPENROUTER_API_KEY or add via provider auth."
 
 prop_sessionCommandHandler :: Property
 prop_sessionCommandHandler = withTests 20 $ property $ do

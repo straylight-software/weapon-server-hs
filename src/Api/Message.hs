@@ -20,6 +20,7 @@ module Api.Message (
     MessageInfo (..),
     UserMessageInfo (..),
     AssistantMessageInfo (..),
+    MessageTime (..),
     MessagePath (..),
     MessageTokens (..),
     TokenCache (..),
@@ -42,12 +43,36 @@ module Api.Message (
 )
 where
 
-import Api.Session (SessionTime (..))
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.Text (Text)
 import GHC.Generics
 import Servant
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // message time //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Message time information (different from SessionTime!)
+Messages have {created, completed?} whereas Sessions have {created, updated, ...}
+-}
+data MessageTime = MessageTime
+    { mtimeCreated :: Double
+    , mtimeCompleted :: Maybe Double
+    }
+    deriving (Eq, Show, Generic)
+
+instance ToJSON MessageTime where
+    toJSON mt =
+        object $
+            ("created" .= mtimeCreated mt)
+                : maybe [] (\c -> ["completed" .= c]) (mtimeCompleted mt)
+
+instance FromJSON MessageTime where
+    parseJSON = withObject "MessageTime" $ \v ->
+        MessageTime
+            <$> v .: "created"
+            <*> v .:? "completed"
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // message path //
@@ -138,7 +163,7 @@ instance FromJSON MessageTokens where
 data UserMessageInfo = UserMessageInfo
     { umiId :: Text
     , umiSessionId :: Text
-    , umiTime :: SessionTime
+    , umiTime :: MessageTime
     , umiAgent :: Maybe Text
     }
     deriving (Eq, Show, Generic)
@@ -175,7 +200,7 @@ Matches the OpenAPI AssistantMessage schema
 data AssistantMessageInfo = AssistantMessageInfo
     { amiId :: Text
     , amiSessionId :: Text
-    , amiTime :: SessionTime
+    , amiTime :: MessageTime
     , amiParentId :: Text
     , amiModelId :: Text
     , amiProviderId :: Text

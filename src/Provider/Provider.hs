@@ -15,8 +15,10 @@ module Provider.Provider (
 
     -- * Operations
     list,
+    listWithModels,
     get,
     getModel,
+    getApiKey,
     authStatus,
     listConnected,
     setAuth,
@@ -33,6 +35,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
+import LLM.OpenRouter qualified as OpenRouter
 import System.Environment (lookupEnv)
 
 import Provider.Types
@@ -107,9 +110,66 @@ builtinProviders =
         }
     ]
 
--- | List all providers
+-- | List all providers (without fetching dynamic models)
 list :: IO [Provider]
 list = pure builtinProviders
+
+{- | List all providers with dynamically fetched models
+For OpenRouter, fetches models from API if an API key is available.
+-}
+listWithModels :: Storage.StorageConfig -> IO [Provider]
+listWithModels storage = do
+    -- Try to get OpenRouter API key
+    mKey <- getApiKey storage "openrouter"
+    case mKey of
+        Nothing -> pure builtinProviders
+        Just apiKey -> do
+            -- Fetch models from OpenRouter
+            client <- OpenRouter.newClient apiKey
+            result <- OpenRouter.fetchModels client
+            case result of
+                Left _err -> pure builtinProviders -- Fall back to empty models on error
+                Right models -> do
+                    let modelMap = Map.fromList [(modelId m, m) | m <- models]
+                    -- Update the openrouter provider with fetched models
+                    pure
+                        [ if providerId p == "openrouter"
+                            then p{providerModels = modelMap}
+                            else p
+                        | p <- builtinProviders
+                        ]
+
+{- | Get API key for a provider
+Checks environment variable first, then falls back to stored auth.
+-}
+getApiKey :: Storage.StorageConfig -> Text -> IO (Maybe Text)
+getApiKey storage providerID = do
+    -- Check environment variable first
+    mProvider <- get providerID
+    envKey <- case mProvider of
+        Just p -> do
+            keys <- mapM (lookupEnv . T.unpack) (providerEnv p)
+            pure $ case [k | Just k <- keys, not (null k)] of
+                (k : _) -> Just (T.pack k)
+                [] -> Nothing
+        Nothing -> pure Nothing
+    case envKey of
+        Just k -> pure (Just k)
+        Nothing -> do
+            -- Fall back to stored auth
+            stored <-
+                Control.Exception.catch
+                    (Just <$> (Storage.read storage ["auth", providerID] :: IO Value))
+                    (\(_ :: Control.Exception.SomeException) -> pure Nothing)
+            pure $ stored >>= extractToken
+
+-- | Extract token from stored auth value
+extractToken :: Value -> Maybe Text
+extractToken (Object obj) = case KM.lookup "token" obj of
+    Just (String t) -> Just t
+    Just _otherValue -> Nothing
+    Nothing -> Nothing
+extractToken _otherValue = Nothing
 
 -- | Get a provider by ID
 get :: Text -> IO (Maybe Provider)

@@ -16,6 +16,7 @@ module LLM.OpenRouter (
     chat,
     chatStream,
     chatStreamWithTools,
+    fetchModels,
 
     -- * Types
     ChatRequest (..),
@@ -60,6 +61,7 @@ import GHC.Generics (Generic)
 import Network.HTTP.Client qualified as HC
 import Network.HTTP.Client.TLS qualified as HCT
 import Network.HTTP.Types qualified as HT
+import Provider.Types qualified as PT
 import System.IO (hGetLine, hIsEOF)
 import System.Process (StdStream (..), createProcess, proc, std_err, std_out, waitForProcess)
 
@@ -396,6 +398,148 @@ newClient apiKey = do
             , clManager = manager
             , clBaseUrl = baseUrl
             }
+
+-- | OpenRouter model from their API (different from our internal Model type)
+data OpenRouterModel = OpenRouterModel
+    { ormId :: Text
+    , ormName :: Text
+    , ormContextLength :: Int
+    , ormPricing :: Maybe OpenRouterPricing
+    , ormTopProvider :: Maybe OpenRouterTopProvider
+    }
+    deriving (Show, Generic)
+
+data OpenRouterPricing = OpenRouterPricing
+    { orpPrompt :: Text -- Price per token as string (e.g. "0.000003")
+    , orpCompletion :: Text
+    }
+    deriving (Show, Generic)
+
+data OpenRouterTopProvider = OpenRouterTopProvider
+    { ortpContextLength :: Maybe Int
+    , ortpMaxCompletionTokens :: Maybe Int
+    }
+    deriving (Show, Generic)
+
+instance FromJSON OpenRouterModel where
+    parseJSON = withObject "OpenRouterModel" $ \v ->
+        OpenRouterModel
+            <$> v .: "id"
+            <*> v .: "name"
+            <*> v .:? "context_length" .!= 0
+            <*> v .:? "pricing"
+            <*> v .:? "top_provider"
+
+instance FromJSON OpenRouterPricing where
+    parseJSON = withObject "OpenRouterPricing" $ \v ->
+        OpenRouterPricing
+            <$> v .:? "prompt" .!= "0"
+            <*> v .:? "completion" .!= "0"
+
+instance FromJSON OpenRouterTopProvider where
+    parseJSON = withObject "OpenRouterTopProvider" $ \v ->
+        OpenRouterTopProvider
+            <$> v .:? "context_length"
+            <*> v .:? "max_completion_tokens"
+
+-- | Response wrapper for models endpoint
+newtype ModelsResponse = ModelsResponse {mrData :: [OpenRouterModel]}
+    deriving (Show, Generic)
+
+instance FromJSON ModelsResponse where
+    parseJSON = withObject "ModelsResponse" $ \v ->
+        ModelsResponse <$> v .: "data"
+
+-- | Convert OpenRouter pricing (per token) to our format (per million tokens)
+parsePrice :: Text -> Double
+parsePrice t = case reads (T.unpack t) of
+    [(d, "")] -> d * 1000000 -- Convert per-token to per-million
+    [] -> 0 -- No parse
+    [(_d, _remainder)] -> 0 -- Partial parse with remainder
+    (_first : _rest) -> 0 -- Multiple parses (ambiguous)
+
+-- | Convert OpenRouter model to our internal Model type
+toProviderModel :: OpenRouterModel -> PT.Model
+toProviderModel orm =
+    let contextLen = ormContextLength orm
+        maxOutput = case ormTopProvider orm of
+            Just tp -> fromMaybe (contextLen `div` 4) (ortpMaxCompletionTokens tp)
+            Nothing -> contextLen `div` 4
+        cost = case ormPricing orm of
+            Just p ->
+                Just $
+                    PT.ModelCost
+                        { PT.mcInput = parsePrice (orpPrompt p)
+                        , PT.mcOutput = parsePrice (orpCompletion p)
+                        , PT.mcCacheRead = Nothing
+                        , PT.mcCacheWrite = Nothing
+                        , PT.mcContextOver200k = Nothing
+                        }
+            Nothing -> Nothing
+        -- Detect model capabilities from name/id
+        isReasoning = any (`T.isInfixOf` T.toLower (ormId orm)) ["o1", "o3", "deepseek-r1", "qwq"]
+        modelFamily = case T.splitOn "/" (ormId orm) of
+            (provider : _rest) -> Just provider
+            [] -> Nothing
+     in PT.Model
+            { PT.modelId = ormId orm
+            , PT.modelName = ormName orm
+            , PT.modelReleaseDate = "" -- Not provided by OpenRouter
+            , PT.modelAttachment = True -- Most models support attachments
+            , PT.modelReasoning = isReasoning
+            , PT.modelTemperature = not isReasoning -- Reasoning models typically don't use temperature
+            , PT.modelToolCall = True -- Most models support tools
+            , PT.modelLimit =
+                PT.ModelLimit
+                    { PT.mlContext = contextLen
+                    , PT.mlInput = Nothing
+                    , PT.mlOutput = maxOutput
+                    }
+            , PT.modelOptions = mempty
+            , PT.modelFamily = modelFamily
+            , PT.modelInterleaved = Nothing
+            , PT.modelCost = cost
+            , PT.modelModalities = Just $ PT.ModelModalities ["text", "image"] ["text"]
+            , PT.modelExperimental = Nothing
+            , PT.modelStatus = Nothing
+            , PT.modelHeaders = Nothing
+            , PT.modelProvider = Nothing
+            , PT.modelVariants = Nothing
+            }
+
+{- | Fetch available models from OpenRouter API
+Returns list of models converted to our internal format
+-}
+fetchModels :: Client -> IO (Either Text [PT.Model])
+fetchModels client = do
+    result <- makeGetRequest client "/models"
+    case result of
+        Left err -> pure $ Left err
+        Right body -> case eitherDecode body of
+            Left parseErr -> pure $ Left $ "Parse error: " <> T.pack parseErr
+            Right (ModelsResponse models) -> pure $ Right $ map toProviderModel models
+
+-- | Make a GET request (for models endpoint)
+makeGetRequest :: Client -> String -> IO (Either Text LBS.ByteString)
+makeGetRequest client path = do
+    let url = T.unpack (clBaseUrl client) <> path
+    initReq <- HC.parseRequest url
+    let req =
+            initReq
+                { HC.method = "GET"
+                , HC.requestHeaders =
+                    [ ("Authorization", "Bearer " <> encodeUtf8 (clApiKey client))
+                    , ("HTTP-Referer", "https://opencode.ai")
+                    , ("X-Title", "opencode")
+                    ]
+                }
+    result <- try @SomeException $ HC.httpLbs req (clManager client)
+    case result of
+        Left err -> pure $ Left $ "Request failed: " <> T.pack (show err)
+        Right resp ->
+            if HT.statusIsSuccessful (HC.responseStatus resp)
+                then pure $ Right $ HC.responseBody resp
+                else pure $ Left $ "HTTP error: " <> T.pack (show (HC.responseStatus resp))
 
 -- | Non-streaming chat completion
 chat :: Client -> ChatRequest -> IO (Either Text ChatResponse)
