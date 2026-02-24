@@ -6,10 +6,18 @@ module State (
     initialState,
     initialStateNoProxy,
     initialStateNoProxyWithHome,
+
+    -- * Agent tracking
+    registerAgent,
+    unregisterAgent,
+    abortAgent,
 ) where
 
+import Control.Concurrent (ThreadId, killThread)
 import Control.Concurrent.STM
 import Data.Aeson (Value, toJSON)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 
 import Bus.Bus qualified as Bus
@@ -35,6 +43,7 @@ data AppState = AppState
     , stLogger :: Log.Logger -- Structured logger
     , stPromptAsyncQueue :: TQueue PromptAsyncJob -- prompt_async worker queue
     , stHomeDir :: Maybe FilePath -- Override home directory for config (tests)
+    , stActiveAgents :: TVar (Map Text ThreadId) -- Active agent threads by session ID
     }
 
 -- | Initialize a new state with optional proxy and home directory override
@@ -44,6 +53,7 @@ mkAppState proxy homeDir storageDir projectID directory logger = do
     eventChan <- newBroadcastTChanIO
     ptyManager <- Pty.newManager (Text.unpack directory)
     promptQueue <- newTQueueIO
+    activeAgents <- newTVarIO Map.empty
 
     -- Subscribe bus to also write to event channel for SSE
     _ <- Bus.subscribeAll bus $ \event -> do
@@ -63,6 +73,7 @@ mkAppState proxy homeDir storageDir projectID directory logger = do
             , stLogger = logger
             , stPromptAsyncQueue = promptQueue
             , stHomeDir = homeDir
+            , stActiveAgents = activeAgents
             }
 
 -- | Initialize a new state with MITM proxy
@@ -82,3 +93,34 @@ initialStateNoProxy = initialStateNoProxyWithHome Nothing
 -- | Initialize state without proxy, with optional home directory override
 initialStateNoProxyWithHome :: Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
 initialStateNoProxyWithHome = mkAppState Nothing
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Agent Thread Tracking
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Register an agent thread for a session (allows abort)
+registerAgent :: AppState -> Text -> ThreadId -> IO ()
+registerAgent st sid tid =
+    atomically $ modifyTVar' (stActiveAgents st) (Map.insert sid tid)
+
+-- | Unregister an agent thread when it completes
+unregisterAgent :: AppState -> Text -> IO ()
+unregisterAgent st sid =
+    atomically $ modifyTVar' (stActiveAgents st) (Map.delete sid)
+
+{- | Abort a running agent by killing its thread
+Returns True if an agent was running and was killed
+-}
+abortAgent :: AppState -> Text -> IO Bool
+abortAgent st sid = do
+    mTid <- atomically $ do
+        agents <- readTVar (stActiveAgents st)
+        let mTid = Map.lookup sid agents
+        -- Remove from map regardless (cleanup)
+        modifyTVar' (stActiveAgents st) (Map.delete sid)
+        pure mTid
+    case mTid of
+        Just tid -> do
+            killThread tid
+            pure True
+        Nothing -> pure False

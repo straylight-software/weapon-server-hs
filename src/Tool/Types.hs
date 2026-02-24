@@ -23,6 +23,10 @@ module Tool.Types (
 
     -- * Context
     ToolContext (..),
+
+    -- * Streaming
+    StreamingCallback,
+    noStreaming,
 )
 where
 
@@ -265,3 +269,12 @@ toolSuccess title output = ToolOutput title output False Nothing
 -- | Smart constructor for error tool output
 toolError :: Text -> Text -> ToolOutput
 toolError title output = ToolOutput title output True Nothing
+
+{- | Callback invoked with accumulated output during streaming tool execution.
+The callback receives the total accumulated output so far (not just the delta).
+-}
+type StreamingCallback = Text -> IO ()
+
+-- | A no-op streaming callback for when streaming is not needed
+noStreaming :: StreamingCallback
+noStreaming = const (pure ())

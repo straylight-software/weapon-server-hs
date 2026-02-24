@@ -5,28 +5,47 @@
 module Tool.Exec (
     execute,
     executeToolUse,
+    executeToolUseStreaming,
+    executeStreaming,
+
+    -- * Streaming process execution
+    runProcessStreaming,
 )
 where
 
+import Control.Concurrent.Async (wait, withAsync)
 import Control.Exception (SomeException, try)
 import Data.Aeson (FromJSON, Value, eitherDecode, encode)
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
+import Data.Foldable (toList)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List qualified as List
 import Data.Maybe (fromMaybe)
+import Data.Sequence (Seq, (|>))
+import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
+import GHC.IO.Handle (Handle, hClose)
 import LLM.Types (ToolResult (..), ToolUse (..))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory)
-import System.Process (CreateProcess (..), StdStream (..), proc, readCreateProcessWithExitCode)
+import System.IO (hSetBinaryMode)
+import System.Process (CreateProcess (..), StdStream (..), createProcess, proc, waitForProcess)
 import Text.Printf (printf)
 import Tool.Types
 
 -- | Execute a tool from a ToolUse block
 executeToolUse :: ToolContext -> ToolUse -> IO ToolResult
-executeToolUse ctx ToolUse{..} = do
-    result <- execute ctx tuName tuInput
+executeToolUse ctx tu = executeToolUseStreaming ctx tu noStreaming
+
+-- | Execute a tool from a ToolUse block with streaming callback
+executeToolUseStreaming :: ToolContext -> ToolUse -> StreamingCallback -> IO ToolResult
+executeToolUseStreaming ctx ToolUse{..} callback = do
+    result <- executeStreaming ctx tuName tuInput callback
     pure
         ToolResult
             { trToolUseId = tuId
@@ -44,13 +63,17 @@ getIsError = toIsError
 
 -- | Execute a tool by name with JSON input
 execute :: ToolContext -> Text -> Value -> IO ToolOutput
-execute ctx name input = case name of
-    "read" -> parseAndRun ctx input execRead
-    "write" -> parseAndRun ctx input execWrite
-    "edit" -> parseAndRun ctx input execEdit
-    "bash" -> parseAndRun ctx input execBash
-    "glob" -> parseAndRun ctx input execGlob
-    "grep" -> parseAndRun ctx input execGrep
+execute ctx name input = executeStreaming ctx name input noStreaming
+
+-- | Execute a tool by name with JSON input and streaming callback
+executeStreaming :: ToolContext -> Text -> Value -> StreamingCallback -> IO ToolOutput
+executeStreaming ctx name input callback = case name of
+    "read" -> parseAndRun ctx input execRead -- read doesn't need streaming
+    "write" -> parseAndRun ctx input execWrite -- write doesn't need streaming
+    "edit" -> parseAndRun ctx input execEdit -- edit doesn't need streaming
+    "bash" -> parseAndRunStreaming ctx input callback execBashStreaming
+    "glob" -> parseAndRunStreaming ctx input callback execGlobStreaming
+    "grep" -> parseAndRunStreaming ctx input callback execGrepStreaming
     _otherTool -> pure $ toolError "Error" ("Unknown tool: " <> name)
 
 -- | Parse input and run executor
@@ -58,6 +81,12 @@ parseAndRun :: (FromJSON a) => ToolContext -> Value -> (ToolContext -> a -> IO T
 parseAndRun ctx input exec = case eitherDecode (encode input) of
     Left err -> pure $ toolError "Parse Error" (T.pack err)
     Right parsed -> exec ctx parsed
+
+-- | Parse input and run streaming executor
+parseAndRunStreaming :: (FromJSON a) => ToolContext -> Value -> StreamingCallback -> (ToolContext -> a -> StreamingCallback -> IO ToolOutput) -> IO ToolOutput
+parseAndRunStreaming ctx input callback exec = case eitherDecode (encode input) of
+    Left err -> pure $ toolError "Parse Error" (T.pack err)
+    Right parsed -> exec ctx parsed callback
 
 -- | Read file or directory
 execRead :: ToolContext -> ReadInput -> IO ToolOutput
@@ -139,9 +168,139 @@ listLength = List.foldl' (\acc _ -> acc + 1) 0
 textLength :: Text -> Int
 textLength = T.foldl' (\acc _ -> acc + 1) 0
 
--- | Execute bash command
-execBash :: ToolContext -> BashInput -> IO ToolOutput
-execBash ctx BashInput{..} = do
+-- | Resolve path relative to workdir if not absolute
+resolvePath :: ToolContext -> Text -> Text
+resolvePath ctx p
+    | "/" `T.isPrefixOf` p = p
+    | otherwise = T.pack (tcWorkdir ctx) <> "/" <> p
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Streaming Process Execution
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Run a process and stream its output incrementally.
+Calls the callback with accumulated output after each chunk is read.
+Returns the exit code and final accumulated output.
+
+IMPORTANT: We must read from stdout/stderr concurrently with the process running,
+otherwise the process may block if pipe buffers fill up. We use async threads
+to read handles and wait for them concurrently with the process.
+-}
+runProcessStreaming ::
+    CreateProcess ->
+    StreamingCallback ->
+    IO (ExitCode, Text, Text)
+runProcessStreaming cp callback = do
+    let cp' =
+            cp
+                { std_out = CreatePipe
+                , std_err = CreatePipe
+                , std_in = NoStream
+                }
+    result <- try @SomeException $ createProcess cp'
+    case result of
+        Left e -> pure (ExitFailure 1, "", T.pack (show e))
+        Right (_, mStdout, mStderr, ph) -> do
+            case (mStdout, mStderr) of
+                (Just hOut, Just hErr) -> do
+                    -- Set binary mode to avoid encoding issues
+                    hSetBinaryMode hOut True
+                    hSetBinaryMode hErr True
+
+                    -- Refs to accumulate output
+                    stdoutRef <- newIORef ""
+                    stderrRef <- newIORef ""
+
+                    -- Use withAsync to ensure proper thread cleanup and avoid deadlocks.
+                    -- We must read stdout/stderr while the process runs to prevent pipe buffer deadlock.
+                    withAsync (readHandleStreaming hOut stdoutRef stderrRef callback) $ \stdoutAsync ->
+                        withAsync (readHandleToRef hErr stderrRef) $ \stderrAsync -> do
+                            -- Wait for readers to complete (they complete when handles reach EOF)
+                            -- This happens when the process closes its stdout/stderr (i.e., exits)
+                            wait stdoutAsync
+                            wait stderrAsync
+
+                            -- Now wait for process to fully terminate and get exit code
+                            exitCode <- waitForProcess ph
+
+                            -- Get final output
+                            finalStdout <- readIORef stdoutRef
+                            finalStderr <- readIORef stderrRef
+
+                            pure (exitCode, finalStdout, finalStderr)
+                _missingHandles -> do
+                    exitCode <- waitForProcess ph
+                    pure (exitCode, "", "Failed to create process pipes")
+
+{- | Read from a handle and stream accumulated output via callback
+Uses a Seq of chunks for O(1) snoc (append at end)
+For streaming, only sends the last portion to avoid sending huge payloads
+-}
+readHandleStreaming :: Handle -> IORef Text -> IORef Text -> StreamingCallback -> IO ()
+readHandleStreaming h stdoutRef stderrRef callback = do
+    -- Use a Seq of chunks for efficient append (O(1) snoc)
+    chunksRef <- newIORef (Seq.empty :: Seq Text)
+    loop chunksRef
+    -- At the end, concatenate all chunks and store in stdoutRef
+    chunks <- readIORef chunksRef
+    let finalOutput = T.concat (toList chunks)
+    atomicModifyIORef' stdoutRef (const (finalOutput, ()))
+  where
+    -- Maximum characters to send in streaming callback (last N chars)
+    maxStreamingChars :: Int
+    maxStreamingChars = 50000 -- ~50KB limit for streaming updates
+    loop chunksRef = do
+        result <- try @SomeException $ BS.hGetSome h 4096
+        case result of
+            Left _e -> hClose h -- EOF or error, close handle
+            Right chunk
+                | BS.null chunk -> hClose h -- EOF
+                | otherwise -> do
+                    -- Decode chunk (lenient to handle partial UTF-8)
+                    let txt = decodeUtf8Lenient chunk
+                    -- Append chunk to Seq (O(1) snoc)
+                    atomicModifyIORef' chunksRef (\cs -> (cs |> txt, ()))
+                    -- Get current chunks for streaming preview
+                    currentChunks <- readIORef chunksRef
+                    -- Build output for streaming (may be truncated)
+                    let fullOutput = T.concat (toList currentChunks)
+                    let streamingOutput =
+                            if T.compareLength fullOutput maxStreamingChars == GT
+                                then "...(truncated)...\n" <> T.takeEnd maxStreamingChars fullOutput
+                                else fullOutput
+                    currentStderr <- readIORef stderrRef
+                    let combined =
+                            streamingOutput
+                                <> (if T.null currentStderr then "" else "\n[stderr]\n" <> currentStderr)
+                    callback combined
+                    loop chunksRef
+
+-- | Read from handle into ref (no streaming callback, for stderr)
+readHandleToRef :: Handle -> IORef Text -> IO ()
+readHandleToRef h ref = loop
+  where
+    loop = do
+        result <- try @SomeException $ BS.hGetSome h 4096
+        case result of
+            Left _e -> hClose h
+            Right chunk
+                | BS.null chunk -> hClose h
+                | otherwise -> do
+                    let txt = decodeUtf8Lenient chunk
+                    atomicModifyIORef' ref (\acc -> (acc <> txt, ()))
+                    loop
+
+-- | Decode ByteString to Text, replacing invalid UTF-8 sequences
+decodeUtf8Lenient :: ByteString -> Text
+decodeUtf8Lenient = TE.decodeUtf8With (\_ _ -> Just '\xFFFD')
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Streaming Tool Implementations
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Execute bash command with streaming output
+execBashStreaming :: ToolContext -> BashInput -> StreamingCallback -> IO ToolOutput
+execBashStreaming ctx BashInput{..} callback = do
     let workdir = maybe (tcWorkdir ctx) T.unpack biWorkdir
     let timeoutMs = fromMaybe 120000 biTimeout
     let timeoutS = max 0.001 (fromIntegral timeoutMs / 1000 :: Double)
@@ -150,50 +309,42 @@ execBash ctx BashInput{..} = do
     let cmd =
             (proc "timeout" [timeoutArg, "bash", "-c", T.unpack biCommand])
                 { cwd = Just workdir
-                , std_in = NoStream
                 }
 
-    result <- try @SomeException $ readCreateProcessWithExitCode cmd ""
-    case result of
-        Left e -> pure $ toolError "Bash Error" (T.pack $ show e)
-        Right (exitCode, stdout, stderr) -> do
-            let output = T.pack stdout <> (if null stderr then "" else "\n[stderr]\n" <> T.pack stderr)
-            let output' =
-                    if T.null output
-                        then "Command completed successfully with no output."
-                        else output
-            if exitCode /= ExitSuccess
-                then pure $ toolError "Command failed" output
-                else pure $ toolSuccess biDescription output'
+    (exitCode, stdout, stderr) <- runProcessStreaming cmd callback
+    let output = stdout <> (if T.null stderr then "" else "\n[stderr]\n" <> stderr)
+    let output' =
+            if T.null output
+                then "Command completed successfully with no output."
+                else output
+    if exitCode /= ExitSuccess
+        then pure $ toolError "Command failed" output
+        else pure $ toolSuccess biDescription output'
 
--- | Glob file search
-execGlob :: ToolContext -> GlobInput -> IO ToolOutput
-execGlob ctx GlobInput{..} = do
+-- | Glob file search with streaming output
+execGlobStreaming :: ToolContext -> GlobInput -> StreamingCallback -> IO ToolOutput
+execGlobStreaming ctx GlobInput{..} callback = do
     let searchPath = maybe "." T.unpack giPath
     let cwdDir = tcWorkdir ctx
     let cmd =
             (proc "fd" ["--type", "f", "--glob", T.unpack giPattern, searchPath])
                 { cwd = Just cwdDir
-                , std_in = NoStream
                 }
 
-    result <- try @SomeException $ readCreateProcessWithExitCode cmd ""
-    case result of
-        Left e -> pure $ toolError "Glob Error" (T.pack $ show e)
-        Right (exitCode, stdout, stderr) -> do
-            let outputLines = take 100 (T.lines (T.pack stdout))
-            let output = T.unlines outputLines
-            case exitCode of
-                ExitSuccess -> pure $ toolSuccess ("Glob " <> giPattern) output
-                ExitFailure _exitCode ->
-                    pure $
-                        toolError
-                            "Glob Error"
-                            (if null stderr then T.pack stdout else T.pack stderr)
+    (exitCode, stdout, stderr) <- runProcessStreaming cmd callback
+    let outputLines = take 100 (T.lines stdout)
+    let output = T.unlines outputLines
+    case exitCode of
+        ExitSuccess -> pure $ toolSuccess ("Glob " <> giPattern) output
+        ExitFailure _exitCode ->
+            pure $
+                toolError
+                    "Glob Error"
+                    (if T.null stderr then stdout else stderr)
 
--- | Grep content search
-execGrep :: ToolContext -> GrepInput -> IO ToolOutput
-execGrep ctx GrepInput{..} = do
+-- | Grep content search with streaming output
+execGrepStreaming :: ToolContext -> GrepInput -> StreamingCallback -> IO ToolOutput
+execGrepStreaming ctx GrepInput{..} callback = do
     let searchPath = maybe "." T.unpack grPath
     let cwdDir = tcWorkdir ctx
     let baseArgs = ["--line-number", "--no-heading", T.unpack grPattern]
@@ -201,26 +352,16 @@ execGrep ctx GrepInput{..} = do
     let cmd =
             (proc "rg" (baseArgs <> includeArgs <> [searchPath]))
                 { cwd = Just cwdDir
-                , std_in = NoStream
                 }
 
-    result <- try @SomeException $ readCreateProcessWithExitCode cmd ""
-    case result of
-        Left e -> pure $ toolError "Grep Error" (T.pack $ show e)
-        Right (exitCode, stdout, stderr) -> do
-            let outputLines = take 100 (T.lines (T.pack stdout))
-            let output = T.unlines outputLines
-            case exitCode of
-                ExitSuccess -> pure $ toolSuccess ("Grep " <> grPattern) output
-                ExitFailure 1 | null stdout -> pure $ toolSuccess ("Grep " <> grPattern) ""
-                ExitFailure _exitCode ->
-                    pure $
-                        toolError
-                            "Grep Error"
-                            (if null stderr then T.pack stdout else T.pack stderr)
-
--- | Resolve path relative to workdir if not absolute
-resolvePath :: ToolContext -> Text -> Text
-resolvePath ctx p
-    | "/" `T.isPrefixOf` p = p
-    | otherwise = T.pack (tcWorkdir ctx) <> "/" <> p
+    (exitCode, stdout, stderr) <- runProcessStreaming cmd callback
+    let outputLines = take 100 (T.lines stdout)
+    let output = T.unlines outputLines
+    case exitCode of
+        ExitSuccess -> pure $ toolSuccess ("Grep " <> grPattern) output
+        ExitFailure 1 | T.null stdout -> pure $ toolSuccess ("Grep " <> grPattern) ""
+        ExitFailure _exitCode ->
+            pure $
+                toolError
+                    "Grep Error"
+                    (if T.null stderr then stdout else stderr)

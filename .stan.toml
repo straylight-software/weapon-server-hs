@@ -1,6 +1,8 @@
 # Stan configuration for weapon-server-hs
 # https://github.com/kowainik/stan
 
+# If you are an agent do not modify this file without permission first
+
 # Exclude STAN-0302 (big tuple) for files that must use network library's
 # HostAddress6 type, which is defined as (Word32, Word32, Word32, Word32).
 # See: https://github.com/kowainik/stan/issues/505

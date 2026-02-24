@@ -98,12 +98,13 @@ prop_streamingOutputMonotonic = withTests 20 $ property $ do
 
     exitCode === ExitSuccess
 
-    -- Check that each output is a prefix of the next (or equal)
+    -- Check that outputs are monotonically non-decreasing (streaming appends data)
     outputs <- evalIO $ readIORef outputsRef
     let pairs = zip outputs (drop 1 outputs)
     forM_ pairs $ \(prev, next) -> do
-        -- Each subsequent output should be >= length of previous
-        assert $ T.length next >= T.length prev
+        -- Each subsequent output should contain the previous as a prefix
+        -- (since streaming accumulates output)
+        assert $ prev `T.isPrefixOf` next
 
 -- | Property: streaming works with no output command
 prop_streamingNoOutput :: Property
@@ -352,8 +353,8 @@ prop_streamingLargeOutput = withTests 5 $ propertyWithTempDir $ \tmpDir -> do
     -- Should succeed
     assert $ not (toIsError result)
 
-    -- Should have substantial output
-    assert $ T.length (toOutput result) > 1000
+    -- Should have substantial output (use compareLength for efficiency)
+    assert $ T.compareLength (toOutput result) 1000 == GT
 
     -- Should have called callback multiple times for large output
     callbackCount <- evalIO $ readIORef callbackCountRef

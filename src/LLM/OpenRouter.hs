@@ -62,8 +62,8 @@ import Network.HTTP.Client qualified as HC
 import Network.HTTP.Client.TLS qualified as HCT
 import Network.HTTP.Types qualified as HT
 import Provider.Types qualified as PT
-import System.IO (hGetLine, hIsEOF)
-import System.Process (StdStream (..), createProcess, proc, std_err, std_out, waitForProcess)
+import System.IO (hClose, hGetLine, hIsEOF)
+import System.Process (StdStream (..), createProcess, proc, std_err, std_in, std_out, waitForProcess)
 
 -- | Message role
 data Role = User | Assistant | System
@@ -556,12 +556,17 @@ chat client req = do
 
 {- | Streaming chat completion using curl (workaround for IPv6 issues)
 Calls handler for each content delta
+
+NOTE: We use `-d @-` to read the request body from stdin instead of passing
+it as a command-line argument. This avoids "Argument list too long" errors
+when the conversation history contains large tool outputs.
 -}
 chatStream :: Client -> ChatRequest -> (Text -> IO ()) -> IO (Either Text ())
 chatStream client req onDelta = do
     let reqBody = LBS.toStrict $ encode req{crStream = True}
 
     -- Use curl with IPv4 flag to avoid IPv6 timeout issues
+    -- Use -d @- to read body from stdin (avoids ARG_MAX limit)
     let curlArgs =
             [ "-4" -- Force IPv4
             , "-s" -- Silent
@@ -578,16 +583,21 @@ chatStream client req onDelta = do
             , "-H"
             , "X-Title: opencode"
             , "-d"
-            , C8.unpack reqBody
+            , "@-" -- Read body from stdin
             ]
 
     result <- try @SomeException $ do
-        (_, Just hOut, _, ph) <-
+        (Just hIn, Just hOut, _, ph) <-
             createProcess
                 (proc "curl" curlArgs)
-                    { std_out = CreatePipe
+                    { std_in = CreatePipe
+                    , std_out = CreatePipe
                     , std_err = CreatePipe
                     }
+
+        -- Write request body to curl's stdin
+        C8.hPut hIn reqBody
+        hClose hIn
 
         -- Read lines from curl output
         let readLoop = do
@@ -653,12 +663,17 @@ data StreamResult = StreamResult
 
 {- | Streaming chat completion with tool call support
 Returns tool calls if any, along with finish reason
+
+NOTE: We use `-d @-` to read the request body from stdin instead of passing
+it as a command-line argument. This avoids "Argument list too long" errors
+when the conversation history contains large tool outputs.
 -}
 chatStreamWithTools :: Client -> ChatRequest -> (Text -> IO ()) -> IO (Either Text StreamResult)
 chatStreamWithTools client req onDelta = do
     let reqBody = LBS.toStrict $ encode req{crStream = True}
 
     -- Use curl with IPv4 flag to avoid IPv6 timeout issues
+    -- Use -d @- to read body from stdin (avoids ARG_MAX limit)
     let curlArgs =
             [ "-4" -- Force IPv4
             , "-s" -- Silent
@@ -675,7 +690,7 @@ chatStreamWithTools client req onDelta = do
             , "-H"
             , "X-Title: opencode"
             , "-d"
-            , C8.unpack reqBody
+            , "@-" -- Read body from stdin
             ]
 
     -- Track accumulated tool calls (they come in chunks)
@@ -683,12 +698,17 @@ chatStreamWithTools client req onDelta = do
     finishReasonRef <- newIORef (Nothing :: Maybe Text)
 
     result <- try @SomeException $ do
-        (_, Just hOut, _, ph) <-
+        (Just hIn, Just hOut, _, ph) <-
             createProcess
                 (proc "curl" curlArgs)
-                    { std_out = CreatePipe
+                    { std_in = CreatePipe
+                    , std_out = CreatePipe
                     , std_err = CreatePipe
                     }
+
+        -- Write request body to curl's stdin
+        C8.hPut hIn reqBody
+        hClose hIn
 
         -- Read lines from curl output
         let readLoop = do

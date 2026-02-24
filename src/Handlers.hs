@@ -135,9 +135,9 @@ import Api
 import Bus.Bus qualified as Bus
 import Config.Config qualified as Config
 import Control.Applicative ((<|>))
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, myThreadId)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, catch)
+import Control.Exception (AsyncException (ThreadKilled), SomeException, catch, fromException)
 import Control.Monad (forM, forM_, unless, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (Value (..), object, (.=))
@@ -592,8 +592,11 @@ sessionForkHandler st sid _forkInput = liftIO $ do
 
 sessionAbortHandler :: AppState -> Text -> Maybe Text -> Handler Bool
 sessionAbortHandler st sid _mDir = liftIO $ do
+    -- Actually kill the running agent thread if any
+    wasRunning <- State.abortAgent st sid
+    -- Publish abort event for TUI notification
     Bus.publish (stBus st) "session.error" (object ["sessionID" .= sid, "aborted" .= True])
-    return True
+    return wasRunning
 
 sessionShareCreateHandler :: AppState -> Text -> Handler Session
 sessionShareCreateHandler st sid =
@@ -916,6 +919,9 @@ createMessageIO st sid input = do
     _ <-
         forkIO $
             ( do
+                -- Register this thread for abort support
+                tid <- myThreadId
+                State.registerAgent st sid tid
                 -- Always use OpenRouter as the unified LLM gateway
                 -- OpenRouter can proxy to Anthropic, OpenAI, etc. using "provider/model" format
                 mApiKey <- Provider.getApiKey (stStorage st) "openrouter"
@@ -1026,44 +1032,122 @@ createMessageIO st sid input = do
                                             else do
                                                 -- Execute each tool call
                                                 toolResults <- forM toolCalls $ \tc -> do
-                                                    -- Generate new part ID for tool use display
-                                                    toolUsePartId <- genId
-                                                    let toolUsePart =
+                                                    -- Generate part ID for this tool
+                                                    toolPartId <- genId
+                                                    startTime <- getCurrentTime
+                                                    let startMs = realToFrac (utcTimeToPOSIXSeconds startTime) * 1000 :: Double
+                                                    let toolName = OpenRouter.tcfName (OpenRouter.tcFunction tc)
+                                                    let toolInput = parseToolInput (OpenRouter.tcfArguments (OpenRouter.tcFunction tc))
+
+                                                    -- Emit tool part with "running" state
+                                                    let runningPart =
                                                             object
-                                                                [ "id" .= toolUsePartId
+                                                                [ "id" .= toolPartId
                                                                 , "sessionID" .= sid
                                                                 , "messageID" .= aMsgId
-                                                                , "type" .= ("tool_use" :: Text)
-                                                                , "name" .= OpenRouter.tcfName (OpenRouter.tcFunction tc)
-                                                                , "toolUseId" .= OpenRouter.tcId tc
-                                                                , "input" .= OpenRouter.tcfArguments (OpenRouter.tcFunction tc)
+                                                                , "type" .= ("tool" :: Text)
+                                                                , "tool" .= toolName
+                                                                , "callID" .= OpenRouter.tcId tc
+                                                                , "state"
+                                                                    .= object
+                                                                        [ "status" .= ("running" :: Text)
+                                                                        , "input" .= toolInput
+                                                                        , "time" .= object ["start" .= startMs]
+                                                                        ]
                                                                 ]
-                                                    Bus.publish (stBus st) "message.part.updated" (object ["part" .= toolUsePart])
-                                                    atomically $ modifyTVar' partsRef (++ [toolUsePart])
+                                                    Bus.publish (stBus st) "message.part.updated" (object ["part" .= runningPart])
+                                                    atomically $ modifyTVar' partsRef (++ [runningPart])
 
-                                                    -- Convert to LLMTypes.ToolUse and execute
+                                                    -- Convert to LLMTypes.ToolUse and execute with streaming
                                                     let toolUse =
                                                             LLMTypes.ToolUse
                                                                 { LLMTypes.tuId = OpenRouter.tcId tc
-                                                                , LLMTypes.tuName = OpenRouter.tcfName (OpenRouter.tcFunction tc)
-                                                                , LLMTypes.tuInput = parseToolInput (OpenRouter.tcfArguments (OpenRouter.tcFunction tc))
+                                                                , LLMTypes.tuName = toolName
+                                                                , LLMTypes.tuInput = toolInput
                                                                 }
-                                                    toolResult <- ToolExec.executeToolUse toolCtx toolUse
 
-                                                    -- Generate new part ID for tool result display
-                                                    toolResultPartId <- genId
-                                                    let toolResultPart =
-                                                            object
-                                                                [ "id" .= toolResultPartId
-                                                                , "sessionID" .= sid
-                                                                , "messageID" .= aMsgId
-                                                                , "type" .= ("tool_result" :: Text)
-                                                                , "toolUseId" .= LLMTypes.trToolUseId toolResult
-                                                                , "content" .= LLMTypes.trContent toolResult
-                                                                , "isError" .= LLMTypes.trIsError toolResult
-                                                                ]
-                                                    Bus.publish (stBus st) "message.part.updated" (object ["part" .= toolResultPart])
-                                                    atomically $ modifyTVar' partsRef (++ [toolResultPart])
+                                                    -- Create streaming callback that emits partial output updates
+                                                    let streamCallback accumulatedOutput = do
+                                                            let streamingPart =
+                                                                    object
+                                                                        [ "id" .= toolPartId
+                                                                        , "sessionID" .= sid
+                                                                        , "messageID" .= aMsgId
+                                                                        , "type" .= ("tool" :: Text)
+                                                                        , "tool" .= toolName
+                                                                        , "callID" .= OpenRouter.tcId tc
+                                                                        , "state"
+                                                                            .= object
+                                                                                [ "status" .= ("running" :: Text)
+                                                                                , "input" .= toolInput
+                                                                                , "metadata" .= object ["output" .= accumulatedOutput]
+                                                                                , "time" .= object ["start" .= startMs]
+                                                                                ]
+                                                                        ]
+                                                            Bus.publish (stBus st) "message.part.updated" (object ["part" .= streamingPart])
+
+                                                    toolResult <- ToolExec.executeToolUseStreaming toolCtx toolUse streamCallback
+
+                                                    -- Emit tool part with "completed" or "error" state
+                                                    endTime <- getCurrentTime
+                                                    let endMs = realToFrac (utcTimeToPOSIXSeconds endTime) * 1000 :: Double
+                                                    let completedPart =
+                                                            if LLMTypes.trIsError toolResult
+                                                                then
+                                                                    object
+                                                                        [ "id" .= toolPartId
+                                                                        , "sessionID" .= sid
+                                                                        , "messageID" .= aMsgId
+                                                                        , "type" .= ("tool" :: Text)
+                                                                        , "tool" .= toolName
+                                                                        , "callID" .= OpenRouter.tcId tc
+                                                                        , "state"
+                                                                            .= object
+                                                                                [ "status" .= ("error" :: Text)
+                                                                                , "input" .= toolInput
+                                                                                , "error" .= truncateToolOutput (LLMTypes.trContent toolResult)
+                                                                                , "time" .= object ["start" .= startMs, "end" .= endMs]
+                                                                                ]
+                                                                        ]
+                                                                else
+                                                                    object
+                                                                        [ "id" .= toolPartId
+                                                                        , "sessionID" .= sid
+                                                                        , "messageID" .= aMsgId
+                                                                        , "type" .= ("tool" :: Text)
+                                                                        , "tool" .= toolName
+                                                                        , "callID" .= OpenRouter.tcId tc
+                                                                        , "state"
+                                                                            .= object
+                                                                                [ "status" .= ("completed" :: Text)
+                                                                                , "input" .= toolInput
+                                                                                , "output" .= truncateToolOutput (LLMTypes.trContent toolResult)
+                                                                                , "title" .= (toolName <> " completed")
+                                                                                , "metadata" .= object []
+                                                                                , "time" .= object ["start" .= startMs, "end" .= endMs]
+                                                                                ]
+                                                                        ]
+                                                    Bus.publish (stBus st) "message.part.updated" (object ["part" .= completedPart])
+                                                    -- Update the part in the parts list (replace the running one)
+                                                    let updateToolPart pid newPart =
+                                                            map
+                                                                ( \p -> case p of
+                                                                    Object obj -> case KM.lookup "id" obj of
+                                                                        Just (String pid') | pid' == pid -> newPart
+                                                                        Just (String _otherPid) -> p
+                                                                        Just (Object _) -> p
+                                                                        Just (Array _) -> p
+                                                                        Just (Number _) -> p
+                                                                        Just (Bool _) -> p
+                                                                        Just Null -> p
+                                                                        Nothing -> p
+                                                                    Array _ -> p
+                                                                    String _ -> p
+                                                                    Number _ -> p
+                                                                    Bool _ -> p
+                                                                    Null -> p
+                                                                )
+                                                    atomically $ modifyTVar' partsRef (updateToolPart toolPartId completedPart)
 
                                                     pure toolResult
 
@@ -1074,7 +1158,8 @@ createMessageIO st sid input = do
                                                             toolCalls
 
                                                 -- Build tool result messages for OpenRouter (tool role)
-                                                let toolResultMsgs = map (\tr -> OpenRouter.toolResultMessage (LLMTypes.trToolUseId tr) (LLMTypes.trContent tr)) toolResults
+                                                -- Truncate tool output for LLM context to avoid huge payloads
+                                                let toolResultMsgs = map (\tr -> OpenRouter.toolResultMessage (LLMTypes.trToolUseId tr) (truncateToolOutputForLLM $ LLMTypes.trContent tr)) toolResults
 
                                                 -- Update part ID for next iteration
                                                 newPartId <- genId
@@ -1093,24 +1178,50 @@ createMessageIO st sid input = do
                         Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
 
                         completeMessage st sid aMsgId uMsgId providerId modelId agentName t
+                -- Unregister thread on normal completion
+                State.unregisterAgent st sid
             )
                 `catch` \(e :: SomeException) -> do
-                    -- Minor #9: Handle streaming errors properly - publish error and complete
-                    let errLogger = Log.withNS (stLogger st) "message"
-                    Log.logMsg errLogger Katip.ErrorS $ "streaming error: " <> T.pack (show e)
-                    let errPart =
-                            object
-                                [ "id" .= partId
-                                , "sessionID" .= sid
-                                , "messageID" .= aMsgId
-                                , "type" .= ("text" :: Text)
-                                , "text" .= ("Error: " <> T.pack (show e))
-                                ]
-                    Bus.publish (stBus st) "message.part.updated" (object ["part" .= errPart])
-                    -- Minor #10: Persist error parts to storage
-                    let updatedMsg = aMsg{msgParts = [errPart]}
-                    Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
-                    completeMessage st sid aMsgId uMsgId providerId modelId agentName t
+                    -- Always unregister thread on exception
+                    State.unregisterAgent st sid
+                    -- Check if this is an abort (ThreadKilled) - exit cleanly
+                    let isAbort = fromException e == Just ThreadKilled
+                    if isAbort
+                        then do
+                            let errLogger = Log.withNS (stLogger st) "message"
+                            Log.logMsg errLogger Katip.InfoS "agent aborted by user"
+                            -- Publish a text part indicating cancellation
+                            let cancelPart =
+                                    object
+                                        [ "id" .= partId
+                                        , "sessionID" .= sid
+                                        , "messageID" .= aMsgId
+                                        , "type" .= ("text" :: Text)
+                                        , "text" .= ("[Cancelled by user]" :: Text)
+                                        ]
+                            Bus.publish (stBus st) "message.part.updated" (object ["part" .= cancelPart])
+                            -- Persist the cancelled message
+                            let updatedMsg = aMsg{msgParts = [cancelPart]}
+                            Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
+                            -- Complete the message normally so session goes back to idle
+                            completeMessage st sid aMsgId uMsgId providerId modelId agentName t
+                        else do
+                            -- Minor #9: Handle streaming errors properly - publish error and complete
+                            let errLogger = Log.withNS (stLogger st) "message"
+                            Log.logMsg errLogger Katip.ErrorS $ "streaming error: " <> T.pack (show e)
+                            let errPart =
+                                    object
+                                        [ "id" .= partId
+                                        , "sessionID" .= sid
+                                        , "messageID" .= aMsgId
+                                        , "type" .= ("text" :: Text)
+                                        , "text" .= ("Error: " <> T.pack (show e))
+                                        ]
+                            Bus.publish (stBus st) "message.part.updated" (object ["part" .= errPart])
+                            -- Minor #10: Persist error parts to storage
+                            let updatedMsg = aMsg{msgParts = [errPart]}
+                            Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
+                            completeMessage st sid aMsgId uMsgId providerId modelId agentName t
 
     return aMsg
 
@@ -1284,10 +1395,42 @@ parseToolInput txt = case Data.Aeson.decodeStrict (TE.encodeUtf8 txt) of
     Just v -> v
     Nothing -> object [] -- fallback to empty object
 
--- | Convert ToolResultMessage to ChatMessage format for continuing the conversation
+{- | Maximum characters to include in tool output for display purposes.
+Large outputs can cause issues with SSE payloads and client rendering.
+-}
+maxToolOutputDisplayChars :: Int
+maxToolOutputDisplayChars = 100000 -- ~100KB limit for display
+
+{- | Maximum characters to include in tool output for LLM context.
+More aggressive truncation to manage token costs and avoid context overflow.
+-}
+maxToolOutputLLMChars :: Int
+maxToolOutputLLMChars = 50000 -- ~50KB limit for LLM context
+
+-- | Truncate tool output for display, keeping the end (most recent output)
+truncateToolOutput :: Text -> Text
+truncateToolOutput = truncateToolOutputTo maxToolOutputDisplayChars
+
+-- | Truncate tool output for LLM context (more aggressive)
+truncateToolOutputForLLM :: Text -> Text
+truncateToolOutputForLLM = truncateToolOutputTo maxToolOutputLLMChars
+
+-- | Truncate tool output to a specific character limit
+truncateToolOutputTo :: Int -> Text -> Text
+truncateToolOutputTo maxChars output
+    | T.compareLength output maxChars == GT =
+        "...(output truncated, showing last "
+            <> T.pack (show maxChars)
+            <> " chars)...\n"
+            <> T.takeEnd maxChars output
+    | otherwise = output
+
+{- | Convert ToolResultMessage to ChatMessage format for continuing the conversation
+NOTE: We truncate tool output for LLM context to avoid huge payloads
+-}
 toolResultToMessage :: OpenRouter.ToolResultMessage -> OpenRouter.ChatMessage
 toolResultToMessage trm =
-    OpenRouter.toolResultChatMessage (OpenRouter.trmToolCallId trm) (OpenRouter.trmContent trm)
+    OpenRouter.toolResultChatMessage (OpenRouter.trmToolCallId trm) (truncateToolOutputForLLM $ OpenRouter.trmContent trm)
 
 -- | Load conversation history from storage (Critical #2)
 loadConversationHistory :: AppState -> Text -> IO [Message]
