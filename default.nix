@@ -170,6 +170,9 @@ mkDerivation {
     pkgs.git
     stan
   ];
+  preCheck = ''
+    export HOME="$(mktemp -d)"
+  '';
   postCheck = lib.optionalString (stan != null) ''
     report="$(stan 2>$1)"
 

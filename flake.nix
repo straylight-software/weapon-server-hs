@@ -45,13 +45,6 @@
             };
           };
 
-          # For deployment: build without tests (avoids haskemathesis dep)
-          hsPkgsNoTests = pkgs.haskellPackages.override {
-            overrides = self: _super: {
-              weapon-server = pkgs.haskell.lib.dontCheck (self.callPackage ./default.nix { });
-            };
-          };
-
           runtimePkgs = with pkgs; [
             ripgrep
             git
@@ -62,7 +55,7 @@
             name = "weapon-server";
             runtimeInputs = runtimePkgs;
             text = ''
-              exec ${hsPkgsNoTests.weapon-server}/bin/weapon-server "$@"
+              exec ${hsPkgs.weapon-server}/bin/weapon-server "$@"
             '';
           };
         in
