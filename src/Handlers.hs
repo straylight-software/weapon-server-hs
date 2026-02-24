@@ -716,14 +716,19 @@ sessionPermissionHandler st sid pid _mDir input = liftIO $ do
 
 sessionMessageListHandler :: AppState -> Text -> Maybe Int -> Handler [Message]
 sessionMessageListHandler st sid _mLimit = liftIO $ do
-    -- Read messages from storage and sort by ID (lexicographic order)
-    -- This ensures messages are returned oldest-first, matching TypeScript behavior
+    -- Read messages from storage and sort by created time (oldest first)
+    -- Secondary sort by role priority ensures user messages come before assistant messages
+    -- when they have the same timestamp (which happens when created together)
     let key = ["message", sid]
     messages <-
         (Storage.list (stStorage st) key >>= mapM (Storage.read (stStorage st)))
             `catch` \(Storage.NotFoundError _) -> return []
-    -- Sort by message ID (IDs are lexicographically sortable with ascending timestamps)
-    pure $ sortOn (messageInfoId . msgInfo) messages
+    -- Sort by (created time, role priority) where user=0, assistant=1
+    let rolePriority :: Text -> Int
+        rolePriority "user" = 0
+        rolePriority "assistant" = 1
+        rolePriority _ = 2
+    pure $ sortOn (\m -> (messageInfoCreatedTime (msgInfo m), rolePriority (messageInfoRole (msgInfo m)))) messages
 
 sessionMessageCreateHandler :: AppState -> Text -> CreateMessageInput -> Handler Message
 sessionMessageCreateHandler st sid input = liftIO $ do

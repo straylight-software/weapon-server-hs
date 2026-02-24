@@ -4,7 +4,7 @@
 module Property.SessionProps where
 
 import Bus.Bus qualified as Bus
-import Control.Concurrent (threadDelay)
+
 import Control.Monad (replicateM, replicateM_)
 import Data.List qualified as List
 import Data.Ord (Down (..))
@@ -169,8 +169,6 @@ prop_listSearchFilter = property $ do
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Alpha Project", ST.csiParentID = Nothing}
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Beta Project", ST.csiParentID = Nothing}
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Gamma Task", ST.csiParentID = Nothing}
-        -- Small delay to let filesystem settle in sandbox environments
-        threadDelay 50000
         -- Search for "project" (case-insensitive)
         matching <- Session.list ctx Nothing Nothing Nothing Nothing (Just "project")
         nonMatching <- Session.list ctx Nothing Nothing Nothing Nothing (Just "delta")
@@ -211,8 +209,6 @@ prop_listSortedByUpdated = property $ do
                 Storage.write store (sessionKey projectId (ST.sessionId s)) s
             )
             updatedSessions
-        -- Small delay to let filesystem settle in sandbox environments
-        threadDelay 50000
         Session.list ctx Nothing Nothing Nothing Nothing Nothing
     let listedTimes = map (ST.stUpdated . ST.sessionTime) listed
     listedTimes === List.sortOn Down times
@@ -247,8 +243,6 @@ prop_listRootsFilter = property $ do
         replicateM_ 2 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "root", ST.csiParentID = Nothing}
         -- Create a child session
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "child", ST.csiParentID = Just (ST.sessionId parent)}
-        -- Small delay to let filesystem settle in sandbox environments
-        threadDelay 50000
         -- List roots only
         roots <- Session.list ctx Nothing (Just True) Nothing Nothing Nothing
         -- List all
@@ -280,7 +274,6 @@ prop_listDirectoryFilter = property $ do
     (matchCount, nonMatchCount, allCount) <- evalIO $ withTestContext $ \ctx -> do
         -- Create sessions (they will have the context's directory)
         replicateM_ 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
-        threadDelay 50000
         -- Get the directory from context
         let dir = Session.scDirectory ctx
         -- List with matching directory

@@ -32,6 +32,7 @@ module Api.Message (
     messageInfoId,
     messageInfoRole,
     messageInfoSessionId,
+    messageInfoCreatedTime,
 
     -- * Message API Endpoints
     SessionMessageListAPI,
@@ -287,6 +288,11 @@ messageInfoRole (AssistantInfo _) = "assistant"
 messageInfoSessionId :: MessageInfo -> Text
 messageInfoSessionId (UserInfo info) = umiSessionId info
 messageInfoSessionId (AssistantInfo info) = amiSessionId info
+
+-- | Get the created time from any MessageInfo
+messageInfoCreatedTime :: MessageInfo -> Double
+messageInfoCreatedTime (UserInfo info) = mtimeCreated (umiTime info)
+messageInfoCreatedTime (AssistantInfo info) = mtimeCreated (amiTime info)
 
 instance ToJSON MessageInfo where
     toJSON (UserInfo info) = toJSON info

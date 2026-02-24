@@ -16,7 +16,7 @@ import Hedgehog.Range qualified as Range
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.Process qualified as Process
-import Test.Fixture (propertyWithTempDir, withTempDir)
+import Test.Fixture (propertyWithTempDir)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Tool.Exec (executeStreaming, runProcessStreaming)
@@ -209,56 +209,79 @@ prop_executeStreamingBash = propertyWithTempDir $ \tmpDir -> do
     assert $ T.isInfixOf "hello" (toOutput result)
     assert $ T.isInfixOf "world" (toOutput result)
 
--- | Property: executeStreaming glob tool streams output
+{- | Property: glob finds files with matching extensions and not others
+Tests that glob correctly filters by extension pattern
+-}
 prop_executeStreamingGlob :: Property
-prop_executeStreamingGlob = property $ do
-    callbackCountRef <- evalIO $ newIORef (0 :: Int)
+prop_executeStreamingGlob = withTests 20 $ propertyWithTempDir $ \tmpDir -> do
+    -- Generate random base names
+    baseName <- forAll $ Gen.text (Range.linear 3 10) Gen.alpha
 
-    let callback _ = modifyIORef' callbackCountRef (+ 1)
+    -- Create files with different extensions
+    evalIO $ do
+        TIO.writeFile (tmpDir </> T.unpack baseName <> ".txt") "content"
+        TIO.writeFile (tmpDir </> T.unpack baseName <> ".md") "content"
+        TIO.writeFile (tmpDir </> T.unpack baseName <> ".hs") "content"
 
-    result <- evalIO $ withTempDir $ \tmpDir -> do
-        -- Create some files
-        TIO.writeFile (tmpDir </> "file1.txt") "content1"
-        TIO.writeFile (tmpDir </> "file2.txt") "content2"
+    let input =
+            object
+                [ "pattern" .= ("*.txt" :: Text)
+                , "path" .= T.pack tmpDir
+                ]
 
-        let input =
-                object
-                    [ "pattern" .= ("*.txt" :: Text)
-                    , "path" .= T.pack tmpDir
-                    ]
-
-        executeStreaming (testContext tmpDir) "glob" input callback
+    result <- evalIO $ executeStreaming (testContext tmpDir) "glob" input noStreaming
 
     -- Should succeed
+    annotate $ "Glob output: " <> T.unpack (toOutput result)
     assert $ not (toIsError result)
 
-    -- Should find the files
-    assert $ T.isInfixOf "file1.txt" (toOutput result) || T.isInfixOf "file2.txt" (toOutput result)
+    -- Property: output contains the .txt file
+    assert $ T.isInfixOf (baseName <> ".txt") (toOutput result)
 
--- | Property: executeStreaming grep tool streams output
+    -- Property: output does NOT contain .md or .hs files
+    assert $ not $ T.isInfixOf (baseName <> ".md") (toOutput result)
+    assert $ not $ T.isInfixOf (baseName <> ".hs") (toOutput result)
+
+{- | Property: grep finds lines containing the search term and not others
+Tests that grep correctly filters by content pattern
+-}
 prop_executeStreamingGrep :: Property
-prop_executeStreamingGrep = property $ do
-    callbackCountRef <- evalIO $ newIORef (0 :: Int)
+prop_executeStreamingGrep = withTests 20 $ propertyWithTempDir $ \tmpDir -> do
+    -- Generate random search term and non-matching term
+    searchTerm <- forAll $ Gen.text (Range.linear 4 8) Gen.alpha
+    otherTerm <- forAll $ Gen.text (Range.linear 4 8) Gen.alpha
 
-    let callback _ = modifyIORef' callbackCountRef (+ 1)
+    -- Ensure they're different
+    Hedgehog.diff searchTerm (/=) otherTerm
 
-    result <- evalIO $ withTempDir $ \tmpDir -> do
-        -- Create a file with searchable content
-        TIO.writeFile (tmpDir </> "search.txt") "hello world\ngoodbye world\nhello again"
+    -- Create a file with lines containing searchTerm and lines without
+    let content =
+            T.unlines
+                [ "line with " <> searchTerm <> " here"
+                , "line without the term"
+                , "another " <> searchTerm <> " match"
+                ]
+    evalIO $ TIO.writeFile (tmpDir </> "search.txt") content
 
-        let input =
-                object
-                    [ "pattern" .= ("hello" :: Text)
-                    , "path" .= T.pack tmpDir
-                    ]
+    let input =
+            object
+                [ "pattern" .= searchTerm
+                , "path" .= T.pack tmpDir
+                ]
 
-        executeStreaming (testContext tmpDir) "grep" input callback
+    result <- evalIO $ executeStreaming (testContext tmpDir) "grep" input noStreaming
+
+    annotate $ "Grep output: " <> T.unpack (toOutput result)
 
     -- Should succeed
     assert $ not (toIsError result)
 
-    -- Should find matches
-    assert $ T.isInfixOf "hello" (toOutput result)
+    -- Property: output contains the search term
+    assert $ T.isInfixOf searchTerm (toOutput result)
+
+    -- Property: output does NOT contain lines that don't have the search term
+    -- (the "line without the term" line should not appear)
+    assert $ not $ T.isInfixOf "line without the term" (toOutput result)
 
 -- | Property: executeStreaming with noStreaming works same as execute
 prop_executeStreamingEquivalentToExecute :: Property
@@ -279,16 +302,23 @@ prop_executeStreamingEquivalentToExecute = propertyWithTempDir $ \tmpDir -> do
     assert $ not (toIsError result)
     assert $ not (T.null (toOutput result))
 
--- | Property: streaming callback receives complete output by end
+{- | Property: streaming callback receives complete output by end
+Tests that all generated lines appear in the final output
+-}
 prop_streamingCallbackFinalOutputComplete :: Property
-prop_streamingCallbackFinalOutputComplete = propertyWithTempDir $ \tmpDir -> do
-    -- Generate some random lines
-    numLines <- forAll $ Gen.int (Range.linear 1 10)
-    let lines' = map (\i -> "line" <> show i) [1 .. numLines]
-    let cmd = "echo '" <> List.intercalate "'; echo '" lines' <> "'"
+prop_streamingCallbackFinalOutputComplete = withTests 20 $ propertyWithTempDir $ \tmpDir -> do
+    -- Generate number of lines (use small range for determinism)
+    numLines <- forAll $ Gen.int (Range.linear 1 5)
+
+    -- Create a file with the lines and cat it (avoids shell quoting issues)
+    let lines' = map (\i -> "output" <> show i) [1 .. numLines]
+    let content = T.pack $ List.intercalate "\n" lines'
+
+    evalIO $ TIO.writeFile (tmpDir </> "lines.txt") content
+
+    let cmd = "cat " <> tmpDir </> "lines.txt"
 
     lastOutputRef <- evalIO $ newIORef ("" :: Text)
-
     let callback out = modifyIORef' lastOutputRef (const out)
 
     let input =
@@ -300,11 +330,9 @@ prop_streamingCallbackFinalOutputComplete = propertyWithTempDir $ \tmpDir -> do
 
     result <- evalIO $ executeStreaming (testContext tmpDir) "bash" input callback
 
-    -- The callback should eventually receive all the output
-    -- Note: callback gets stdout only, result combines stdout+stderr
-    _lastOutput <- evalIO $ readIORef lastOutputRef
+    annotate $ "Output: " <> T.unpack (toOutput result)
 
-    -- The final result should contain all lines
+    -- Property: the final result contains all lines we wrote
     forM_ lines' $ \line -> do
         assert $ T.isInfixOf (T.pack line) (toOutput result)
 

@@ -36,12 +36,12 @@ import Data.Text qualified as T
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Word (Word64)
-import Numeric (showHex)
 import System.Random (randomIO)
 
 import Bus.Bus qualified as Bus
 import Session.Types
 import Storage.Storage qualified as Storage
+import Util.Identifier qualified as Identifier
 import Util.StorageKeys (sessionKey, sessionPrefix)
 
 -- | Context for session operations
@@ -58,22 +58,19 @@ withSessionContext :: Storage.StorageConfig -> Bus.Bus -> Text -> Text -> Text -
 withSessionContext storage bus projectID directory version action =
     action (SessionContext storage bus projectID directory version)
 
--- | Generate a unique session ID (descending for sorted listing)
+{- | Generate a unique session ID (descending for sorted listing)
+Uses monotonic counter for sub-millisecond ordering
+-}
 generateSessionID :: IO Text
-generateSessionID = do
-    now <- getCurrentTime
-    let ts = realToFrac (utcTimeToPOSIXSeconds now) * 1000 :: Double
-    -- Use max - timestamp for descending order
-    let descending = maxBound - round ts :: Word64
-    rand <- randomIO :: IO Word64
-    pure $ "ses_" <> T.pack (showHex descending "") <> T.pack (showHex rand "")
+generateSessionID = Identifier.descendingWithPrefix "ses"
 
--- | Generate a random slug
+-- | Generate a random slug (12 hex characters)
 generateSlug :: IO Text
 generateSlug = do
     w1 <- randomIO :: IO Word64
     w2 <- randomIO :: IO Word64
-    pure $ T.pack $ showHex (w1 `mod` 0xFFFFFF) "" <> showHex (w2 `mod` 0xFFFFFF) ""
+    -- Use base62 encoding for shorter, URL-safe slugs
+    pure $ T.take 12 $ T.pack $ Identifier.encodeTimeBytes (w1 `mod` 0xFFFFFFFFFFFF) <> Identifier.encodeTimeBytes (w2 `mod` 0xFFFFFFFFFFFF)
 
 -- | Get current timestamp in milliseconds
 nowMs :: IO Double

@@ -701,6 +701,45 @@ prop_sessionMessageCreatePublishesEvents = withTests 20 $ property $ do
             annotate $ "message.part.updated events: " ++ show (listLength partEvents)
             assert $ listLength partEvents >= 1
 
+{- | Property: Messages are returned in correct order (user before assistant).
+The TUI uses binary search to insert messages by ID, which assumes messages
+are sorted by ID in ascending order. When a user sends a message, the user
+message must appear before the assistant response in the list.
+-}
+prop_sessionMessagesOrderedCorrectly :: Property
+prop_sessionMessagesOrderedCorrectly = withTests 20 $ property $ do
+    msg <- forAll genText
+    result <- evalIO $ withState $ \st ->
+        withEnv "OPENROUTER_API_KEY" Nothing $ do
+            let parts = [object ["type" .= ("text" :: Text), "text" .= msg]]
+            let input = CreateMessageInput Nothing parts Nothing Nothing
+            _ <- runHandlerIO (sessionMessageCreateHandler st "session_order_test" input)
+            -- Wait for message storage
+            threadDelay 100000 -- 100ms
+            runHandlerIO (sessionMessageListHandler st "session_order_test" Nothing)
+    case result of
+        Left _err -> failure
+        Right msgs -> do
+            -- Should have at least 2 messages (user + assistant)
+            annotate $ "Number of messages: " ++ show (listLength msgs)
+            assert $ listLength msgs >= 2
+
+            -- Verify user message comes before assistant message
+            let roles = map (messageInfoRole . msgInfo) msgs
+            annotate $ "Message roles: " ++ show roles
+
+            -- Find first user and first assistant
+            let firstUserIdx = List.elemIndex "user" roles
+            let firstAssistantIdx = List.elemIndex "assistant" roles
+
+            case (firstUserIdx, firstAssistantIdx) of
+                (Just uIdx, Just aIdx) -> do
+                    annotate $ "User index: " ++ show uIdx ++ ", Assistant index: " ++ show aIdx
+                    -- User message must come before assistant message
+                    assert $ uIdx < aIdx
+                (Nothing, _) -> failure
+                (_, Nothing) -> failure
+
 {- | Property: Message events are forwarded from bus to eventChan (SSE delivery path).
 This verifies the State.hs subscription that forwards bus events to eventChan,
 which is what SSE handlers read from.
@@ -1528,6 +1567,7 @@ tests =
         , testProperty "session permission handler" prop_sessionPermissionHandler
         , testProperty "session message handlers" prop_sessionMessageHandlers
         , testProperty "session message create publishes events" prop_sessionMessageCreatePublishesEvents
+        , testProperty "session messages ordered correctly" prop_sessionMessagesOrderedCorrectly
         , testProperty "message events forwarded to eventChan" prop_messageEventsForwardedToEventChan
         , testProperty "session.status events published" prop_sessionStatusEventsPublished
         , testProperty "session message part handlers" prop_sessionMessagePartHandlers
