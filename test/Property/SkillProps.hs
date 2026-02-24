@@ -2,6 +2,7 @@
 
 module Property.SkillProps where
 
+import Config.Dhall qualified as Dhall
 import Data.Aeson (encode, object, (.=))
 import Data.ByteString.Lazy qualified as BSL
 import Data.List qualified as List
@@ -42,8 +43,8 @@ prop_parseSkillMissingFrontmatter = property $ do
 {- | Test skill discovery from project .weapon/skills directory
 (This is the standard discovery path, not config-based)
 -}
-prop_skillDiscoveryFromProjectDir :: Property
-prop_skillDiscoveryFromProjectDir = property $ do
+prop_skillDiscoveryFromProjectDir :: Dhall.DhallCache -> Property
+prop_skillDiscoveryFromProjectDir cache = property $ do
     name <- forAll genNonEmptyText
     desc <- forAll genNonEmptyText
     result <- evalIO $ do
@@ -61,7 +62,7 @@ prop_skillDiscoveryFromProjectDir = property $ do
                     , "Body"
                     ]
         TIO.writeFile path content
-        skills <- listSkills tmp
+        skills <- listSkills cache tmp
         let found = any (\skill -> skillName skill == name) skills
         removeDirectoryRecursive tmp
         pure found
@@ -115,13 +116,13 @@ genNonEmptyText = Gen.text (Range.linear 1 50) Gen.alphaNum
 listLength :: [a] -> Int
 listLength = List.foldl' (\acc _ -> acc + 1) 0
 
-tests :: TestTree
-tests =
+tests :: Dhall.DhallCache -> TestTree
+tests cache =
     testGroup
         "Skill Property Tests"
         [ testProperty "parse skill frontmatter" prop_parseSkillFrontmatter
         , testProperty "missing frontmatter" prop_parseSkillMissingFrontmatter
-        , testProperty "discover skills from project dir" prop_skillDiscoveryFromProjectDir
+        , testProperty "discover skills from project dir" (prop_skillDiscoveryFromProjectDir cache)
         , testProperty "parse skill index" prop_parseSkillIndex
         , testProperty "parse skill index multiple" prop_parseSkillIndexMultiple
         , testProperty "parse skill index invalid" prop_parseSkillIndexInvalid

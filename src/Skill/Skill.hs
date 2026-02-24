@@ -45,9 +45,15 @@ instance ToJSON SkillInfo where
             , "content" .= skillContent skill
             ]
 
-listSkills :: FilePath -> IO [SkillInfo]
-listSkills root = do
-    cfg <- Config.get root
+-- | List skills (requires DhallCache)
+listSkills :: Config.DhallCache -> FilePath -> IO [SkillInfo]
+listSkills cache root = do
+    cfg <- Config.load cache root
+    listSkillsWithConfig cfg root
+
+-- | List skills with a pre-loaded config
+listSkillsWithConfig :: CT.Config -> FilePath -> IO [SkillInfo]
+listSkillsWithConfig cfg root = do
     home <- getHomeDirectory
     projectDirs <- projectSkillRoots root
     -- Get skills from config (Dhall SkillConfig records)

@@ -6,6 +6,7 @@ module State (
     initialState,
     initialStateNoProxy,
     initialStateNoProxyWithHome,
+    initialStateNoProxyWithCache,
 
     -- * Agent tracking
     registerAgent,
@@ -21,6 +22,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 
 import Bus.Bus qualified as Bus
+import Config.Dhall qualified as Dhall
 import Data.Text qualified as Text
 import Katip qualified
 import Log qualified
@@ -46,11 +48,18 @@ data AppState = AppState
     , stHomeDir :: Maybe FilePath -- Override home directory for config (tests)
     , stActiveAgents :: TVar (Map Text ThreadId) -- Active agent threads by session ID
     , stIdGen :: Identifier.IdGenState -- Monotonic ID generator state
+    , stDhallCache :: Dhall.DhallCache -- Cached Dhall config loader
     }
 
 -- | Initialize a new state with optional proxy and home directory override
 mkAppState :: Maybe Proxy.ProxyServer -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
 mkAppState proxy homeDir storageDir projectID directory logger = do
+    dhallCache <- Dhall.newDhallCache
+    mkAppStateWithCache proxy dhallCache homeDir storageDir projectID directory logger
+
+-- | Initialize a new state with optional proxy, home directory override, and shared DhallCache
+mkAppStateWithCache :: Maybe Proxy.ProxyServer -> Dhall.DhallCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
+mkAppStateWithCache proxy dhallCache homeDir storageDir projectID directory logger = do
     bus <- Bus.newBus
     eventChan <- newBroadcastTChanIO
     ptyManager <- Pty.newManager (Text.unpack directory)
@@ -78,6 +87,7 @@ mkAppState proxy homeDir storageDir projectID directory logger = do
             , stHomeDir = homeDir
             , stActiveAgents = activeAgents
             , stIdGen = idGen
+            , stDhallCache = dhallCache
             }
 
 -- | Initialize a new state with MITM proxy
@@ -97,6 +107,10 @@ initialStateNoProxy = initialStateNoProxyWithHome Nothing
 -- | Initialize state without proxy, with optional home directory override
 initialStateNoProxyWithHome :: Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
 initialStateNoProxyWithHome = mkAppState Nothing
+
+-- | Initialize state without proxy, with shared DhallCache (for tests)
+initialStateNoProxyWithCache :: Dhall.DhallCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
+initialStateNoProxyWithCache = mkAppStateWithCache Nothing
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Agent Thread Tracking

@@ -260,7 +260,7 @@ pathHandler st = liftIO $ do
 globalConfigHandler :: AppState -> Handler Value
 globalConfigHandler st = liftIO $ do
     path <- getGlobalConfigPath st
-    cfg <- Config.loadFile path
+    cfg <- Config.loadFile (stDhallCache st) path
     return $ Data.Aeson.toJSON $ fromMaybe Config.defaultConfig cfg
 
 -- | Get global config path, using stHomeDir override if set
@@ -502,7 +502,7 @@ errorResponse msg = object ["error" .= msg]
 
 configHandler :: AppState -> Handler Value
 configHandler st = liftIO $ do
-    cfg <- Config.get (unpack (stDirectory st))
+    cfg <- Config.load (stDhallCache st) (unpack (stDirectory st))
     return $ Data.Aeson.toJSON cfg
 
 commandHandler :: Handler [Value]
@@ -1743,12 +1743,12 @@ logHandler st _mDir input = liftIO $ do
 skillHandler :: AppState -> Maybe Text -> Handler [Skill.SkillInfo]
 skillHandler st mDir = liftIO $ do
     let dir = maybe (unpack (stDirectory st)) unpack mDir
-    Skill.listSkills dir
+    Skill.listSkills (stDhallCache st) dir
 
 formatterHandler :: AppState -> Maybe Text -> Handler [Formatter.FormatterStatus]
 formatterHandler st mDir = liftIO $ do
     let dir = maybe (unpack (stDirectory st)) unpack mDir
-    Formatter.statusFor dir
+    Formatter.statusFor (stDhallCache st) dir
 
 experimentalToolIdsHandler :: Handler [Text]
 experimentalToolIdsHandler = return $ map ToolT.tdName Tool.allTools

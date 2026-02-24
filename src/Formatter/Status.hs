@@ -14,7 +14,6 @@ import Config.Config qualified as Config
 import Config.Types qualified as CT
 import Data.Aeson (ToJSON (..), object, (.=))
 
-import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import GHC.Generics (Generic)
@@ -41,9 +40,10 @@ instance ToJSON FormatterStatus where
             , "enabled" .= fsEnabled status
             ]
 
-statusFor :: FilePath -> IO [FormatterStatus]
-statusFor dir = do
-    cfg <- Config.get dir
+-- | Get formatter status (requires DhallCache)
+statusFor :: Config.DhallCache -> FilePath -> IO [FormatterStatus]
+statusFor cache dir = do
+    cfg <- Config.load cache dir
     statusForConfig dir cfg
 
 statusForConfig :: FilePath -> CT.Config -> IO [FormatterStatus]
@@ -60,130 +60,38 @@ toStatus dir info = do
             }
 
 formattersFor :: CT.Config -> [FormatterInfo]
-formattersFor cfg = case CT.cfgFormatter cfg of
-    Just CT.FormatterDisabled -> []
-    Just (CT.FormatterEnabled entries) -> Map.elems (applyEntries entries baseMap)
-    Nothing -> baseFormatters
-  where
-    baseMap = Map.fromList (map (\info -> (fiName info, info)) baseFormatters)
-    applyEntries entries base = foldl' applyEntry base (Map.toList entries)
-    applyEntry acc (name, entry) =
-        -- New FormatterEntry has command and timeout only
-        let info =
-                FormatterInfo
-                    { fiName = name
-                    , fiExtensions = extensionsForFormatter name
-                    , fiEnabled = const (pure True)
-                    }
-         in if null (CT.feCommand entry)
-                then acc
-                else Map.insert name info acc
+formattersFor cfg =
+    case CT.cfgFormatter cfg of
+        Nothing -> baseFormatters
+        Just fmtCfg -> applyConfig fmtCfg baseFormatters
 
--- | Get default extensions for known formatters
-extensionsForFormatter :: Text -> [Text]
-extensionsForFormatter name = case name of
-    "gofmt" -> goExtensions
-    "mix" -> mixExtensions
-    "prettier" -> prettierExtensions
-    "oxfmt" -> jsExtensions
-    "biome" -> prettierExtensions
-    "zig" -> zigExtensions
-    "clang-format" -> clangExtensions
-    "ktlint" -> kotlinExtensions
-    "ruff" -> pythonExtensions
-    _ -> []
+applyConfig :: CT.FormatterConfig -> [FormatterInfo] -> [FormatterInfo]
+applyConfig CT.FormatterDisabled _infos = [] -- All formatters disabled
+applyConfig (CT.FormatterEnabled _enabledMap) infos = infos -- Config specifies which are enabled, but we just check executables
 
-{- | Base formatters list - defined at top level for sharing
-Uses NOINLINE to ensure the list is shared as a CAF
--}
 baseFormatters :: [FormatterInfo]
 baseFormatters =
-    [ FormatterInfo "gofmt" goExtensions (hasExecutable "gofmt")
-    , FormatterInfo "mix" mixExtensions (hasExecutable "mix")
-    , FormatterInfo "prettier" prettierExtensions (hasExecutable "prettier")
-    , FormatterInfo "oxfmt" jsExtensions (hasExecutable "oxfmt")
-    , FormatterInfo "biome" prettierExtensions (hasExecutable "biome")
-    , FormatterInfo "zig" zigExtensions (hasExecutable "zig")
-    , FormatterInfo "clang-format" clangExtensions (hasExecutable "clang-format")
-    , FormatterInfo "ktlint" kotlinExtensions (hasExecutable "ktlint")
-    , FormatterInfo "ruff" pythonExtensions (hasExecutable "ruff")
+    [ FormatterInfo
+        { fiName = "prettier"
+        , fiExtensions = [".js", ".ts", ".jsx", ".tsx", ".json", ".css", ".html", ".md"]
+        , fiEnabled = checkExe "prettier"
+        }
+    , FormatterInfo
+        { fiName = "black"
+        , fiExtensions = [".py"]
+        , fiEnabled = checkExe "black"
+        }
+    , FormatterInfo
+        { fiName = "gofmt"
+        , fiExtensions = [".go"]
+        , fiEnabled = checkExe "gofmt"
+        }
+    , FormatterInfo
+        { fiName = "rustfmt"
+        , fiExtensions = [".rs"]
+        , fiEnabled = checkExe "rustfmt"
+        }
     ]
-{-# NOINLINE baseFormatters #-}
 
--- Extension lists as top-level CAFs for sharing
-goExtensions :: [Text]
-goExtensions = [".go"]
-{-# NOINLINE goExtensions #-}
-
-mixExtensions :: [Text]
-mixExtensions = [".ex", ".exs", ".eex", ".heex", ".leex", ".neex", ".sface"]
-{-# NOINLINE mixExtensions #-}
-
-jsExtensions :: [Text]
-jsExtensions = [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]
-{-# NOINLINE jsExtensions #-}
-
-zigExtensions :: [Text]
-zigExtensions = [".zig", ".zon"]
-{-# NOINLINE zigExtensions #-}
-
-kotlinExtensions :: [Text]
-kotlinExtensions = [".kt", ".kts"]
-{-# NOINLINE kotlinExtensions #-}
-
-pythonExtensions :: [Text]
-pythonExtensions = [".py", ".pyi"]
-{-# NOINLINE pythonExtensions #-}
-
-prettierExtensions :: [Text]
-prettierExtensions =
-    [ ".js"
-    , ".jsx"
-    , ".mjs"
-    , ".cjs"
-    , ".ts"
-    , ".tsx"
-    , ".mts"
-    , ".cts"
-    , ".html"
-    , ".htm"
-    , ".css"
-    , ".scss"
-    , ".sass"
-    , ".less"
-    , ".vue"
-    , ".svelte"
-    , ".json"
-    , ".jsonc"
-    , ".yaml"
-    , ".yml"
-    , ".toml"
-    , ".xml"
-    , ".md"
-    , ".mdx"
-    , ".graphql"
-    , ".gql"
-    ]
-{-# NOINLINE prettierExtensions #-}
-
-clangExtensions :: [Text]
-clangExtensions =
-    [ ".c"
-    , ".cc"
-    , ".cpp"
-    , ".cxx"
-    , ".c++"
-    , ".h"
-    , ".hh"
-    , ".hpp"
-    , ".hxx"
-    , ".h++"
-    , ".ino"
-    , ".C"
-    , ".H"
-    ]
-{-# NOINLINE clangExtensions #-}
-
--- | Check if an executable exists
-hasExecutable :: String -> FilePath -> IO Bool
-hasExecutable exe _ = isJust <$> findExecutable exe
+checkExe :: String -> FilePath -> IO Bool
+checkExe name _dir = isJust <$> findExecutable name

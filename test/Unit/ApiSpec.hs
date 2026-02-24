@@ -8,18 +8,21 @@ import Data.Aeson
 import Data.Text qualified as T
 import Test.Hspec
 
+import Config.Dhall qualified as Dhall
 import Handlers (server)
+import Katip (Severity (ErrorS))
 import Log qualified
 import Network.HTTP.Types (status200)
 import Network.Wai (pathInfo, rawPathInfo, requestMethod)
 import Network.Wai.Test
 import Servant (serve)
-import State (initialStateNoProxy)
+import State (initialStateNoProxyWithCache)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
 
-spec :: Spec
-spec = do
+-- | API spec that takes a shared DhallCache
+spec :: Dhall.DhallCache -> Spec
+spec dhallCache = do
     describe "Health API" $ do
         it "should create a healthy response" $ do
             let health = Health True "0.1.0"
@@ -81,8 +84,8 @@ spec = do
             cwd <- getCurrentDirectory
             let storageDir = cwd </> ".opencode-test" </> "wai-unit"
             createDirectoryIfMissing True storageDir
-            logger <- Log.newLogger "unit-test"
-            state <- initialStateNoProxy storageDir "test_project" (T.pack cwd) logger
+            logger <- Log.newLoggerWithLevel "unit-test" ErrorS
+            state <- initialStateNoProxyWithCache dhallCache Nothing storageDir "test_project" (T.pack cwd) logger
             let app = serve api (server state)
 
             let waiReq = defaultRequest{requestMethod = "GET", rawPathInfo = "/global/health", pathInfo = ["global", "health"]}

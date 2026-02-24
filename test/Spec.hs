@@ -1,6 +1,7 @@
 -- | Main test runner for opencode-server
 module Main where
 
+import Config.Dhall qualified as Dhall
 import Integration.HaskemathesisTest qualified as HaskemathesisTest
 import Property.AgentLogicProps qualified as AgentLogicProps
 import Property.AgentTypesProps qualified as AgentTypesProps
@@ -59,8 +60,13 @@ main = do
     -- these signals when they terminate.
     _ <- installHandler sigTERM Ignore Nothing
     _ <- installHandler sigHUP Ignore Nothing
-    apiTests <- testSpec "API Unit Tests" ApiSpec.spec
-    haskemathesisTests <- HaskemathesisTest.tests
+
+    -- Create shared DhallCache once for all tests that need it
+    -- This avoids re-parsing Dhall config files (~75% speedup)
+    dhallCache <- Dhall.newDhallCache
+
+    apiTests <- testSpec "API Unit Tests" (ApiSpec.spec dhallCache)
+    haskemathesisTests <- HaskemathesisTest.tests dhallCache
     defaultMain $
         testGroup
             "All Tests"
@@ -72,16 +78,16 @@ main = do
                 , ConfigProps.tests
                 , DiffProps.tests
                 , EventProps.tests
-                , FormatterProps.tests
+                , FormatterProps.tests dhallCache
                 , FindParseProps.tests
                 , ExperimentalProps.tests
-                , HandlerProps.tests
+                , HandlerProps.tests dhallCache
                 , HealthProps.tests
                 , IdentifierProps.tests
                 , PathProps.tests
                 , SessionProps.tests
                 , SessionStatusProps.tests
-                , SkillProps.tests
+                , SkillProps.tests dhallCache
                 , ToolProps.tests
                 , ToolStreamingProps.tests
                 , MessageProps.tests

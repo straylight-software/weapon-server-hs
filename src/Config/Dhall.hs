@@ -1,18 +1,24 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | Dhall configuration loader
-Loads and evaluates Dhall configuration files with defaults
+Loads and evaluates Dhall configuration files with defaults.
+
+Uses MVar-based caching to avoid re-parsing Dhall files on every call.
+The cache is initialized once per application and passed through AppState.
 -}
 module Config.Dhall (
-    -- * Loading
-    loadConfig,
-    loadConfigFromFile,
-    loadDefaults,
+    -- * Cache
+    DhallCache,
+    newDhallCache,
+
+    -- * Loading (all cached)
+    loadConfigCached,
+    loadConfigFromFileCached,
 
     -- * Paths
     globalConfigPath,
     projectConfigPath,
-    defaultsPath,
 
     -- * Merging
     mergeConfigs,
@@ -20,7 +26,10 @@ module Config.Dhall (
 
 import Config.Types
 import Control.Applicative ((<|>))
+import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (SomeException, try)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -42,7 +51,82 @@ projectConfigPath dir = dir </> "weapon.dhall"
 defaultsPath :: FilePath
 defaultsPath = "dhall/Defaults.dhall"
 
--- | Load defaults from Dhall file
+-- ════════════════════════════════════════════════════════════════════════════
+-- Dhall Cache
+-- ════════════════════════════════════════════════════════════════════════════
+
+{- | Cache for parsed Dhall configurations.
+Stores both the defaults and any loaded config files.
+Thread-safe via MVar.
+-}
+data DhallCache = DhallCache
+    { dcDefaults :: MVar (Maybe Config)
+    -- ^ Cached defaults (Nothing = not yet loaded)
+    , dcFiles :: MVar (Map FilePath (Maybe Config))
+    -- ^ Cached config files by path
+    }
+
+-- | Create a new empty Dhall cache
+newDhallCache :: IO DhallCache
+newDhallCache = do
+    defaults <- newMVar Nothing
+    files <- newMVar Map.empty
+    pure $ DhallCache defaults files
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- Cached Loading Functions
+-- ════════════════════════════════════════════════════════════════════════════
+
+{- | Load defaults from Dhall file (cached).
+
+This function caches the result - the Dhall file is parsed only once
+per cache instance, regardless of how many times it's called.
+-}
+loadDefaultsCached :: DhallCache -> IO Config
+loadDefaultsCached cache = modifyMVar (dcDefaults cache) $ \case
+    Just cfg -> pure (Just cfg, cfg)
+    Nothing -> do
+        cfg <- loadDefaults
+        pure (Just cfg, cfg)
+
+{- | Load config from a specific Dhall file (cached).
+
+Results are cached by filepath - each file is parsed only once per cache.
+Returns Nothing if the file doesn't exist or fails to parse.
+-}
+loadConfigFromFileCached :: DhallCache -> FilePath -> IO (Maybe Config)
+loadConfigFromFileCached cache path = modifyMVar (dcFiles cache) $ \files ->
+    case Map.lookup path files of
+        Just cfg -> pure (files, cfg)
+        Nothing -> do
+            cfg <- loadConfigFromFile path
+            pure (Map.insert path cfg files, cfg)
+
+-- | Load full config (global + project + defaults) using cache.
+loadConfigCached :: DhallCache -> FilePath -> IO Config
+loadConfigCached cache projectDir = do
+    -- Load built-in defaults (cached)
+    defaults <- loadDefaultsCached cache
+
+    -- Load global config (cached)
+    globalPath <- globalConfigPath
+    globalCfg <- loadConfigFromFileCached cache globalPath
+
+    -- Load project config (cached)
+    let projectPath = projectConfigPath projectDir
+    projectCfg <- loadConfigFromFileCached cache projectPath
+
+    -- Merge: defaults <- global <- project
+    let withGlobal = maybe defaults (mergeConfigs defaults) globalCfg
+    let final = maybe withGlobal (mergeConfigs withGlobal) projectCfg
+
+    pure final
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- Uncached Loading Functions (for backwards compatibility)
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- | Load defaults from Dhall file (uncached)
 loadDefaults :: IO Config
 loadDefaults = do
     exists <- doesFileExist defaultsPath
@@ -54,7 +138,7 @@ loadDefaults = do
                 Right cfg -> pure cfg
         else pure defaultConfig
 
--- | Load config from a specific Dhall file
+-- | Load config from a specific Dhall file (uncached)
 loadConfigFromFile :: FilePath -> IO (Maybe Config)
 loadConfigFromFile path = do
     exists <- doesFileExist path
@@ -73,26 +157,6 @@ _loadConfigFromText expr = do
     case result of
         Left _err -> pure Nothing
         Right cfg -> pure (Just cfg)
-
--- | Load full config (global + project + defaults)
-loadConfig :: FilePath -> IO Config
-loadConfig projectDir = do
-    -- Load built-in defaults
-    defaults <- loadDefaults
-
-    -- Load global config
-    globalPath <- globalConfigPath
-    globalCfg <- loadConfigFromFile globalPath
-
-    -- Load project config
-    let projectPath = projectConfigPath projectDir
-    projectCfg <- loadConfigFromFile projectPath
-
-    -- Merge: defaults <- global <- project
-    let withGlobal = maybe defaults (mergeConfigs defaults) globalCfg
-    let final = maybe withGlobal (mergeConfigs withGlobal) projectCfg
-
-    pure final
 
 -- | Merge two configs (second overrides first)
 mergeConfigs :: Config -> Config -> Config

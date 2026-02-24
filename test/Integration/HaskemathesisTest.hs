@@ -28,8 +28,10 @@ import Haskemathesis.Integration.Tasty (testTreeForExecutorNegative, testTreeFor
 import Haskemathesis.OpenApi.Loader (loadOpenApiFile)
 import Haskemathesis.Stateful.Checks (ensureModificationPersisted)
 
+import Config.Dhall qualified as Dhall
 import Haskemathesis.OpenApi.Resolve (resolveOperations)
 import Haskemathesis.OpenApi.Types (ResolvedOperation (..))
+import Katip (Severity (ErrorS))
 import Log qualified
 import Middleware (supplyEmptyBody)
 import Network.Wai (Application)
@@ -37,7 +39,7 @@ import Servant (serveWithContext)
 import Server.ErrorFormatters (errorFormattersContext)
 import Session.Session qualified as Session
 import Session.Types (Session (..), SessionTime (..))
-import State (AppState (..), initialStateNoProxyWithHome)
+import State (AppState (..), initialStateNoProxyWithCache)
 import Storage.Storage qualified as Storage
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, getCurrentDirectory, removeDirectoryRecursive)
 import System.FilePath ((</>))
@@ -83,8 +85,8 @@ directory AND home directory to isolate all config file access.
 
 Pre-seeds sessions so session endpoints can be properly tested.
 -}
-createTestApp :: IORef Int -> IO (Application, AppState)
-createTestApp counter = do
+createTestApp :: Dhall.DhallCache -> IORef Int -> IO (Application, AppState)
+createTestApp dhallCache counter = do
     cwd <- getCurrentDirectory
     -- Get unique ID for this test instance
     uniqueId <- atomicModifyIORef' counter (\n -> (n + 1, n))
@@ -96,9 +98,11 @@ createTestApp counter = do
     createDirectoryIfMissing True (storageDir </> ".config" </> "weapon")
 
     -- Create a persistent logger (not using withLogger bracket pattern)
-    logger <- Log.newLogger "test"
+    -- Use ErrorS to suppress INFO-level logs during tests
+    logger <- Log.newLoggerWithLevel "test" ErrorS
     -- Use storageDir as storage, project dir, AND home dir to fully isolate config files
-    state <- initialStateNoProxyWithHome (Just storageDir) storageDir "test_project" (T.pack storageDir) logger
+    -- Use shared dhallCache to avoid re-parsing Dhall files for each test
+    state <- initialStateNoProxyWithCache dhallCache (Just storageDir) storageDir "test_project" (T.pack storageDir) logger
 
     -- Pre-seed sessions with known IDs
     preSeedSessions state
@@ -161,9 +165,9 @@ rewriteSessionId req =
 {- | Create an executor with a unique app instance that rewrites session IDs
 Each executor has its own app, so different tests (properties) don't conflict
 -}
-createExecutorForOperation :: IORef Int -> IO ExecutorWithTimeout
-createExecutorForOperation counter = do
-    (app, _state) <- createTestApp counter
+createExecutorForOperation :: Dhall.DhallCache -> IORef Int -> IO ExecutorWithTimeout
+createExecutorForOperation dhallCache counter = do
+    (app, _state) <- createTestApp dhallCache counter
     pure $ \timeout req -> do
         let req' = rewriteSessionId req
         executeWaiWithTimeout app timeout req'
@@ -186,8 +190,8 @@ testConfig =
 We create a separate executor (with unique storage) for each operation
 to avoid file lock conflicts when tests run in parallel.
 -}
-tests :: IO TestTree
-tests = do
+tests :: Dhall.DhallCache -> IO TestTree
+tests dhallCache = do
     counter <- newIORef 0
     specResult <- loadOpenApiFile openApiSpecPath
     case specResult of
@@ -197,8 +201,8 @@ tests = do
                 filteredOps = filter operationFilter operations
 
             -- Create test trees for each operation with isolated storage
-            positiveTrees <- mapM (makeOperationTest counter openApi) filteredOps
-            negativeTrees <- mapM (makeOperationTestNegative counter openApi) filteredOps
+            positiveTrees <- mapM (makeOperationTest dhallCache counter openApi) filteredOps
+            negativeTrees <- mapM (makeOperationTestNegative dhallCache counter openApi) filteredOps
             pure $
                 testGroup
                     "Haskemathesis OpenAPI Compliance"
@@ -207,13 +211,13 @@ tests = do
                     ]
 
 -- | Create a test for a single operation with isolated storage
-makeOperationTest :: IORef Int -> OpenApi -> ResolvedOperation -> IO TestTree
-makeOperationTest counter openApi op = do
-    executor <- createExecutorForOperation counter
+makeOperationTest :: Dhall.DhallCache -> IORef Int -> OpenApi -> ResolvedOperation -> IO TestTree
+makeOperationTest dhallCache counter openApi op = do
+    executor <- createExecutorForOperation dhallCache counter
     pure $ testTreeForExecutorWithConfig openApi testConfig executor [op]
 
 -- | Create a negative test for a single operation with isolated storage
-makeOperationTestNegative :: IORef Int -> OpenApi -> ResolvedOperation -> IO TestTree
-makeOperationTestNegative counter openApi op = do
-    executor <- createExecutorForOperation counter
+makeOperationTestNegative :: Dhall.DhallCache -> IORef Int -> OpenApi -> ResolvedOperation -> IO TestTree
+makeOperationTestNegative dhallCache counter openApi op = do
+    executor <- createExecutorForOperation dhallCache counter
     pure $ testTreeForExecutorNegative openApi testConfig executor [op]

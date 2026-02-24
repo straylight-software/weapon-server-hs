@@ -1,17 +1,20 @@
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Integration.WaiDebugTest (debugTest) where
 
 import Api (api)
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as T
+import Config.Dhall qualified as Dhall
+import Data.ByteString.Lazy qualified as LBS
+import Data.Text qualified as T
 import Handlers (server)
-import qualified Log
+import Katip (Severity (ErrorS))
+import Log qualified
 import Network.HTTP.Types
 import Network.Wai
 import Network.Wai.Test
 import Servant (serve)
-import State (initialStateNoProxy)
+import State (initialStateNoProxyWithCache)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
 
@@ -20,8 +23,9 @@ debugTest = do
     cwd <- getCurrentDirectory
     let storageDir = cwd </> ".opencode-test" </> "wai-debug"
     createDirectoryIfMissing True storageDir
-    logger <- Log.newLogger "debug"
-    state <- initialStateNoProxy storageDir "test_project" (T.pack cwd) logger
+    dhallCache <- Dhall.newDhallCache
+    logger <- Log.newLoggerWithLevel "debug" ErrorS
+    state <- initialStateNoProxyWithCache dhallCache Nothing storageDir "test_project" (T.pack cwd) logger
     let app = serve api (server state)
 
     -- Test the health endpoint

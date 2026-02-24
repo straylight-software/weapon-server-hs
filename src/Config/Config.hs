@@ -1,12 +1,17 @@
 {- | Config module - Dhall configuration loading and management
-Uses Dhall as the only configuration format
+Uses Dhall as the only configuration format.
+
+All loading functions require a DhallCache for performance.
 -}
 module Config.Config (
     -- * Types
     Config.Types.Config (..),
 
-    -- * Operations
-    get,
+    -- * Cache
+    Dhall.DhallCache,
+    Dhall.newDhallCache,
+
+    -- * Operations (all cached)
     load,
     loadFile,
     globalConfigPath,
@@ -30,18 +35,14 @@ globalConfigPath = Dhall.globalConfigPath
 projectConfigPath :: FilePath -> FilePath
 projectConfigPath = Dhall.projectConfigPath
 
--- | Load config from a Dhall file
-loadFile :: FilePath -> IO (Maybe Config)
-loadFile = Dhall.loadConfigFromFile
+-- | Load config from a Dhall file (cached)
+loadFile :: Dhall.DhallCache -> FilePath -> IO (Maybe Config)
+loadFile = Dhall.loadConfigFromFileCached
 
--- | Load config (defaults + global + project)
-load :: FilePath -> IO Config
-load = Dhall.loadConfig
+-- | Load config (defaults + global + project) (cached)
+load :: Dhall.DhallCache -> FilePath -> IO Config
+load = Dhall.loadConfigCached
 
 -- | Merge two configs (second overrides first)
 mergeConfig :: Config -> Config -> Config
 mergeConfig = Dhall.mergeConfigs
-
--- | Get config for current project
-get :: FilePath -> IO Config
-get = load
