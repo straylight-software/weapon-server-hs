@@ -59,11 +59,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1771792346,
-        "narHash": "sha256-GlXJmAml5JQyhqCEniSzSuZbR/4/NH1JIs9EaPICj9o=",
+        "lastModified": 1771950099,
+        "narHash": "sha256-sNg7CQAzxq/pNZUp0NyJqkAqJ6NboXhUZJupT6sMiM4=",
         "ref": "refs/heads/master",
-        "rev": "41ebe1af41a07f4bd78846c6d2565c99e48376ac",
-        "revCount": 37,
+        "rev": "86a6cb443959c5fae5286e12594b70e7cf4ab1ec",
+        "revCount": 47,
         "type": "git",
         "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       },

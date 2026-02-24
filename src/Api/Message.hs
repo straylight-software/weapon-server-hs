@@ -418,4 +418,4 @@ type SessionPromptAsyncAPI =
         :> Capture "sessionID" Text
         :> "prompt_async"
         :> ReqBody '[JSON] CreateMessageInput
-        :> Post '[JSON] Value
+        :> PostNoContent

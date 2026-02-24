@@ -14,6 +14,7 @@ import Provider.Provider qualified as Provider
 import Provider.Types
 import Storage.Storage qualified as Storage
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.Environment (setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO.Temp (createTempDirectory)
 import Test.Tasty
@@ -118,6 +119,51 @@ prop_authStatusCorruptJson = property $ do
     let openaiAuth = filter (\a -> paProviderID a == "openai") result
     assert $ not (any paAuthenticated openaiAuth)
 
+-- | Property: listConnected includes providers with stored auth
+prop_listConnectedStoredAuth :: Property
+prop_listConnectedStoredAuth = property $ do
+    token <- forAll genNonEmptyText
+    result <- evalIO $ do
+        tmpDir <- createTempDirectory "/tmp" "provider-connected"
+        Storage.withStorage tmpDir $ \storage -> do
+            -- Initially no stored auth
+            connectedBefore <- Provider.listConnected storage
+            -- Store auth for openai
+            Provider.setAuth storage "openai" token
+            connectedAfter <- Provider.listConnected storage
+            -- Clean up
+            Provider.removeAuth storage "openai"
+            connectedFinal <- Provider.listConnected storage
+            removeDirectoryRecursive tmpDir
+            pure (connectedBefore, connectedAfter, connectedFinal)
+    let (before, afterStore, afterRemove) = result
+    -- Before: openai should not be in connected (unless env var set)
+    -- After store: openai should be in connected
+    assert $ "openai" `elem` afterStore
+    -- After remove: openai should not be in connected (unless env var set)
+    assert $ "openai" `notElem` before || "openai" `notElem` afterRemove
+
+-- | Property: listConnected includes providers with env var auth
+prop_listConnectedEnvAuth :: Property
+prop_listConnectedEnvAuth = property $ do
+    token <- forAll genNonEmptyText
+    result <- evalIO $ do
+        tmpDir <- createTempDirectory "/tmp" "provider-env"
+        Storage.withStorage tmpDir $ \storage -> do
+            -- Set env var for anthropic
+            setEnv "ANTHROPIC_API_KEY" (show token)
+            connected <- Provider.listConnected storage
+            -- Clean up env var
+            unsetEnv "ANTHROPIC_API_KEY"
+            connectedAfter <- Provider.listConnected storage
+            removeDirectoryRecursive tmpDir
+            pure (connected, connectedAfter)
+    let (withEnv, withoutEnv) = result
+    -- With env var: anthropic should be in connected
+    assert $ "anthropic" `elem` withEnv
+    -- Without env var: anthropic should not be in connected
+    assert $ "anthropic" `notElem` withoutEnv
+
 -- Generators
 genText :: Gen Text
 genText = Gen.text (Range.linear 0 100) Gen.alphaNum
@@ -206,4 +252,6 @@ tests =
         , testProperty "ModelLimit round-trip" prop_modelLimitRoundtrip
         , testProperty "Auth persistence" prop_authPersistence
         , testProperty "Auth status handles corrupt JSON" prop_authStatusCorruptJson
+        , testProperty "listConnected includes stored auth" prop_listConnectedStoredAuth
+        , testProperty "listConnected includes env auth" prop_listConnectedEnvAuth
         ]

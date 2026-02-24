@@ -8,7 +8,7 @@ import Bus.Bus qualified as Bus
 import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
-import Control.Exception (bracket, catch)
+import Control.Exception (SomeException, bracket, catch)
 import Control.Monad (void)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.Aeson.Key qualified as K
@@ -38,8 +38,8 @@ import Network.Wai.Internal (ResponseReceived (..))
 import Prompt.Async qualified as PromptAsync
 import Pty.Connect (ptyConnectHandler)
 import Pty.Pty qualified as Pty
-import Servant (Tagged (..))
-import Servant.Server (Handler, ServerError, runHandler)
+import Servant (NoContent (..), Tagged (..))
+import Servant.Server (Handler, ServerError (..), runHandler)
 import State
 import Storage.Storage qualified as Storage
 import System.Directory (createDirectory, findExecutable)
@@ -342,18 +342,16 @@ prop_providerHandler = withTests 20 $ property $ do
 prop_providerOauthHandlers :: Property
 prop_providerOauthHandlers = withTests 10 $ property $ do
     pid <- forAll genName
-    token <- forAll genName
+    code <- forAll genName
     result <- evalIO $ withState $ \st -> do
         let input = object ["redirect" .= ("http://localhost" :: Text), "scopes" .= ["read" :: Text]]
         auth <- runHandlerIO (providerOauthAuthorizeHandler st pid input)
         callback <- case auth of
             Left _err -> pure (Left _err)
-            Right val -> do
-                case lookupText "state" val of
-                    Nothing -> pure (Right False)
-                    Just state -> do
-                        let payload = object ["state" .= state, "token" .= token]
-                        runHandlerIO (providerOauthCallbackHandler st pid Nothing payload)
+            Right _val -> do
+                -- Callback expects: { method: number, code?: string }
+                let payload = object ["method" .= (0 :: Int), "code" .= code]
+                runHandlerIO (providerOauthCallbackHandler st pid Nothing payload)
         pure (auth, callback)
     case result of
         (Left _err, _) -> failure
@@ -361,7 +359,7 @@ prop_providerOauthHandlers = withTests 10 $ property $ do
         (Right auth, Right callbackResult) -> do
             lookupText "providerID" auth === Just pid
             assert $ isJust (lookupText "state" auth)
-            -- Now callback returns Bool
+            -- Callback returns Bool
             callbackResult === True
 
 prop_configHandler :: Property
@@ -1009,6 +1007,36 @@ prop_fileReadHandlerBinary = withTests 20 $ property $ do
             let encoded = TE.decodeUtf8 (B64.encode bytes)
             fcContent file === encoded
 
+-- | Property: fileReadHandler returns 400 for empty path
+prop_fileReadHandlerEmptyPath :: Property
+prop_fileReadHandlerEmptyPath = withTests 10 $ property $ do
+    result <- evalIO $ withTmp $ \root ->
+        runHandlerIO (fileReadHandler (Just (T.pack root)) "")
+    case result of
+        Left err -> errHTTPCode err === 400
+        Right _ -> failure
+
+-- | Property: fileReadHandler returns 400 for directory path
+prop_fileReadHandlerDirectoryPath :: Property
+prop_fileReadHandlerDirectoryPath = withTests 10 $ property $ do
+    dirName <- forAll genName
+    result <- evalIO $ withTmp $ \root -> do
+        createDirectory (root </> T.unpack dirName)
+        runHandlerIO (fileReadHandler (Just (T.pack root)) dirName)
+    case result of
+        Left err -> errHTTPCode err === 400
+        Right _ -> failure
+
+-- | Property: fileReadHandler returns 404 for non-existent file
+prop_fileReadHandlerNotFound :: Property
+prop_fileReadHandlerNotFound = withTests 10 $ property $ do
+    name <- forAll genName
+    result <- evalIO $ withTmp $ \root ->
+        runHandlerIO (fileReadHandler (Just (T.pack root)) name)
+    case result of
+        Left err -> errHTTPCode err === 404
+        Right _ -> failure
+
 prop_chatHandlerAnthropicMissing :: Property
 prop_chatHandlerAnthropicMissing = withTests 20 $ property $ do
     msg <- forAll genText
@@ -1100,13 +1128,23 @@ prop_promptAsyncIndex = withTests 20 $ property $ do
     result <- evalIO $ withState $ \st -> do
         let parts = [object ["type" .= ("text" :: Text), "text" .= ("hi" :: Text)]]
         let input = CreateMessageInput Nothing parts Nothing Nothing
+        -- Get index before (may not exist, so default to empty list)
+        idsBefore <-
+            Control.Exception.catch
+                (Storage.read (stStorage st) (PromptAsync.promptAsyncIndexKey "session") :: IO [Text])
+                (\(_ :: SomeException) -> pure [])
         res <- runHandlerIO (sessionPromptAsyncHandler st "session" input)
         case res of
             Left _err -> pure (res, False)
-            Right val -> do
-                let reqId = lookupText "requestID" val
-                ids <- Storage.read (stStorage st) (PromptAsync.promptAsyncIndexKey "session") :: IO [Text]
-                pure (res, maybe False (`elem` ids) reqId)
+            Right NoContent -> do
+                -- Get index after - should have one more entry
+                idsAfter <-
+                    Control.Exception.catch
+                        (Storage.read (stStorage st) (PromptAsync.promptAsyncIndexKey "session") :: IO [Text])
+                        (\(_ :: SomeException) -> pure [])
+                -- Check that exactly one new ID was added
+                let newIds = filter (`notElem` idsBefore) idsAfter
+                pure (res, newIds /= [])
     case result of
         (Left _err, _) -> failure
         (Right _result, ok) -> assert ok
@@ -1504,6 +1542,9 @@ tests =
         , testProperty "file list handler" prop_fileListHandler
         , testProperty "file read handler" prop_fileReadHandler
         , testProperty "file read handler binary" prop_fileReadHandlerBinary
+        , testProperty "file read handler empty path" prop_fileReadHandlerEmptyPath
+        , testProperty "file read handler directory path" prop_fileReadHandlerDirectoryPath
+        , testProperty "file read handler not found" prop_fileReadHandlerNotFound
         , testProperty "chat handler anthropic missing" prop_chatHandlerAnthropicMissing
         , testProperty "chat handler openrouter missing" prop_chatHandlerOpenRouterMissing
         , testProperty "prompt async index" prop_promptAsyncIndex

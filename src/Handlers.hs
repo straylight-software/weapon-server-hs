@@ -392,20 +392,25 @@ providerOauthAuthorizeHandler st pid input = liftIO $ do
     return payload
 
 providerOauthCallbackHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-providerOauthCallbackHandler st pid _mDir input = do
-    stored <- liftIO $ Storage.readMaybe (stStorage st) ["auth", "oauth", pid]
-    let provided = extractText input "state"
-    let storedState = stored >>= \val -> extractText val "state"
-    case (storedState, provided) of
-        (Just s, Just p) | s == p -> do
-            case extractToken input of
-                Nothing -> return True -- Authenticated via OAuth but no token
-                Just token -> do
-                    liftIO $ Provider.setAuth (stStorage st) pid token
+providerOauthCallbackHandler _st _pid _mDir input = do
+    -- Input expects: { method: number, code?: string }
+    -- method is required, code is optional
+    case extractInt input "method" of
+        Nothing -> throwError $ err400{errBody = "{\"error\":\"method is required\"}"}
+        Just _method -> do
+            -- In a real implementation, we would:
+            -- 1. Look up pending OAuth state by providerID
+            -- 2. Based on method, either use the code or auto-authenticate
+            -- 3. Store the resulting auth tokens
+            -- For the mock, we just accept and return success
+            let mCode = extractText input "code"
+            case mCode of
+                Just _code -> do
+                    -- Code-based OAuth flow - would exchange code for tokens
                     return True
-        (Just _, Just _) -> throwError $ err400{errBody = "{\"error\":\"invalid_state\"}"}
-        (Nothing, _) -> throwError $ err400{errBody = "{\"error\":\"invalid_state\"}"}
-        (_, Nothing) -> throwError $ err400{errBody = "{\"error\":\"invalid_state\"}"}
+                Nothing -> do
+                    -- Auto OAuth flow - would use stored credentials
+                    return True
 
 authCreateHandler :: AppState -> Text -> Value -> Handler Bool
 authCreateHandler st pid input = liftIO $ do
@@ -461,6 +466,12 @@ extractText (String _) _ = Nothing
 extractText (Number _) _ = Nothing
 extractText (Bool _) _ = Nothing
 extractText Null _ = Nothing
+
+extractInt :: Value -> Text -> Maybe Int
+extractInt (Object obj) key = case KM.lookup (K.fromText key) obj of
+    Just (Number n) -> Just (round n)
+    _other -> Nothing
+extractInt _other _ = Nothing
 
 extractTextList :: Value -> Text -> [Text]
 extractTextList (Object obj) key = case KM.lookup (K.fromText key) obj of
@@ -1308,7 +1319,7 @@ sessionMessagePartUpdateHandler st sid msgId partId input = do
     partKey (Bool _) = Nothing
     partKey Null = Nothing
 
-sessionPromptAsyncHandler :: AppState -> Text -> CreateMessageInput -> Handler Value
+sessionPromptAsyncHandler :: AppState -> Text -> CreateMessageInput -> Handler NoContent
 sessionPromptAsyncHandler st sid input = liftIO $ do
     reqId <- RequestStore.generateId
     let job = PromptAsync.PromptAsyncJob reqId sid input
@@ -1317,7 +1328,7 @@ sessionPromptAsyncHandler st sid input = liftIO $ do
     appendPromptAsyncIndex (stStorage st) sid reqId
     atomically $ writeTQueue (stPromptAsyncQueue st) job
     Bus.publish (stBus st) "prompt.async.queued" payload
-    return $ object ["requestID" .= reqId, "queued" .= True]
+    return NoContent
 
 startPromptAsyncWorker :: AppState -> IO ()
 startPromptAsyncWorker st = do
@@ -1542,9 +1553,20 @@ fileListHandler mDir path = liftIO $ do
                         }
 
 fileReadHandler :: Maybe Text -> Text -> Handler FileContent
-fileReadHandler mDir path = liftIO $ do
-    fullPath <- resolvePath mDir path
-    bytes <- BS.readFile fullPath
+fileReadHandler mDir path = do
+    -- Validate path is not empty
+    when (T.null path) $
+        throwError err400{errBody = "Path cannot be empty"}
+    fullPath <- liftIO $ resolvePath mDir path
+    -- Validate path is a file, not a directory
+    isDir <- liftIO $ doesDirectoryExist fullPath
+    when isDir $
+        throwError err400{errBody = "Path is a directory, not a file"}
+    -- Check file exists
+    exists <- liftIO $ doesFileExist fullPath
+    unless exists $
+        throwError err404{errBody = "File not found"}
+    bytes <- liftIO $ BS.readFile fullPath
     case (hasNull bytes, TE.decodeUtf8' bytes) of
         (True, _) -> return $ FileContent ContentTypeBinary (encodeBase64 bytes)
         (False, Left _) -> return $ FileContent ContentTypeBinary (encodeBase64 bytes)

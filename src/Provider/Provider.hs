@@ -29,6 +29,7 @@ module Provider.Provider (
 ) where
 
 import Control.Exception qualified
+import Control.Monad (filterM)
 import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson.KeyMap qualified as KM
 import Data.Map.Strict qualified as Map
@@ -240,12 +241,13 @@ anyM f (x : xs) = do
     ok <- f x
     if ok then pure True else anyM f xs
 
--- | List connected provider IDs (those with stored auth)
+-- | List connected provider IDs (those with env auth OR stored auth)
 listConnected :: Storage.StorageConfig -> IO [Text]
 listConnected storage = do
-    keys <- Storage.list storage ["auth"]
-    -- Each key is ["auth", providerID], so extract the second element
-    return [pid | [_, pid] <- keys]
+    providers <- list
+    let providerIds = map providerId providers
+    -- Check which providers have API keys (either from env or storage)
+    filterM (fmap isJust . getApiKey storage) providerIds
 
 -- | Set auth for a provider
 setAuth :: Storage.StorageConfig -> Text -> Text -> IO ()

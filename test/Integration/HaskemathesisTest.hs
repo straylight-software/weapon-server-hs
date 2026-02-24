@@ -20,11 +20,14 @@ import Data.OpenApi (OpenApi)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Handlers (server)
-import Haskemathesis.Config (TestConfig (..), defaultTestConfig)
+import Haskemathesis.Check.Standard (strictChecks)
+import Haskemathesis.Config (TestConfig (..), defaultStatefulChecks, defaultTestConfig)
 import Haskemathesis.Execute.Types (ApiRequest (..), ExecutorWithTimeout)
 import Haskemathesis.Execute.Wai (executeWaiWithTimeout)
 import Haskemathesis.Integration.Tasty (testTreeForExecutorNegative, testTreeForExecutorWithConfig)
 import Haskemathesis.OpenApi.Loader (loadOpenApiFile)
+import Haskemathesis.Stateful.Checks (ensureModificationPersisted)
+
 import Haskemathesis.OpenApi.Resolve (resolveOperations)
 import Haskemathesis.OpenApi.Types (ResolvedOperation (..))
 import Log qualified
@@ -52,6 +55,7 @@ skipEndpoints =
     , "event.subscribe" -- SSE streaming endpoint (text/event-stream)
     , "global.event" -- SSE streaming endpoint (text/event-stream)
     , "session.subscribe" -- SSE streaming endpoint
+    , "part.update" -- Uses $ref to Part schema with anyOf that haskemathesis can't resolve
     ]
 
 -- | Filter out non-testable endpoints
@@ -163,21 +167,16 @@ createExecutorForOperation counter = do
         let req' = rewriteSessionId req
         executeWaiWithTimeout app timeout req'
 
--- | Test configuration for positive tests (100 tests)
-positiveConfig :: TestConfig
-positiveConfig =
+-- | Test configuration with all features enabled (except response time checks)
+testConfig :: TestConfig
+testConfig =
     defaultTestConfig
-        { tcPropertyCount = 100
-        , tcNegativeTesting = False
-        , tcOperationFilter = operationFilter
-        }
-
--- | Test configuration for negative tests (100 tests)
-negativeConfig :: TestConfig
-negativeConfig =
-    defaultTestConfig
-        { tcPropertyCount = 100
-        , tcNegativeTesting = True
+        { tcChecks = strictChecks -- Maximum validation (schema, status, content-type, headers, valid requests)
+        , tcPropertyCount = 100
+        , tcNegativeTesting = True -- Also generate negative tests (invalid inputs)
+        , tcStatefulTesting = True -- Test CRUD operation sequences
+        , tcStatefulChecks = defaultStatefulChecks ++ [ensureModificationPersisted] -- Verify modifications persist
+        , tcMaxSequenceLength = 10 -- Longer sequences for more complex scenarios
         , tcOperationFilter = operationFilter
         }
 
@@ -195,9 +194,10 @@ tests = do
         Right openApi -> do
             let operations = resolveOperations openApi
                 filteredOps = filter operationFilter operations
+
             -- Create test trees for each operation with isolated storage
-            positiveTrees <- mapM (makeOperationTest counter openApi positiveConfig) filteredOps
-            negativeTrees <- mapM (makeOperationTestNegative counter openApi negativeConfig) filteredOps
+            positiveTrees <- mapM (makeOperationTest counter openApi) filteredOps
+            negativeTrees <- mapM (makeOperationTestNegative counter openApi) filteredOps
             pure $
                 testGroup
                     "Haskemathesis OpenAPI Compliance"
@@ -206,13 +206,13 @@ tests = do
                     ]
 
 -- | Create a test for a single operation with isolated storage
-makeOperationTest :: IORef Int -> OpenApi -> TestConfig -> ResolvedOperation -> IO TestTree
-makeOperationTest counter openApi config op = do
+makeOperationTest :: IORef Int -> OpenApi -> ResolvedOperation -> IO TestTree
+makeOperationTest counter openApi op = do
     executor <- createExecutorForOperation counter
-    pure $ testTreeForExecutorWithConfig openApi config executor [op]
+    pure $ testTreeForExecutorWithConfig openApi testConfig executor [op]
 
 -- | Create a negative test for a single operation with isolated storage
-makeOperationTestNegative :: IORef Int -> OpenApi -> TestConfig -> ResolvedOperation -> IO TestTree
-makeOperationTestNegative counter openApi config op = do
+makeOperationTestNegative :: IORef Int -> OpenApi -> ResolvedOperation -> IO TestTree
+makeOperationTestNegative counter openApi op = do
     executor <- createExecutorForOperation counter
-    pure $ testTreeForExecutorNegative openApi config executor [op]
+    pure $ testTreeForExecutorNegative openApi testConfig executor [op]
