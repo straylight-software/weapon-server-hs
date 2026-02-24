@@ -68,22 +68,9 @@ newIdGenState = do
     lock <- newMVar ()
     pure $ IdGenState lastTs counter lock
 
-{- | Global state initialized on first use
-This is a controlled use of global state for ID generation
-The state is thread-safe via MVar locking
--}
-globalState :: IO IdGenState
-globalState = do
-    lastTs <- newIORef 0
-    counter <- newIORef 0
-    lock <- newMVar ()
-    pure $ IdGenState lastTs counter lock
-
--- | Bracket for using ID generation state
-withIdGenState :: (IdGenState -> IO a) -> IO a
-withIdGenState action = do
-    state <- globalState
-    action state
+-- | Run an action with an ID generation state
+withIdGenState :: IdGenState -> (IdGenState -> IO a) -> IO a
+withIdGenState state action = action state
 
 -- | Base62 character set (same as TypeScript)
 base62Chars :: String
@@ -106,23 +93,23 @@ randomBase62 len = do
     pure $ map (\b -> safeBase62Char (fromIntegral b `mod` 62)) bytes
 
 -- | Create an ascending ID (lexicographically increasing with time)
-ascending :: IO Text
-ascending = withIdGenState $ \state -> createWithState state False
+ascending :: IdGenState -> IO Text
+ascending state = createWithState state False
 
 -- | Create an ascending ID with a prefix (e.g., "message_xxx")
-ascendingWithPrefix :: Text -> IO Text
-ascendingWithPrefix prefix = do
-    id' <- ascending
+ascendingWithPrefix :: IdGenState -> Text -> IO Text
+ascendingWithPrefix state prefix = do
+    id' <- ascending state
     pure $ prefix <> "_" <> id'
 
 -- | Create a descending ID (lexicographically decreasing with time)
-descending :: IO Text
-descending = withIdGenState $ \state -> createWithState state True
+descending :: IdGenState -> IO Text
+descending state = createWithState state True
 
 -- | Create a descending ID with a prefix
-descendingWithPrefix :: Text -> IO Text
-descendingWithPrefix prefix = do
-    id' <- descending
+descendingWithPrefix :: IdGenState -> Text -> IO Text
+descendingWithPrefix state prefix = do
+    id' <- descending state
     pure $ prefix <> "_" <> id'
 
 -- | Core ID creation function using explicit state

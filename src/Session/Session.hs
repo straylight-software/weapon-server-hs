@@ -51,18 +51,19 @@ data SessionContext = SessionContext
     , scProjectID :: Text
     , scDirectory :: Text
     , scVersion :: Text
+    , scIdGen :: Identifier.IdGenState
     }
 
 -- | Run operations with a session context
-withSessionContext :: Storage.StorageConfig -> Bus.Bus -> Text -> Text -> Text -> (SessionContext -> IO a) -> IO a
-withSessionContext storage bus projectID directory version action =
-    action (SessionContext storage bus projectID directory version)
+withSessionContext :: Storage.StorageConfig -> Bus.Bus -> Text -> Text -> Text -> Identifier.IdGenState -> (SessionContext -> IO a) -> IO a
+withSessionContext storage bus projectID directory version idGen action =
+    action (SessionContext storage bus projectID directory version idGen)
 
 {- | Generate a unique session ID (descending for sorted listing)
 Uses monotonic counter for sub-millisecond ordering
 -}
-generateSessionID :: IO Text
-generateSessionID = Identifier.descendingWithPrefix "ses"
+generateSessionID :: Identifier.IdGenState -> IO Text
+generateSessionID idGen = Identifier.descendingWithPrefix idGen "ses"
 
 -- | Generate a random slug (12 hex characters)
 generateSlug :: IO Text
@@ -81,7 +82,7 @@ nowMs = do
 -- | Create a new session
 create :: SessionContext -> CreateSessionInput -> IO Session
 create ctx input = do
-    sid <- generateSessionID
+    sid <- generateSessionID (scIdGen ctx)
     slug <- generateSlug
     now <- nowMs
 

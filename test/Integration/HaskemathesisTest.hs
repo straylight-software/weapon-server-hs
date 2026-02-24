@@ -116,6 +116,7 @@ preSeedSessions state = do
                 , Session.scProjectID = stProjectID state
                 , Session.scDirectory = stDirectory state
                 , Session.scVersion = stVersion state
+                , Session.scIdGen = stIdGen state
                 }
     -- Create sessions with known IDs by directly writing to storage
     -- (bypassing the ID generation in Session.create)

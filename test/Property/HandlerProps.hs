@@ -9,7 +9,7 @@ import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (SomeException, bracket, catch)
-import Control.Monad (void)
+import Control.Monad (forM_, void)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
@@ -53,6 +53,7 @@ import Test.Tasty
 import Test.Tasty.Hedgehog
 import Test.Tasty.Runners (NumThreads (..))
 import Tui.Store qualified as TuiStore
+import Util.Identifier qualified as Identifier
 import Util.StorageKeys (todoKey)
 import Vcs.Diff (VcsError)
 
@@ -148,6 +149,7 @@ withState action =
                 pty <- Pty.newManager dir
                 queue <- newTQueueIO
                 activeAgents <- newTVarIO Map.empty
+                idGen <- Identifier.newIdGenState
                 let st =
                         AppState
                             { stBus = bus
@@ -162,6 +164,7 @@ withState action =
                             , stPromptAsyncQueue = queue
                             , stHomeDir = Just dir
                             , stActiveAgents = activeAgents
+                            , stIdGen = idGen
                             }
                 action st
 
@@ -739,6 +742,157 @@ prop_sessionMessagesOrderedCorrectly = withTests 20 $ property $ do
                     assert $ uIdx < aIdx
                 (Nothing, _) -> failure
                 (_, Nothing) -> failure
+
+{- | Property: After cancelling a message and sending a new one, messages remain correctly ordered.
+When a user:
+1. Sends a message (user1 + assistant1)
+2. Cancels the assistant response
+3. Sends another message (user2 + assistant2)
+
+The messages should be ordered: user1 < assistant1 < user2 < assistant2
+This tests that cancellation doesn't break the timestamp-based ordering.
+-}
+prop_messagesOrderedAfterCancel :: Property
+prop_messagesOrderedAfterCancel = withTests 10 $ property $ do
+    result <- evalIO $ withState $ \st ->
+        withEnv "OPENROUTER_API_KEY" Nothing $ do
+            let sessionId = "session_cancel_order_test"
+
+            -- 1. Send first message
+            let parts1 = [object ["type" .= ("text" :: Text), "text" .= ("first message" :: Text)]]
+            let input1 = CreateMessageInput Nothing parts1 Nothing Nothing
+            _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input1)
+
+            -- Wait for message to be created
+            threadDelay 50000
+
+            -- 2. Abort/cancel the session
+            _ <- runHandlerIO (sessionAbortHandler st sessionId Nothing)
+
+            -- Wait for abort to complete
+            threadDelay 50000
+
+            -- 3. Send second message
+            let parts2 = [object ["type" .= ("text" :: Text), "text" .= ("second message" :: Text)]]
+            let input2 = CreateMessageInput Nothing parts2 Nothing Nothing
+            _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input2)
+
+            -- Wait for second message
+            threadDelay 50000
+
+            -- 4. Get all messages
+            runHandlerIO (sessionMessageListHandler st sessionId Nothing)
+
+    case result of
+        Left _err -> failure
+        Right msgs -> do
+            -- Should have 4 messages: user1, assistant1, user2, assistant2
+            annotate $ "Number of messages: " ++ show (listLength msgs)
+            assert $ listLength msgs >= 4
+
+            -- Extract roles, IDs, and timestamps for debugging
+            let roles = map (messageInfoRole . msgInfo) msgs
+            let ids = map (messageInfoId . msgInfo) msgs
+            let times = map (messageInfoCreatedTime . msgInfo) msgs
+            annotate $ "Message roles in order: " ++ show roles
+            annotate $ "Message IDs in order: " ++ show ids
+            annotate $ "Message created times: " ++ show times
+
+            -- Find all user and assistant indices
+            let userIndices = List.elemIndices "user" roles
+            let assistantIndices = List.elemIndices "assistant" roles
+
+            annotate $ "User indices: " ++ show userIndices
+            annotate $ "Assistant indices: " ++ show assistantIndices
+
+            -- Should have at least 2 users and 2 assistants
+            assert $ listLength userIndices >= 2
+            assert $ listLength assistantIndices >= 2
+
+            -- Key property: Each user message should come before its corresponding assistant
+            -- user1 < assistant1, user2 < assistant2
+            -- More specifically: roles should follow pattern [user, assistant, user, assistant, ...]
+            let pairs = zip userIndices assistantIndices
+            forM_ pairs $ \(uIdx, aIdx) -> do
+                annotate $ "Checking user@" ++ show uIdx ++ " < assistant@" ++ show aIdx
+                assert $ uIdx < aIdx
+
+            -- Also verify strict ordering: user1 < assistant1 < user2 < assistant2
+            case (userIndices, assistantIndices) of
+                (u1 : u2 : _restU, a1 : a2 : _restA) -> do
+                    annotate $ "Strict order check: u1=" ++ show u1 ++ " a1=" ++ show a1 ++ " u2=" ++ show u2 ++ " a2=" ++ show a2
+                    assert $ u1 < a1
+                    assert $ a1 < u2
+                    assert $ u2 < a2
+                ([], _anyA) -> failure
+                ([_singleU], _anyA) -> failure
+                (_anyU, []) -> failure
+                (_anyU, [_singleA]) -> failure
+
+{- | Property: When user and assistant messages have the same timestamp,
+user message should come before assistant message (role priority sorting).
+This is the core property that ensures correct message ordering.
+-}
+prop_sameTimestampUserBeforeAssistant :: Property
+prop_sameTimestampUserBeforeAssistant = withTests 20 $ property $ do
+    -- Generate unique session ID to avoid cleanup conflicts
+    sessionSuffix <- forAll $ Gen.text (Range.linear 8 12) Gen.alphaNum
+    let sessionId = "session_same_time_" <> sessionSuffix
+
+    -- Send a message (creates user + assistant with same timestamp)
+    result <- evalIO $ withState $ \st ->
+        withEnv "OPENROUTER_API_KEY" Nothing $ do
+            let parts = [object ["type" .= ("text" :: Text), "text" .= ("test" :: Text)]]
+            let input = CreateMessageInput Nothing parts Nothing Nothing
+            _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input)
+            -- Abort the session to stop the background thread
+            _ <- runHandlerIO (sessionAbortHandler st sessionId Nothing)
+            -- Small delay for cleanup
+            threadDelay 10000
+            -- Get messages
+            runHandlerIO (sessionMessageListHandler st sessionId Nothing)
+
+    case result of
+        Left _err -> failure
+        Right msgs -> do
+            annotate $ "Number of messages: " ++ show (listLength msgs)
+            assert $ listLength msgs >= 2
+
+            -- Get the first user and first assistant
+            let roles = map (messageInfoRole . msgInfo) msgs
+            let times = map (messageInfoCreatedTime . msgInfo) msgs
+            let ids = map (messageInfoId . msgInfo) msgs
+
+            annotate $ "Roles: " ++ show roles
+            annotate $ "Times: " ++ show times
+            annotate $ "IDs: " ++ show ids
+
+            -- First two messages should be user then assistant
+            case roles of
+                ("user" : "assistant" : _rest) -> do
+                    -- Verify they have the same timestamp
+                    case (times, ids) of
+                        (t1 : t2 : _restTimes, id1 : id2 : _restIds) -> do
+                            annotate $ "User time: " ++ show t1 ++ ", Assistant time: " ++ show t2
+                            annotate $ "User ID: " ++ T.unpack id1 ++ ", Assistant ID: " ++ T.unpack id2
+                            annotate $ "User ID < Assistant ID: " ++ show (id1 < id2)
+                            -- They should have the same created time
+                            t1 === t2
+                            -- And user ID should be less than assistant ID
+                            assert $ id1 < id2
+                        ([], _anyIds) -> failure
+                        ([_singleTime], _anyIds) -> failure
+                        (_anyTimes, []) -> failure
+                        (_anyTimes, [_singleId]) -> failure
+                [] -> do
+                    annotate $ "Expected [user, assistant, ...] but got: " ++ show roles
+                    failure
+                [_single] -> do
+                    annotate $ "Expected [user, assistant, ...] but got: " ++ show roles
+                    failure
+                (_other : _rest) -> do
+                    annotate $ "Expected [user, assistant, ...] but got: " ++ show roles
+                    failure
 
 {- | Property: Message events are forwarded from bus to eventChan (SSE delivery path).
 This verifies the State.hs subscription that forwards bus events to eventChan,
@@ -1568,6 +1722,8 @@ tests =
         , testProperty "session message handlers" prop_sessionMessageHandlers
         , testProperty "session message create publishes events" prop_sessionMessageCreatePublishesEvents
         , testProperty "session messages ordered correctly" prop_sessionMessagesOrderedCorrectly
+        , testProperty "messages ordered after cancel" prop_messagesOrderedAfterCancel
+        , testProperty "same timestamp user before assistant" prop_sameTimestampUserBeforeAssistant
         , testProperty "message events forwarded to eventChan" prop_messageEventsForwardedToEventChan
         , testProperty "session.status events published" prop_sessionStatusEventsPublished
         , testProperty "session message part handlers" prop_sessionMessagePartHandlers

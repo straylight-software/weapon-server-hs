@@ -223,6 +223,7 @@ sessionContext st =
         , Sess.scProjectID = stProjectID st
         , Sess.scDirectory = stDirectory st
         , Sess.scVersion = stVersion st
+        , Sess.scIdGen = stIdGen st
         }
 
 {- | Helper for updating a session and returning the API representation
@@ -773,7 +774,7 @@ createMessageIO st sid input = do
 
     -- 1. User Message
     -- Use "msg" prefix to match TUI conventions for consistent sorting
-    uMsgId <- Identifier.ascendingWithPrefix "msg"
+    uMsgId <- Identifier.ascendingWithPrefix (stIdGen st) "msg"
     let uMsgInfo =
             UserMessageInfo
                 { umiId = uMsgId
@@ -789,8 +790,8 @@ createMessageIO st sid input = do
 
     -- 2. Assistant Message (incomplete initially)
     -- Use same "msg" prefix as user message for consistent sorting
-    aMsgId <- Identifier.ascendingWithPrefix "msg"
-    partId <- Identifier.ascendingWithPrefix "part"
+    aMsgId <- Identifier.ascendingWithPrefix (stIdGen st) "msg"
+    partId <- Identifier.ascendingWithPrefix (stIdGen st) "part"
     let aMsgInfo =
             AssistantMessageInfo
                 { amiId = aMsgId
@@ -850,7 +851,7 @@ createMessageIO st sid input = do
     -- Publish user message parts via SSE (Critical #3)
     forM_ (zip [(0 :: Int) ..] (cmiParts input)) $ \(idx, part) -> do
         -- Generate a part ID if not present
-        partId' <- genId
+        partId' <- genId (stIdGen st)
         -- Add required fields: id, sessionID, messageID
         let partWithIds = case part of
                 Object obj ->
@@ -1049,7 +1050,7 @@ createMessageIO st sid input = do
                                                 -- Execute each tool call
                                                 toolResults <- forM toolCalls $ \tc -> do
                                                     -- Generate part ID for this tool
-                                                    toolPartId <- genId
+                                                    toolPartId <- genId (stIdGen st)
                                                     startTime <- getCurrentTime
                                                     let startMs = realToFrac (utcTimeToPOSIXSeconds startTime) * 1000 :: Double
                                                     let toolName = OpenRouter.tcfName (OpenRouter.tcFunction tc)
@@ -1178,7 +1179,7 @@ createMessageIO st sid input = do
                                                 let toolResultMsgs = map (\tr -> OpenRouter.toolResultMessage (LLMTypes.trToolUseId tr) (truncateToolOutputForLLM $ LLMTypes.trContent tr)) toolResults
 
                                                 -- Update part ID for next iteration
-                                                newPartId <- genId
+                                                newPartId <- genId (stIdGen st)
                                                 atomically $ writeTVar partIdRef newPartId
 
                                                 -- Continue agent loop with updated messages
@@ -1402,8 +1403,8 @@ extractUserText parts = T.intercalate "\n" $ concatMap extractTextPart parts
     extractTextPart Null = []
 
 -- | Generate a unique part/tool ID using lexicographically sortable format
-genId :: IO Text
-genId = Identifier.ascendingWithPrefix "part"
+genId :: Identifier.IdGenState -> IO Text
+genId idGen = Identifier.ascendingWithPrefix idGen "part"
 
 -- | Parse tool input from JSON string (arguments come as string from OpenAI format)
 parseToolInput :: Text -> Value

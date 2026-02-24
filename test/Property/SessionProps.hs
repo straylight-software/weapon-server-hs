@@ -19,6 +19,7 @@ import System.Directory (removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory)
 import Test.Tasty
 import Test.Tasty.Hedgehog
+import Util.Identifier qualified as Identifier
 import Util.StorageKeys (sessionKey)
 
 -- | Create a test session context
@@ -27,6 +28,7 @@ withTestContext action = do
     tmpDir <- createTempDirectory "/tmp" "session-test"
     Storage.withStorage tmpDir $ \storage -> do
         bus <- Bus.newBus
+        idGen <- Identifier.newIdGenState
         let ctx =
                 Session.SessionContext
                     { Session.scStorage = storage
@@ -34,6 +36,7 @@ withTestContext action = do
                     , Session.scProjectID = "test_project"
                     , Session.scDirectory = T.pack tmpDir
                     , Session.scVersion = "0.1.0"
+                    , Session.scIdGen = idGen
                     }
         result <- action ctx
         removeDirectoryRecursive tmpDir

@@ -29,6 +29,7 @@ import Proxy.Proxy qualified as Proxy
 import Proxy.Types (defaultProxyConfig)
 import Pty.Pty qualified as Pty
 import Storage.Storage qualified as Storage
+import Util.Identifier qualified as Identifier
 
 -- | Global Application State
 data AppState = AppState
@@ -44,6 +45,7 @@ data AppState = AppState
     , stPromptAsyncQueue :: TQueue PromptAsyncJob -- prompt_async worker queue
     , stHomeDir :: Maybe FilePath -- Override home directory for config (tests)
     , stActiveAgents :: TVar (Map Text ThreadId) -- Active agent threads by session ID
+    , stIdGen :: Identifier.IdGenState -- Monotonic ID generator state
     }
 
 -- | Initialize a new state with optional proxy and home directory override
@@ -54,6 +56,7 @@ mkAppState proxy homeDir storageDir projectID directory logger = do
     ptyManager <- Pty.newManager (Text.unpack directory)
     promptQueue <- newTQueueIO
     activeAgents <- newTVarIO Map.empty
+    idGen <- Identifier.newIdGenState
 
     -- Subscribe bus to also write to event channel for SSE
     _ <- Bus.subscribeAll bus $ \event -> do
@@ -74,6 +77,7 @@ mkAppState proxy homeDir storageDir projectID directory logger = do
             , stPromptAsyncQueue = promptQueue
             , stHomeDir = homeDir
             , stActiveAgents = activeAgents
+            , stIdGen = idGen
             }
 
 -- | Initialize a new state with MITM proxy

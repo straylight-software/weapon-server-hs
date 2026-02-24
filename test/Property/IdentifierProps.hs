@@ -5,9 +5,12 @@ Tests that IDs are lexicographically sortable and match expected format
 -}
 module Property.IdentifierProps where
 
-import Control.Monad (when)
+import Control.Concurrent.Async (async, wait)
+import Control.Monad (replicateM, when)
 import Data.Char (isAlphaNum, isHexDigit)
+
 import Data.List (sort)
+import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Word (Word64)
 import Hedgehog
@@ -31,6 +34,25 @@ listHasLength n [] = n == 0
 listHasLength n (_ : xs)
     | n > 0 = listHasLength (n - 1) xs
     | otherwise = False
+
+-- | Get length of a finite list (strict, for test assertions)
+listLength :: [a] -> Int
+listLength = go 0
+  where
+    go !acc [] = acc
+    go !acc (_ : xs) = go (acc + 1) xs
+
+-- | Check if a list is sorted in ascending order
+isSorted :: (Ord a) => [a] -> Bool
+isSorted [] = True
+isSorted [_] = True
+isSorted (x : y : xs) = x <= y && isSorted (y : xs)
+
+-- | Check if a list is sorted in descending order
+isSortedDesc :: (Ord a) => [a] -> Bool
+isSortedDesc [] = True
+isSortedDesc [_] = True
+isSortedDesc (x : y : xs) = x >= y && isSortedDesc (y : xs)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Core Properties
@@ -207,6 +229,104 @@ prop_messagePartOrdering = property $ do
     assert $ partId2 < partId3
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- IO-based Properties (testing actual state management)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: IDs generated via IO are unique
+prop_ioIdsUnique :: Property
+prop_ioIdsUnique = withTests 50 $ property $ do
+    count <- forAll $ Gen.int (Range.linear 10 100)
+    ids <- evalIO $ do
+        idGen <- newIdGenState
+        replicateM count (ascending idGen)
+    -- All IDs should be unique (Set.size equals list length)
+    Set.size (Set.fromList ids) === listLength ids
+
+-- | Property: Ascending IDs generated via IO are lexicographically ordered
+prop_ioAscendingOrdered :: Property
+prop_ioAscendingOrdered = withTests 50 $ property $ do
+    count <- forAll $ Gen.int (Range.linear 5 50)
+    ids <- evalIO $ do
+        idGen <- newIdGenState
+        replicateM count (ascending idGen)
+    -- IDs should already be in sorted order
+    assert $ isSorted ids
+
+-- | Property: Descending IDs generated via IO are reverse lexicographically ordered
+prop_ioDescendingOrdered :: Property
+prop_ioDescendingOrdered = withTests 50 $ property $ do
+    count <- forAll $ Gen.int (Range.linear 5 50)
+    ids <- evalIO $ do
+        idGen <- newIdGenState
+        replicateM count (descending idGen)
+    -- IDs should be in reverse sorted order
+    assert $ isSortedDesc ids
+
+-- | Property: Concurrent ID generation produces unique IDs (thread safety)
+prop_ioConcurrentUnique :: Property
+prop_ioConcurrentUnique = withTests 20 $ property $ do
+    numThreads <- forAll $ Gen.int (Range.linear 2 8)
+    idsPerThread <- forAll $ Gen.int (Range.linear 10 30)
+    allIds <- evalIO $ do
+        idGen <- newIdGenState
+        asyncs <-
+            replicateM numThreads $
+                async $
+                    replicateM idsPerThread (ascending idGen)
+        concat <$> mapM wait asyncs
+    -- All IDs should be unique even with concurrent generation
+    let totalCount = listLength allIds
+    let uniqueCount = Set.size (Set.fromList allIds)
+    annotate $ "Total IDs: " ++ show totalCount
+    annotate $ "Unique IDs: " ++ show uniqueCount
+    uniqueCount === totalCount
+
+-- | Property: ascendingWithPrefix correctly applies prefix
+prop_ioAscendingWithPrefix :: Property
+prop_ioAscendingWithPrefix = withTests 50 $ property $ do
+    prefix <- forAll $ Gen.text (Range.linear 1 10) Gen.alpha
+    id' <- evalIO $ do
+        idGen <- newIdGenState
+        ascendingWithPrefix idGen prefix
+    -- ID should start with prefix_
+    let prefixWithUnderscore = prefix <> "_"
+    case T.stripPrefix prefixWithUnderscore id' of
+        Nothing -> do
+            annotate $ "ID does not start with expected prefix: " ++ T.unpack prefixWithUnderscore
+            failure
+        Just suffix ->
+            -- After prefix_, should have 26 chars (the base ID length)
+            assert $ textHasLength 26 suffix
+
+-- | Property: descendingWithPrefix correctly applies prefix
+prop_ioDescendingWithPrefix :: Property
+prop_ioDescendingWithPrefix = withTests 50 $ property $ do
+    prefix <- forAll $ Gen.text (Range.linear 1 10) Gen.alpha
+    id' <- evalIO $ do
+        idGen <- newIdGenState
+        descendingWithPrefix idGen prefix
+    -- ID should start with prefix_
+    let prefixWithUnderscore = prefix <> "_"
+    case T.stripPrefix prefixWithUnderscore id' of
+        Nothing -> do
+            annotate $ "ID does not start with expected prefix: " ++ T.unpack prefixWithUnderscore
+            failure
+        Just suffix ->
+            -- After prefix_, should have 26 chars (the base ID length)
+            assert $ textHasLength 26 suffix
+
+-- | Property: IDs with same prefix still maintain ordering
+prop_ioPrefixedOrdering :: Property
+prop_ioPrefixedOrdering = withTests 50 $ property $ do
+    prefix <- forAll $ Gen.text (Range.linear 1 10) Gen.alpha
+    count <- forAll $ Gen.int (Range.linear 5 20)
+    ids <- evalIO $ do
+        idGen <- newIdGenState
+        replicateM count (ascendingWithPrefix idGen prefix)
+    -- Prefixed IDs should maintain order
+    ids === sort ids
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Generators
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -273,5 +393,15 @@ tests =
             [ testProperty "Different timestamps -> different prefix" prop_differentTimestampsDifferentPrefix
             , testProperty "Counter affects encoding" prop_counterAffectsEncoding
             , testProperty "Same inputs -> same outputs" prop_determinism
+            ]
+        , testGroup
+            "IO State"
+            [ testProperty "IO IDs are unique" prop_ioIdsUnique
+            , testProperty "IO ascending IDs are ordered" prop_ioAscendingOrdered
+            , testProperty "IO descending IDs are reverse ordered" prop_ioDescendingOrdered
+            , testProperty "IO concurrent IDs are unique" prop_ioConcurrentUnique
+            , testProperty "ascendingWithPrefix applies prefix" prop_ioAscendingWithPrefix
+            , testProperty "descendingWithPrefix applies prefix" prop_ioDescendingWithPrefix
+            , testProperty "Prefixed IDs maintain ordering" prop_ioPrefixedOrdering
             ]
         ]
