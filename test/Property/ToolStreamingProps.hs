@@ -17,8 +17,9 @@ import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.Process qualified as Process
 import Test.Fixture (propertyWithTempDir)
-import Test.Tasty
-import Test.Tasty.Hedgehog
+import Test.Tasty (DependencyType (..), TestTree, localOption, sequentialTestGroup, testGroup)
+import Test.Tasty.Hedgehog (testProperty)
+import Test.Tasty.Runners (NumThreads (..))
 import Tool.Exec (executeStreaming, runProcessStreaming)
 import Tool.Types
 
@@ -128,7 +129,9 @@ prop_streamingCapturesStderr = withTests 20 $ property $ do
     (exitCode, stdout, stderr) <-
         evalIO $
             runProcessStreaming
-                (mkProc "bash" ["-c", "echo stdout_msg; echo stderr_msg >&2"])
+                -- Use printf for more reliable output (no buffering issues)
+                -- and explicit newlines to ensure flushing
+                (mkProc "sh" ["-c", "printf 'stdout_msg\\n'; printf 'stderr_msg\\n' >&2"])
                 noStreaming
 
     exitCode === ExitSuccess
@@ -438,30 +441,36 @@ prop_streamingRapidOutputs = withTests 5 $ propertyWithTempDir $ \tmpDir -> do
 
 tests :: TestTree
 tests =
-    testGroup
-        "Tool Streaming Property Tests"
-        [ testGroup
-            "runProcessStreaming"
-            [ testProperty "callback called" prop_streamingCallbackCalled
-            , testProperty "output monotonic" prop_streamingOutputMonotonic
-            , testProperty "no output command" prop_streamingNoOutput
-            , testProperty "captures stderr" prop_streamingCapturesStderr
-            , testProperty "handles failure" prop_streamingCommandFailure
-            , testProperty "delayed output" prop_streamingDelayedOutput
+    -- All streaming tests spawn subprocesses. Run with limited parallelism
+    -- to avoid resource exhaustion and flaky failures in sandboxed environments.
+    localOption (NumThreads 1) $
+        testGroup
+            "Tool Streaming Property Tests"
+            [ sequentialTestGroup
+                "runProcessStreaming"
+                AllFinish
+                [ testProperty "callback called" prop_streamingCallbackCalled
+                , testProperty "output monotonic" prop_streamingOutputMonotonic
+                , testProperty "no output command" prop_streamingNoOutput
+                , testProperty "captures stderr" prop_streamingCapturesStderr
+                , testProperty "handles failure" prop_streamingCommandFailure
+                , testProperty "delayed output" prop_streamingDelayedOutput
+                ]
+            , sequentialTestGroup
+                "executeStreaming"
+                AllFinish
+                [ testProperty "bash streams" prop_executeStreamingBash
+                , testProperty "glob streams" prop_executeStreamingGlob
+                , testProperty "grep streams" prop_executeStreamingGrep
+                , testProperty "equivalent to execute" prop_executeStreamingEquivalentToExecute
+                , testProperty "final output complete" prop_streamingCallbackFinalOutputComplete
+                , testProperty "preserves order" prop_streamingPreservesOrder
+                ]
+            , sequentialTestGroup
+                "Edge cases"
+                AllFinish
+                [ testProperty "large output" prop_streamingLargeOutput
+                , testProperty "binary output" prop_streamingBinaryOutput
+                , testProperty "rapid outputs" prop_streamingRapidOutputs
+                ]
             ]
-        , testGroup
-            "executeStreaming"
-            [ testProperty "bash streams" prop_executeStreamingBash
-            , testProperty "glob streams" prop_executeStreamingGlob
-            , testProperty "grep streams" prop_executeStreamingGrep
-            , testProperty "equivalent to execute" prop_executeStreamingEquivalentToExecute
-            , testProperty "final output complete" prop_streamingCallbackFinalOutputComplete
-            , testProperty "preserves order" prop_streamingPreservesOrder
-            ]
-        , testGroup
-            "Edge cases"
-            [ testProperty "large output" prop_streamingLargeOutput
-            , testProperty "binary output" prop_streamingBinaryOutput
-            , testProperty "rapid outputs" prop_streamingRapidOutputs
-            ]
-        ]
