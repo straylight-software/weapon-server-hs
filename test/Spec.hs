@@ -43,6 +43,7 @@ import Property.StorageKeyProps qualified as StorageKeyProps
 import Property.StorageProps qualified as StorageProps
 import Property.TodoProps qualified as TodoProps
 import Property.ToolProps qualified as ToolProps
+import Property.ToolStreamingProps qualified as ToolStreamingProps
 import Property.ToolTypesProps qualified as ToolTypesProps
 import Property.TuiProps qualified as TuiProps
 import Property.VcsStatusProps qualified as VcsStatusProps
@@ -82,6 +83,7 @@ main = do
                 , SessionStatusProps.tests
                 , SkillProps.tests
                 , ToolProps.tests
+                , ToolStreamingProps.tests
                 , MessageProps.tests
                 , MessagePartProps.tests
                 , OAuthProps.tests

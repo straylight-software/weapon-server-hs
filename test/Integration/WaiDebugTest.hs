@@ -11,7 +11,7 @@ import Network.HTTP.Types
 import Network.Wai
 import Network.Wai.Test
 import Servant (serve)
-import State (initialState)
+import State (initialStateNoProxy)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
 
@@ -21,7 +21,7 @@ debugTest = do
     let storageDir = cwd </> ".opencode-test" </> "wai-debug"
     createDirectoryIfMissing True storageDir
     logger <- Log.newLogger "debug"
-    state <- initialState storageDir "test_project" (T.pack cwd) logger
+    state <- initialStateNoProxy storageDir "test_project" (T.pack cwd) logger
     let app = serve api (server state)
 
     -- Test the health endpoint

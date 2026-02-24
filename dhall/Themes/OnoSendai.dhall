@@ -1,100 +1,105 @@
 -- Ono-Sendai Theme
--- Based on https://weyl.ai/brand
+-- Monochromatic blue cyberpunk aesthetic
 -- Inspired by William Gibson's cyberspace deck from Neuromancer
--- Cold, electric, cyberpunk aesthetics
 let Theme = ../Types/Theme.dhall
 
 let rgb = Theme.rgb
 
 let rgba = Theme.rgba
 
-let void = rgb 0.031 0.031 0.047
+let bg = rgb 0.09803921568627451 0.10980392156862745 0.12549019607843137
 
-let matrix = rgb 0.055 0.063 0.090
+let bgAlt = rgb 0.12156862745098039 0.13725490196078433 0.16470588235294117
 
-let chrome = rgb 0.082 0.094 0.133
+let bgHl = rgb 0.16470588235294117 0.18823529411764706 0.2235294117647059
 
-let ice = rgb 0.114 0.133 0.180
+let comment = rgb 0.22745098039215686 0.25882352941176473 0.30980392156862746
 
-let neon = rgb 0.200 0.949 0.949
+let fgAlt = rgb 0.4196078431372549 0.4627450980392157 0.5372549019607843
 
-let pulse = rgb 0.482 0.996 0.831
+let fg = rgb 0.7725490196078432 0.8156862745098039 0.8666666666666667
 
-let burn = rgb 0.996 0.325 0.431
+let fgLight = rgb 0.8627450980392157 0.8901960784313725 0.9254901960784314
 
-let flux = rgb 0.925 0.686 0.216
+let ice = rgb 0.7137254901960784 0.8901960784313725 1.0
 
-let arc = rgb 0.486 0.537 0.992
+let sky = rgb 0.5019607843137255 0.8 1.0
 
-let spike = rgb 0.894 0.412 0.851
+let hero = rgb 0.32941176470588235 0.6823529411764706 1.0
 
-let ghost = rgb 0.686 0.737 0.824
+let deep = rgb 0.12941176470588237 0.5450980392156862 1.0
 
-let bright = rgb 0.878 0.914 0.965
+let matrix = rgb 0.03529411764705882 0.4117647058823529 0.8549019607843137
 
-let dim = rgb 0.510 0.565 0.655
+let link = rgb 0.30196078431372547 0.6235294117647059 1.0
 
-let shadow = rgb 0.318 0.365 0.451
+let soft = rgb 0.4235294117647059 0.7137254901960784 1.0
+
+let corp = rgb 0.12156862745098039 0.43529411764705883 0.9215686274509803
+
+let addedBg = rgb 0.10196078431372549 0.17647058823529413 0.2549019607843137
+
+let removedBg = rgb 0.19215686274509805 0.22745098039215686 0.2549019607843137
 
 in    { -- Semantic colors
-        primary = neon
-      , secondary = arc
-      , accent = pulse
-      , error = burn
-      , warning = flux
-      , success = pulse
-      , info = arc
+        primary = hero
+      , secondary = soft
+      , accent = ice
+      , error = ice
+      , warning = sky
+      , success = deep
+      , info = link
       , -- Text colors
-        text = bright
-      , textMuted = dim
-      , selectedListItemText = Some bright
+        text = fg
+      , textMuted = fgAlt
+      , selectedListItemText = Some fgLight
       , -- Background colors
-        background = void
-      , backgroundPanel = matrix
-      , backgroundElement = chrome
-      , backgroundMenu = Some matrix
+        background = bg
+      , backgroundPanel = bgAlt
+      , backgroundElement = bgHl
+      , backgroundMenu = Some bgAlt
       , -- Border colors
-        border = ice
-      , borderActive = neon
-      , borderSubtle = chrome
+        border = bgHl
+      , borderActive = hero
+      , borderSubtle = bgAlt
       , -- Diff colors
-        diffAdded = pulse
-      , diffRemoved = burn
-      , diffContext = dim
-      , diffHunkHeader = arc
-      , diffHighlightAdded = rgb 0.25 0.60 0.50
-      , diffHighlightRemoved = rgb 0.60 0.20 0.25
-      , diffAddedBg = rgb 0.06 0.15 0.12
-      , diffRemovedBg = rgb 0.18 0.06 0.08
-      , diffContextBg = matrix
-      , diffLineNumber = shadow
-      , diffAddedLineNumberBg = rgb 0.04 0.10 0.08
-      , diffRemovedLineNumberBg = rgb 0.12 0.04 0.05
+        diffAdded = deep
+      , diffRemoved = ice
+      , diffContext = comment
+      , diffHunkHeader = comment
+      , diffHighlightAdded = deep
+      , diffHighlightRemoved = ice
+      , diffAddedBg = addedBg
+      , diffRemovedBg = removedBg
+      , diffContextBg = bgAlt
+      , diffLineNumber = comment
+      , diffAddedLineNumberBg = addedBg
+      , diffRemovedLineNumberBg = removedBg
       , -- Markdown colors
-        markdownText = bright
-      , markdownHeading = neon
-      , markdownLink = arc
-      , markdownLinkText = pulse
-      , markdownCode = pulse
-      , markdownBlockQuote = dim
-      , markdownEmph = flux
-      , markdownStrong = neon
-      , markdownHorizontalRule = ice
-      , markdownListItem = dim
-      , markdownListEnumeration = arc
-      , markdownImage = spike
-      , markdownImageText = spike
-      , markdownCodeBlock = bright
+        markdownText = fg
+      , markdownHeading = hero
+      , markdownLink = link
+      , markdownLinkText = soft
+      , markdownCode = sky
+      , markdownBlockQuote = comment
+      , markdownEmph = soft
+      , markdownStrong = ice
+      , markdownHorizontalRule = comment
+      , markdownListItem = hero
+      , markdownListEnumeration = link
+      , markdownImage = link
+      , markdownImageText = soft
+      , markdownCodeBlock = fg
       , -- Syntax highlighting colors
-        syntaxComment = shadow
-      , syntaxKeyword = spike
-      , syntaxFunction = arc
-      , syntaxVariable = bright
-      , syntaxString = pulse
-      , syntaxNumber = flux
-      , syntaxType = neon
-      , syntaxOperator = dim
-      , syntaxPunctuation = dim
+        syntaxComment = comment
+      , syntaxKeyword = soft
+      , syntaxFunction = link
+      , syntaxVariable = ice
+      , syntaxString = deep
+      , syntaxNumber = sky
+      , syntaxType = hero
+      , syntaxOperator = fg
+      , syntaxPunctuation = fgAlt
       , -- Additional
         thinkingOpacity = 0.6
       }

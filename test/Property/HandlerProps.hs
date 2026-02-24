@@ -18,6 +18,7 @@ import Data.ByteString.Base64 qualified as B64
 import Data.ByteString.Builder (Builder, toLazyByteString)
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as List
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -146,6 +147,7 @@ withState action =
                     atomically $ writeTChan chan (toJSON event)
                 pty <- Pty.newManager dir
                 queue <- newTQueueIO
+                activeAgents <- newTVarIO Map.empty
                 let st =
                         AppState
                             { stBus = bus
@@ -159,6 +161,7 @@ withState action =
                             , stLogger = lg
                             , stPromptAsyncQueue = queue
                             , stHomeDir = Just dir
+                            , stActiveAgents = activeAgents
                             }
                 action st
 
@@ -520,9 +523,10 @@ prop_sessionAbortHandler = withTests 20 $ property $ do
         pure (res, evt)
     case result of
         (Left _err, _) -> failure
-        (Right True, evt) -> do
+        -- Handler returns wasRunning (True if agent was killed, False if no agent running)
+        -- Either way, the session.error event should be published
+        (Right _wasRunning, evt) -> do
             assert $ isJust evt
-        _otherResult -> failure
 
 prop_sessionShareHandlers :: Property
 prop_sessionShareHandlers = withTests 20 $ property $ do

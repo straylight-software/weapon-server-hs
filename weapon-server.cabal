@@ -176,6 +176,7 @@ library
 
   build-depends:
     , aeson               >=2.0
+    , async               >=2.2
     , base                >=4.17 && <5
     , base64-bytestring   >=1.2
     , bytestring          >=0.11
@@ -322,6 +323,7 @@ test-suite weapon-server-test
     Property.StorageProps
     Property.TodoProps
     Property.ToolProps
+    Property.ToolStreamingProps
     Property.ToolTypesProps
     Property.TuiProps
     Property.VcsStatusProps
