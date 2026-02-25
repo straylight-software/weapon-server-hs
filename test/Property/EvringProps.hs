@@ -45,6 +45,10 @@ import Evring.Wai.Internal (
     splitPathQuery,
     stripCR,
  )
+import Evring.Wai.MultiCore (
+    ServerSettings (..),
+    defaultServerSettings,
+ )
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Handle Tests
@@ -168,6 +172,33 @@ prop_byteSwap16_involution :: Property
 prop_byteSwap16_involution = property $ do
     w <- forAll $ Gen.word16 Range.linearBounded
     byteSwap16 (byteSwap16 w) === w
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- ServerSettings Tests
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- | Property: defaultServerSettings has reasonable port retry value
+prop_serverSettings_defaultPortRetry :: Property
+prop_serverSettings_defaultPortRetry = property $ do
+    serverPortRetry defaultServerSettings === 10
+
+-- | Property: serverSettings fields can be modified independently
+prop_serverSettings_field_modification :: Property
+prop_serverSettings_field_modification = property $ do
+    port <- forAll $ Gen.int (Range.linear 1024 65535)
+    retries <- forAll $ Gen.int (Range.linear 0 20)
+    let modified = defaultServerSettings{serverPort = port, serverPortRetry = retries}
+    serverPort modified === port
+    serverPortRetry modified === retries
+    -- Other fields unchanged
+    serverBacklog modified === serverBacklog defaultServerSettings
+    serverRingSize modified === serverRingSize defaultServerSettings
+
+-- | Property: defaultServerSettings has valid default port
+prop_serverSettings_defaultPort :: Property
+prop_serverSettings_defaultPort = property $ do
+    let port = serverPort defaultServerSettings
+    assert (port > 0 && port < 65536)
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Sigil Tests
@@ -304,5 +335,11 @@ tests =
             , testProperty "varint single byte" prop_sigil_varint_single_byte
             , testProperty "varint multi byte" prop_sigil_varint_multi_byte
             , testProperty "varint incomplete" prop_sigil_varint_incomplete
+            ]
+        , testGroup
+            "ServerSettings"
+            [ testProperty "default port retry is 10" prop_serverSettings_defaultPortRetry
+            , testProperty "fields can be modified independently" prop_serverSettings_field_modification
+            , testProperty "default port is valid" prop_serverSettings_defaultPort
             ]
         ]

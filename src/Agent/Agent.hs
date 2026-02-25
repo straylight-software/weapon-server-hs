@@ -55,6 +55,7 @@ module Agent.Agent (
 
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as T
 
 import Agent.Types
 
@@ -126,6 +127,14 @@ armedAgent :: Agent
 armedAgent =
     (defaultAgent "armed" Primary (mkSimpleRuleset armedPermissions))
         { agentDescription = Just "The default agent. Executes tools based on configured permissions."
+        , agentPrompt =
+            Just $
+                T.unlines
+                    [ "You are an AI coding assistant with full access to tools."
+                    , "You help users write, debug, refactor, and improve code."
+                    , "You communicate concisely and focus on solving problems."
+                    , "You verify your work by reading files and running tests."
+                    ]
         }
   where
     armedPermissions =
@@ -143,6 +152,13 @@ lockedAgent :: Agent
 lockedAgent =
     (defaultAgent "locked" Primary (mkSimpleRuleset lockedPermissions))
         { agentDescription = Just "Locked mode. Disallows all edit tools."
+        , agentPrompt =
+            Just $
+                T.unlines
+                    [ "You are an AI coding assistant in read-only mode."
+                    , "You can read and analyze code but cannot make changes."
+                    , "Focus on explaining, reviewing, and answering questions."
+                    ]
         }
   where
     lockedPermissions =
@@ -161,6 +177,14 @@ generalAgent :: Agent
 generalAgent =
     (defaultAgent "general" Subagent (mkSimpleRuleset generalPermissions))
         { agentDescription = Just "General-purpose agent for researching complex questions and executing multi-step tasks."
+        , agentPrompt =
+            Just $
+                T.unlines
+                    [ "You are a general-purpose subagent for complex multi-step tasks."
+                    , "Break problems into steps, execute thoroughly, and report results."
+                    , "You have access to most tools - use them proactively to verify your work."
+                    , "Be thorough but concise in your final report to the parent agent."
+                    ]
         }
   where
     generalPermissions =
@@ -177,7 +201,14 @@ exploreAgent :: Agent
 exploreAgent =
     (defaultAgent "explore" Subagent (mkSimpleRuleset explorePermissions))
         { agentDescription = Just "Fast agent specialized for exploring codebases."
-        , agentPrompt = Just "You are an explore agent. Your job is to quickly search and analyze codebases."
+        , agentPrompt =
+            Just $
+                T.unlines
+                    [ "You are a fast exploration agent for searching and analyzing codebases."
+                    , "Use Glob for file patterns, Grep for content search, Read for file contents."
+                    , "Return concise, actionable findings. Don't speculate - verify with tools."
+                    , "Focus on speed and accuracy. Report what you find, not what you assume."
+                    ]
         }
   where
     explorePermissions =

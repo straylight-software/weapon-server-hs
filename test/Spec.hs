@@ -10,6 +10,7 @@ import Integration.HaskemathesisTest qualified as HaskemathesisTest
 import Integration.StorageSpec qualified as StorageSpec
 import Integration.ToolExecSpec qualified as ToolExecSpec
 import Property.AgentAgentProps qualified as AgentAgentProps
+import Property.AgentContextProps qualified as AgentContextProps
 import Property.AgentTypesProps qualified as AgentTypesProps
 import Property.ApiFileProps qualified as ApiFileProps
 import Property.ApiSessionProps qualified as ApiSessionProps
@@ -148,6 +149,7 @@ main = do
                 , TuiProps.tests
                 , SandboxProps.tests
                 , AgentAgentProps.tests
+                , AgentContextProps.tests
                 , AgentTypesProps.tests
                 , MiddlewareProps.tests
                 , PtyTypesProps.tests

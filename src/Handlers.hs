@@ -130,6 +130,7 @@ module Handlers (
 where
 
 import Agent.Agent qualified as Agent
+import Agent.Context qualified as Context
 import Agent.Types qualified as AT
 import Api
 import Bus.Bus qualified as Bus
@@ -788,9 +789,15 @@ createMessageIO st sid input = do
     let fullModelId = if providerId == "openrouter" then modelId else providerId <> "/" <> modelId
     let agentName = fromMaybe "armed" (cmiAgent input)
 
-    -- Major #7: Look up agent to get system prompt
+    -- Major #7: Look up agent and build system prompt with context
     mAgent <- Agent.get agentName
-    let systemPrompt = mAgent >>= AT.agentPrompt
+
+    -- Get working directory for path info and context
+    cwd <- getCurrentDirectory
+
+    -- Gather environment context and build full system prompt
+    agentCtx <- liftIO $ Context.gatherContext (stExeCache st) cwd
+    let systemPrompt = Context.buildSystemPrompt agentCtx mAgent
 
     -- Extract user text for logging
     let userText = extractUserText (cmiParts input)
@@ -803,9 +810,6 @@ createMessageIO st sid input = do
             [ "sessionID" .= sid
             , "status" .= object ["type" .= ("busy" :: Text)]
             ]
-
-    -- Get working directory for path info
-    cwd <- getCurrentDirectory
 
     -- 1. User Message
     -- Use "msg" prefix to match TUI conventions for consistent sorting
@@ -1009,7 +1013,7 @@ createMessageIO st sid input = do
                         let systemMessage = case systemPrompt of
                                 Just prompt -> [OpenRouter.simpleMessage OpenRouter.System prompt]
                                 Nothing -> []
-                        let initialMessages = systemMessage ++ historyMessages ++ [OpenRouter.simpleMessage OpenRouter.User userText]
+                        let initialMessages = systemMessage ++ historyMessages
 
                         -- Major #4 & #5: Use model from input and include tools
                         let tools = map OpenRouter.toolDefToOpenAI Tool.toolDefinitions

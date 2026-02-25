@@ -52,6 +52,7 @@ flag production
 library
   exposed-modules:
     Agent.Agent
+    Agent.Context
     Agent.Types
     Api
     Api.Experimental
@@ -294,6 +295,7 @@ test-suite weapon-server-test
     Integration.StorageSpec
     Integration.ToolExecSpec
     Property.AgentAgentProps
+    Property.AgentContextProps
     Property.AgentTypesProps
     Property.ApiFileProps
     Property.ApiSessionProps

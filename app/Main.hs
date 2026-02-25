@@ -24,6 +24,7 @@ import Control.Exception (SomeException, try)
 import Control.Monad (void)
 import Data.Aeson (object)
 import Data.ByteString qualified as BS
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Evring.Wai.MultiCore (ServerSettings (..), defaultServerSettings, runServerMultiCore)
@@ -50,8 +51,10 @@ import Pty.Pty qualified as Pty
 import Servant
 import State
 import System.Directory (getCurrentDirectory)
+import System.Environment (getArgs)
 import System.FilePath ((</>))
 import System.IO (BufferMode (..), hSetBuffering, stdout)
+import Text.Read (readMaybe)
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                 // middleware
@@ -129,9 +132,23 @@ defaultLogLevel = Katip.InfoS
 defaultLogLevel = Katip.DebugS
 #endif
 
+-- | Default port for the server
+defaultPort :: Int
+defaultPort = 4096
+
+-- | Parse command line arguments for port
+parseArgs :: [String] -> Int
+parseArgs [] = defaultPort
+parseArgs ("--port" : portStr : _) = fromMaybe defaultPort (readMaybe portStr)
+parseArgs ("-p" : portStr : _) = fromMaybe defaultPort (readMaybe portStr)
+parseArgs (_ : rest) = parseArgs rest
+
 main :: IO ()
 main = Log.withLoggerLevel "weapon" defaultLogLevel $ \logger -> do
     hSetBuffering stdout LineBuffering
+
+    args <- getArgs
+    let requestedPort = parseArgs args
 
     let serverLogger = Log.withNS logger "server"
     Log.logMsg serverLogger Katip.InfoS "initializing weapon server"
@@ -147,13 +164,13 @@ main = Log.withLoggerLevel "weapon" defaultLogLevel $ \logger -> do
     _ <- forkIO $ heartbeatLoop appState
 
     Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
-    Log.logMsg serverLogger Katip.InfoS "listening on port 4096"
 
     let servantApp = requestLogger logger $ rejectEmptyPathSegments $ enableCors $ supplyEmptyBody $ serve api (server appState)
         websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
 
-    -- Use limited cores to avoid hitting io_uring fd limits on high-core machines
-    let settings = defaultServerSettings{serverPort = 4096, serverCores = Just 8}
+    -- Start server with retry logic handled by MultiCore
+    Log.logMsg serverLogger Katip.InfoS $ "attempting to listen on port " <> T.pack (show requestedPort)
+    let settings = defaultServerSettings{serverPort = requestedPort, serverPortRetry = 10, serverCores = Just 8}
     runServerMultiCore settings websocketApp
 
 -- | Periodic heartbeat to keep SSE connections alive.

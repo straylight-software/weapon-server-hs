@@ -38,6 +38,7 @@ module Evring.Wai.MultiCore (
 where
 
 import Control.Concurrent (forkOn, getNumCapabilities, newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (IOException, catch)
 import Control.Monad (forM_, replicateM)
 import Data.Word (Word32)
 import Evring.Wai.Conn
@@ -52,6 +53,8 @@ import System.Posix.Types (Fd (..))
 -- | Server settings
 data ServerSettings = ServerSettings
     { serverPort :: !Int
+    , serverPortRetry :: !Int
+    -- ^ Number of additional ports to try if serverPort is busy (0 = no retry)
     , serverBacklog :: !Int
     , serverRingSize :: !Int
     , serverMaxConns :: !Int -- per core
@@ -62,13 +65,18 @@ defaultServerSettings :: ServerSettings
 defaultServerSettings =
     ServerSettings
         { serverPort = 8080
+        , serverPortRetry = 10
         , serverBacklog = 4096
         , serverRingSize = 4096
         , serverMaxConns = 4096
         , serverCores = Nothing
         }
 
--- | Run server with one event loop per core
+{- | Run server with one event loop per core
+
+If the requested port is busy, will retry on subsequent ports up to
+@serverPortRetry@ times.
+-}
 runServerMultiCore :: ServerSettings -> Application -> IO ()
 runServerMultiCore settings@ServerSettings{..} app = do
     -- Determine core count
@@ -76,14 +84,13 @@ runServerMultiCore settings@ServerSettings{..} app = do
         Just n -> setNumCapabilities n >> pure n
         Nothing -> getNumCapabilities
 
-    putStrLn $ "evring-wai (multi-core): Starting on port " ++ show serverPort
+    -- Try to bind to port with retry
+    (actualPort, sockets) <- bindWithRetry settings numCores serverPort serverPortRetry
+
+    putStrLn $ "evring-wai (multi-core): Starting on port " ++ show actualPort
     putStrLn $ "  Cores: " ++ show numCores
     putStrLn $ "  Ring size: " ++ show serverRingSize
     putStrLn ""
-
-    -- Create one socket per core with SO_REUSEPORT
-    -- Kernel will load-balance incoming connections
-    sockets <- replicateM numCores (createListenSocket settings)
 
     -- Barrier for all workers
     dones <- replicateM numCores newEmptyMVar
@@ -99,6 +106,69 @@ runServerMultiCore settings@ServerSettings{..} app = do
 
     -- Cleanup
     mapM_ close sockets
+
+-- | Try to bind to a port, retrying on subsequent ports if busy
+bindWithRetry :: ServerSettings -> Int -> Int -> Int -> IO (Int, [Socket])
+bindWithRetry settings numCores port retriesLeft = do
+    -- First check if something is already listening on this port
+    inUse <- isPortInUse port
+    if inUse
+        then
+            if retriesLeft > 0
+                then do
+                    putStrLn $ "Port " ++ show port ++ " is busy, trying " ++ show (port + 1)
+                    bindWithRetry settings numCores (port + 1) (retriesLeft - 1)
+                else ioError $ userError $ "Port " ++ show port ++ " is in use and no retries left"
+        else do
+            -- Port is free, try to bind
+            result <- tryBindPort settings numCores port
+            case result of
+                Right sockets -> pure (port, sockets)
+                Left err
+                    | retriesLeft > 0 -> do
+                        putStrLn $ "Port " ++ show port ++ " bind failed, trying " ++ show (port + 1)
+                        bindWithRetry settings numCores (port + 1) (retriesLeft - 1)
+                    | otherwise -> ioError err
+
+{- | Check if a port is already in use by attempting a connection
+Returns True if something is listening on the port
+-}
+isPortInUse :: Int -> IO Bool
+isPortInUse port =
+    catch
+        ( do
+            sock <- socket AF_INET Stream 0
+            -- Try to connect to localhost:port
+            connect sock (SockAddrInet (fromIntegral port) 0x0100007f) -- 127.0.0.1
+            close sock
+            pure True -- Connection succeeded, something is listening
+        )
+        (\(_ :: IOException) -> pure False) -- Connection failed, port is free
+
+{- | Try to create all listening sockets for a given port
+Returns Left on bind failure, Right with sockets on success
+
+Uses a difference list to avoid 'reverse' on the accumulated sockets.
+-}
+tryBindPort :: ServerSettings -> Int -> Int -> IO (Either IOException [Socket])
+tryBindPort settings numCores port = do
+    let settingsWithPort = settings{serverPort = port}
+    -- Use difference list to build in order without reverse
+    result <- go numCores settingsWithPort id
+    pure $ fmap (\dl -> dl []) result
+  where
+    go 0 _ acc = pure (Right acc)
+    go n s acc =
+        catch
+            ( do
+                sock <- createListenSocket s
+                go (n - 1) s (acc . (sock :))
+            )
+            ( \e -> do
+                -- Close any sockets we already opened
+                mapM_ close (acc [])
+                pure (Left (e :: IOException))
+            )
 
 -- | Create a listening socket with SO_REUSEPORT
 createListenSocket :: ServerSettings -> IO Socket
