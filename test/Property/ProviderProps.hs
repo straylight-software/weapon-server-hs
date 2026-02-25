@@ -1,9 +1,20 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Provider property tests
+{- |
+Module      : Property.ProviderProps
+Description : Property tests for Provider module
+Stability   : experimental
+
+Property tests for the Provider module, including:
+
+* JSON round-trip properties for all types
+* Pure helper function properties
+* IO operation properties (auth persistence, etc.)
+-}
 module Property.ProviderProps where
 
-import Data.Aeson (decode, encode)
+import Data.Aeson (Value (..), decode, encode, object, (.=))
+import Data.Aeson.Key qualified as K
 import Data.ByteString.Lazy qualified as BL
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -82,6 +93,156 @@ prop_modelLimitRoundtrip = property $ do
     case decode json of
         Nothing -> failure
         Just limit' -> limit === limit'
+
+-- | Property: Provider JSON round-trip
+prop_providerRoundtrip :: Property
+prop_providerRoundtrip = property $ do
+    provider <- forAll genProvider
+    let json = encode provider
+    case decode json of
+        Nothing -> failure
+        Just provider' -> provider === provider'
+
+-- | Property: AuthMethod JSON round-trip
+prop_authMethodRoundtrip :: Property
+prop_authMethodRoundtrip = property $ do
+    am <- forAll genAuthMethod
+    let json = encode am
+    case decode json of
+        Nothing -> failure
+        Just am' -> am === am'
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Pure helper function properties
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: extractTextField extracts text from JSON objects
+prop_extractTextFieldSuccess :: Property
+prop_extractTextFieldSuccess = property $ do
+    key <- forAll genNonEmptyText
+    value <- forAll genNonEmptyText
+    let obj = object [K.fromText key .= value]
+    Provider.extractTextField key obj === Just value
+
+-- | Property: extractTextField returns Nothing for non-objects
+prop_extractTextFieldNonObject :: Property
+prop_extractTextFieldNonObject = property $ do
+    key <- forAll genNonEmptyText
+    value <- forAll genNonEmptyText
+    Provider.extractTextField key (String value) === Nothing
+
+-- | Property: extractTextField returns Nothing for missing keys
+prop_extractTextFieldMissing :: Property
+prop_extractTextFieldMissing = property $ do
+    key <- forAll genNonEmptyText
+    otherKey <- forAll $ Gen.filter (/= key) genNonEmptyText
+    value <- forAll genNonEmptyText
+    let obj = object [K.fromText otherKey .= value]
+    Provider.extractTextField key obj === Nothing
+
+-- | Property: extractTextField returns Nothing for non-string values
+prop_extractTextFieldNonString :: Property
+prop_extractTextFieldNonString = property $ do
+    key <- forAll genNonEmptyText
+    n <- forAll $ Gen.int (Range.linear 0 1000)
+    let obj = object [K.fromText key .= n]
+    Provider.extractTextField key obj === Nothing
+
+-- | Property: findProvider finds existing providers
+prop_findProviderSuccess :: Property
+prop_findProviderSuccess = property $ do
+    provider <- forAll genProvider
+    let providers = [provider]
+    Provider.findProvider (providerId provider) providers === Just provider
+
+-- | Property: findProvider returns Nothing for missing providers
+prop_findProviderMissing :: Property
+prop_findProviderMissing = property $ do
+    provider <- forAll genProvider
+    let providers = [provider]
+    missingId <- forAll $ Gen.filter (/= providerId provider) genNonEmptyText
+    Provider.findProvider missingId providers === Nothing
+
+-- | Property: findModel finds existing models
+prop_findModelSuccess :: Property
+prop_findModelSuccess = property $ do
+    model <- forAll genModel
+    let provider =
+            Provider
+                { providerId = "test"
+                , providerName = "Test"
+                , providerEnv = []
+                , providerModels = Map.singleton (modelId model) model
+                , providerApi = Nothing
+                , providerNpm = Nothing
+                }
+    Provider.findModel (modelId model) provider === Just model
+
+-- | Property: findModel returns Nothing for missing models
+prop_findModelMissing :: Property
+prop_findModelMissing = property $ do
+    model <- forAll genModel
+    let provider =
+            Provider
+                { providerId = "test"
+                , providerName = "Test"
+                , providerEnv = []
+                , providerModels = Map.singleton (modelId model) model
+                , providerApi = Nothing
+                , providerNpm = Nothing
+                }
+    missingId <- forAll $ Gen.filter (/= modelId model) genNonEmptyText
+    Provider.findModel missingId provider === Nothing
+
+-- | Property: updateProviderModels updates the correct provider
+prop_updateProviderModelsSuccess :: Property
+prop_updateProviderModelsSuccess = property $ do
+    providers <- forAll $ Gen.list (Range.linear 1 5) genProvider
+    -- Use safe indexing with element selection instead of !!
+    target <- forAll $ Gen.element providers
+    newModels <- forAll $ Map.fromList <$> Gen.list (Range.linear 0 3) ((,) <$> genNonEmptyText <*> genModel)
+    let updated = Provider.updateProviderModels (providerId target) newModels providers
+    let updatedTarget = Provider.findProvider (providerId target) updated
+    fmap providerModels updatedTarget === Just newModels
+
+-- | Property: updateProviderModels preserves other providers
+prop_updateProviderModelsPreservesOthers :: Property
+prop_updateProviderModelsPreservesOthers = property $ do
+    p1 <- forAll genProvider
+    p2 <- forAll $ Gen.filter (\p -> providerId p /= providerId p1) genProvider
+    let providers = [p1, p2]
+    newModels <- forAll $ Map.fromList <$> Gen.list (Range.linear 0 3) ((,) <$> genNonEmptyText <*> genModel)
+    let updated = Provider.updateProviderModels (providerId p1) newModels providers
+    let otherProvider = Provider.findProvider (providerId p2) updated
+    otherProvider === Just p2
+
+-- | Property: determineAuthMethod returns stored method when present
+prop_determineAuthMethodStored :: Property
+prop_determineAuthMethodStored = property $ do
+    method <- forAll genNonEmptyText
+    hasStored <- forAll Gen.bool
+    hasEnv <- forAll Gen.bool
+    Provider.determineAuthMethod (Just method) hasStored hasEnv === Just method
+
+-- | Property: determineAuthMethod returns "api_key" when stored but no method
+prop_determineAuthMethodApiKey :: Property
+prop_determineAuthMethodApiKey = property $ do
+    hasEnv <- forAll Gen.bool
+    Provider.determineAuthMethod Nothing True hasEnv === Just "api_key"
+
+-- | Property: determineAuthMethod returns "env" when only env auth
+prop_determineAuthMethodEnv :: Property
+prop_determineAuthMethodEnv = property $ do
+    Provider.determineAuthMethod Nothing False True === Just "env"
+
+-- | Property: determineAuthMethod returns Nothing when no auth
+prop_determineAuthMethodNone :: Property
+prop_determineAuthMethodNone = property $ do
+    Provider.determineAuthMethod Nothing False False === Nothing
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- IO operation properties
+-- ═══════════════════════════════════════════════════════════════════════════
 
 prop_authPersistence :: Property
 prop_authPersistence = property $ do
@@ -238,20 +399,67 @@ genProviderAuth =
         <*> Gen.bool
         <*> Gen.maybe genNonEmptyText
 
+-- | Generator for Provider
+genProvider :: Gen Provider
+genProvider =
+    Provider
+        <$> genNonEmptyText -- providerId
+        <*> genNonEmptyText -- providerName
+        <*> Gen.list (Range.linear 0 3) genNonEmptyText -- providerEnv
+        <*> (Map.fromList <$> Gen.list (Range.linear 0 3) ((,) <$> genNonEmptyText <*> genModel)) -- providerModels
+        <*> Gen.maybe genNonEmptyText -- providerApi
+        <*> Gen.maybe genNonEmptyText -- providerNpm
+
+-- | Generator for AuthMethod
+genAuthMethod :: Gen AuthMethod
+genAuthMethod =
+    AuthMethod
+        <$> Gen.element ["api_key", "oauth"]
+        <*> Gen.list (Range.linear 0 3) genNonEmptyText
+        <*> Gen.maybe genNonEmptyText
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Test tree
+-- ═══════════════════════════════════════════════════════════════════════════
+
 tests :: TestTree
 tests =
     testGroup
         "Provider Property Tests"
-        [ testProperty "ModelCost round-trip" prop_modelCostRoundtrip
-        , testProperty "Model round-trip" prop_modelRoundtrip
-        , testProperty "ProviderAuth round-trip" prop_providerAuthRoundtrip
-        , testProperty "ModelInterleaved round-trip" prop_modelInterleavedRoundtrip
-        , testProperty "ModelModalities round-trip" prop_modelModalitiesRoundtrip
-        , testProperty "ModelProvider round-trip" prop_modelProviderRoundtrip
-        , testProperty "ModelLimit round-trip" prop_modelLimitRoundtrip
-        , testProperty "Auth persistence" prop_authPersistence
-        , testProperty "Auth status handles corrupt JSON" prop_authStatusCorruptJson
-        , testProperty "listConnected includes stored auth" prop_listConnectedStoredAuth
-        , testProperty "listConnected includes env auth" prop_listConnectedEnvAuth
+        [ testGroup
+            "JSON Round-trip"
+            [ testProperty "ModelCost" prop_modelCostRoundtrip
+            , testProperty "Model" prop_modelRoundtrip
+            , testProperty "ProviderAuth" prop_providerAuthRoundtrip
+            , testProperty "ModelInterleaved" prop_modelInterleavedRoundtrip
+            , testProperty "ModelModalities" prop_modelModalitiesRoundtrip
+            , testProperty "ModelProvider" prop_modelProviderRoundtrip
+            , testProperty "ModelLimit" prop_modelLimitRoundtrip
+            , testProperty "Provider" prop_providerRoundtrip
+            , testProperty "AuthMethod" prop_authMethodRoundtrip
+            ]
+        , testGroup
+            "Pure Helpers"
+            [ testProperty "extractTextField success" prop_extractTextFieldSuccess
+            , testProperty "extractTextField non-object" prop_extractTextFieldNonObject
+            , testProperty "extractTextField missing key" prop_extractTextFieldMissing
+            , testProperty "extractTextField non-string" prop_extractTextFieldNonString
+            , testProperty "findProvider success" prop_findProviderSuccess
+            , testProperty "findProvider missing" prop_findProviderMissing
+            , testProperty "findModel success" prop_findModelSuccess
+            , testProperty "findModel missing" prop_findModelMissing
+            , testProperty "updateProviderModels success" prop_updateProviderModelsSuccess
+            , testProperty "updateProviderModels preserves others" prop_updateProviderModelsPreservesOthers
+            , testProperty "determineAuthMethod stored" prop_determineAuthMethodStored
+            , testProperty "determineAuthMethod api_key" prop_determineAuthMethodApiKey
+            , testProperty "determineAuthMethod env" prop_determineAuthMethodEnv
+            , testProperty "determineAuthMethod none" prop_determineAuthMethodNone
+            ]
+        , testGroup
+            "IO Operations"
+            [ testProperty "Auth persistence" prop_authPersistence
+            , testProperty "Auth status handles corrupt JSON" prop_authStatusCorruptJson
+            , testProperty "listConnected includes stored auth" prop_listConnectedStoredAuth
+            , testProperty "listConnected includes env auth" prop_listConnectedEnvAuth
+            ]
         ]

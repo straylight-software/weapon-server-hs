@@ -3,16 +3,35 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-{- | HTTP connection handler as continuation chain.
+{- |
+Module      : Evring.Wai.Conn
+Description : HTTP connection handler as continuation chain
+Stability   : experimental
 
-Optimized for zero-allocation in steady state:
-- Recv buffers from pool
-- Pre-computed response bytes where possible
-- Minimal ByteString allocations
+This module implements HTTP connection handling using continuation-passing
+style. Each connection is a chain of continuations that handle recv, send,
+and close operations.
+
+= Zero-Allocation Optimizations
+
+* Recv buffers from pool (see 'Evring.Wai.Pool')
+* Pre-computed response bytes where possible
+* Minimal ByteString allocations in steady state
+
+= Architecture
+
+@
+Accept → Recv (recvCont) → Parse → App → Serialize → Send (sendCont) → Close
+               ↑                                            │
+               └────────────── Keep-Alive ──────────────────┘
+@
 -}
 module Evring.Wai.Conn (
+    -- * Connection Context
     ConnContext (..),
     newConnContext,
+
+    -- * Connection Handling
     startConnection,
 ) where
 
@@ -31,7 +50,6 @@ import Data.CaseInsensitive qualified as CI
 import Data.IORef
 import Data.Primitive (mutablePrimArrayContents, newPinnedPrimArray)
 
-import Data.Maybe (fromMaybe)
 import Data.Vault.Lazy qualified as Vault
 import Data.Word (Word8)
 import Foreign (Ptr, castPtr, copyBytes, peekArray)
@@ -40,10 +58,13 @@ import Network.Socket (SockAddr (..))
 import Network.Wai
 import Network.Wai.Internal (Response (..), ResponseReceived (..))
 import System.Posix.Types (Fd (..))
-import Text.Read (readMaybe)
 
+import Evring.Wai.Internal (formatHeader, stripCR)
+
+import Data.Maybe (fromMaybe)
 import Evring.Wai.Loop
 import Evring.Wai.Pool
+import Text.Read (readMaybe)
 
 -- | Buffer size for recv (16KB for better HTTP request capture)
 bufferSize :: Int
@@ -79,7 +100,17 @@ startConnection ctx@ConnContext{..} loop clientFd clientAddr app = do
         bufferSize
         (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
 
--- | Continuation after recv completes
+{- | Continuation after recv completes.
+
+Handles three cases:
+
+1. __Failure\/EOF__: Release buffers and close connection
+2. __Incomplete request__: Accumulate data and recv more
+3. __Complete request__: Parse, run WAI app, send response
+
+For streaming responses (SSE), hands off to 'handleStreamingResponse'.
+For WebSocket (ResponseRaw), forks to 'handleRawResponse'.
+-}
 recvCont ::
     ConnContext ->
     Loop ->
@@ -174,7 +205,15 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
                     ResponseBuilder{} -> handleNormalResponse
                     ResponseStream{} -> handleNormalResponse
 
--- | Continuation after send completes
+{- | Continuation after send completes.
+
+On success:
+
+* If keep-alive: submit another recv for the next request
+* Otherwise: close the connection
+
+On failure: release buffers and close.
+-}
 sendCont ::
     ConnContext ->
     Loop ->
@@ -251,6 +290,11 @@ tryParseRequest bs = do
                         [] -> Nothing
                         [_methodOnly] -> Nothing
 
+{- | Parse headers into raw (ByteString, ByteString) pairs.
+
+This is a simplified version that doesn't use CaseInsensitive keys,
+for use with the ParsedReq type. Uses 'stripCR' from Internal.
+-}
 {-# INLINE parseHeaders #-}
 parseHeaders :: [ByteString] -> [(ByteString, ByteString)]
 parseHeaders = foldr go []
@@ -262,6 +306,11 @@ parseHeaders = foldr go []
                  in (name, value) : acc
         (_nameWithoutColon, _emptyRest) -> acc -- Malformed header, skip
 
+{- | Get Content-Length from raw header pairs.
+
+This version works with @[(ByteString, ByteString)]@ headers
+(as opposed to 'Evring.Wai.Internal.getContentLength' which uses RequestHeaders).
+-}
 {-# INLINE getContentLength #-}
 getContentLength :: [(ByteString, ByteString)] -> Int
 getContentLength headers =
@@ -269,12 +318,7 @@ getContentLength headers =
         Just val -> fromMaybe 0 (readMaybe (BC.unpack val))
         Nothing -> 0
 
-{-# INLINE stripCR #-}
-stripCR :: ByteString -> ByteString
-stripCR bs
-    | BS.null bs = bs
-    | BS.last bs == 13 = BS.init bs
-    | otherwise = bs
+-- Note: stripCR is imported from Evring.Wai.Internal
 
 {-# INLINE checkKeepAlive #-}
 checkKeepAlive :: ParsedReq -> Bool
@@ -362,15 +406,8 @@ serializeResponseTo resp bufPtr maxLen = do
             BSU.unsafeUseAsCStringLen respBytes $ \(src, srcLen) ->
                 copyBytes bufPtr (castPtr src) srcLen
             pure len
-  where
-    {-# INLINE formatHeader #-}
-    formatHeader (name, value) =
-        mconcat
-            [ Builder.byteString (CI.original name)
-            , Builder.byteString ": "
-            , Builder.byteString value
-            , Builder.byteString "\r\n"
-            ]
+
+-- Note: formatHeader is imported from Evring.Wai.Internal
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- RESPONSERAW / WEBSOCKET SUPPORT
@@ -518,7 +555,10 @@ handleStreamingResponse _ctx loop clientFd status headers withBody = do
 
     pure ()
 
--- | Build HTTP headers for streaming response
+{- | Build HTTP headers for streaming response.
+
+Uses 'formatHeader' from 'Evring.Wai.Internal'.
+-}
 {-# INLINE buildStreamingHeaders #-}
 buildStreamingHeaders :: Status -> ResponseHeaders -> ByteString
 buildStreamingHeaders status headers =
@@ -529,17 +569,9 @@ buildStreamingHeaders status headers =
                 , Builder.char8 ' '
                 , Builder.byteString (statusMessage status)
                 , Builder.byteString "\r\n"
-                , mconcat [formatHdr h | h <- headers]
+                , mconcat [formatHeader h | h <- headers]
                 , Builder.byteString "Transfer-Encoding: chunked\r\n"
                 , Builder.byteString "Connection: close\r\n"
                 , Builder.byteString "\r\n"
                 ]
      in LBS.toStrict $ Builder.toLazyByteString respBuilder
-  where
-    formatHdr (name, value) =
-        mconcat
-            [ Builder.byteString (CI.original name)
-            , Builder.byteString ": "
-            , Builder.byteString value
-            , Builder.byteString "\r\n"
-            ]

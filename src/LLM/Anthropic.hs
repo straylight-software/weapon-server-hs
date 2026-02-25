@@ -1,9 +1,29 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-{- | Anthropic API client
+{- |
+Module      : LLM.Anthropic
+Description : Anthropic Claude API client
 
-Handles both streaming and non-streaming requests to Claude.
+This module provides a client for the Anthropic Messages API, supporting
+both streaming and non-streaming chat completions with Claude models.
+
+==== Example usage
+
+@
+client <- newClient "your-api-key"
+let request = ChatRequest
+      { crModel = "claude-3-opus-20240229"
+      , crMessages = [Message User (SimpleContent "Hello!")]
+      , crMaxTokens = 1024
+      , crSystem = Nothing
+      , crTemperature = Nothing
+      , crTools = Nothing
+      , crStream = False
+      }
+response <- chat client request
+@
 -}
 module LLM.Anthropic (
     -- * Client
@@ -13,6 +33,11 @@ module LLM.Anthropic (
     -- * API Calls
     chat,
     chatStream,
+
+    -- * Pure Parsing (for testing)
+    parseSSE,
+    parseEvent,
+    parseStreamEvent,
 ) where
 
 import Control.Exception (SomeException, try)
@@ -34,14 +59,28 @@ import Network.HTTP.Types qualified as HT
 
 import LLM.Types
 
--- | Anthropic API client
+{- | Anthropic API client configuration.
+
+Holds the API key and HTTP manager for making requests to the
+Anthropic Messages API.
+-}
 data AnthropicClient = AnthropicClient
     { acApiKey :: Text
+    -- ^ Anthropic API key (starts with "sk-ant-")
     , acManager :: HC.Manager
+    -- ^ HTTP connection manager for connection pooling
     , acBaseUrl :: Text
+    -- ^ Base URL for API requests (default: "https://api.anthropic.com")
     }
 
--- | Create a new Anthropic client
+{- | Create a new Anthropic client with the given API key.
+
+Uses default TLS settings and the standard Anthropic API endpoint.
+
+==== Example
+
+>>> client <- newClient "sk-ant-..."
+-}
 newClient :: Text -> IO AnthropicClient
 newClient apiKey = do
     manager <- HC.newManager HCT.tlsManagerSettings
@@ -52,7 +91,14 @@ newClient apiKey = do
             , acBaseUrl = "https://api.anthropic.com"
             }
 
--- | Non-streaming chat completion
+{- | Send a non-streaming chat completion request.
+
+Makes a single request and waits for the complete response.
+For long responses, consider using 'chatStream' instead.
+
+Returns 'Left' with an error message on failure, or 'Right' with
+the response on success.
+-}
 chat :: AnthropicClient -> ChatRequest -> IO (Either Text ChatResponse)
 chat client req = do
     let reqBody = encode req{crStream = False}
@@ -65,8 +111,20 @@ chat client req = do
             Left parseErr -> pure $ Left $ "Parse error: " <> T.pack parseErr
             Right resp -> pure $ Right resp
 
-{- | Streaming chat completion
-Returns an action that yields events until MessageStop
+{- | Send a streaming chat completion request.
+
+The response is delivered incrementally via the callback function,
+which is called for each 'StreamEvent' as it arrives. The stream
+ends when a 'MessageStop' event is received.
+
+==== Example
+
+@
+chatStream client request $ \event -> case event of
+    ContentBlockDelta _ text -> putStr text
+    MessageStop -> putStrLn ""
+    _ -> pure ()
+@
 -}
 chatStream :: AnthropicClient -> ChatRequest -> (StreamEvent -> IO ()) -> IO (Either Text ())
 chatStream client req onEvent = do
@@ -145,8 +203,25 @@ makeRequest AnthropicClient{..} path body = do
                                 <> ": "
                                 <> decodeUtf8 (LBS.toStrict $ HC.responseBody resp)
 
-{- | Parse SSE events from buffer
-Returns (remaining buffer, parsed events)
+{- | Parse Server-Sent Events (SSE) from a byte buffer.
+
+Processes the buffer line by line, extracting complete SSE events.
+Returns a tuple of (remaining unparsed bytes, list of parsed events).
+
+This is exposed for testing. In normal usage, it's called internally
+by 'chatStream'.
+
+==== SSE Format
+
+SSE events have the format:
+
+@
+event: message_start
+data: {"type": "message_start", ...}
+
+event: content_block_delta
+data: {"type": "content_block_delta", ...}
+@
 -}
 parseSSE :: ByteString -> IO (ByteString, [StreamEvent])
 parseSSE buffer = do
@@ -164,13 +239,21 @@ parseSSE buffer = do
         | BS.null l = go ls events "" -- Empty line = event boundary
         | otherwise = go ls events l -- Incomplete line
 
--- | Parse a single SSE event from JSON
+{- | Parse a single SSE data line from JSON bytes.
+
+Takes the JSON portion of an SSE data line (after "data: ") and
+attempts to parse it as a 'StreamEvent'.
+-}
 parseEvent :: ByteString -> Maybe StreamEvent
 parseEvent bs = do
     json <- decode (LBS.fromStrict bs)
     parseStreamEvent json
 
--- | Parse stream event from JSON Value
+{- | Parse a stream event from a JSON 'Value'.
+
+This is the pure parsing logic, separate from the byte decoding.
+Useful for testing event parsing in isolation.
+-}
 parseStreamEvent :: Value -> Maybe StreamEvent
 parseStreamEvent json = flip parseMaybe json $ \case
     Object obj -> do
@@ -200,8 +283,3 @@ parseStreamEvent json = flip parseMaybe json $ \case
             "ping" -> pure Ping
             _otherType -> fail "Unknown event type"
     _otherValue -> fail "Not an object"
-
--- | Check if event is MessageStop
-isMessageStop :: StreamEvent -> Bool
-isMessageStop MessageStop = True
-isMessageStop _otherEvent = False

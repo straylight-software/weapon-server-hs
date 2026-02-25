@@ -2,23 +2,46 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-{- | CPS-based WAI server using io_uring.
+{- |
+Module      : Evring.Wai.Server
+Description : Single-threaded CPS-based WAI server using io_uring
+Stability   : experimental
 
-Single-threaded, no synchronization, continuation-driven.
-Optimized with buffer pools for zero-allocation steady state.
+This module provides a single-threaded, continuation-driven HTTP server.
+It uses io_uring for all network I/O and buffer pools for zero-allocation
+in steady state.
+
+= Architecture
+
+* Single io_uring ring (see 'Evring.Wai.MultiCore' for multi-core)
+* Continuation-passing style for request handling
+* Buffer pooling for reduced allocation pressure
+* No synchronization needed (single-threaded)
+
+= Usage
+
+@
+import Evring.Wai.Server (runServer, defaultServerSettings)
+
+main :: IO ()
+main = runServer defaultServerSettings myApp
+@
 -}
 module Evring.Wai.Server (
+    -- * Running the server
     runServer,
+
+    -- * Configuration
     ServerSettings (..),
     defaultServerSettings,
 )
 where
 
-import Data.Bits (shiftL, shiftR, (.|.))
-import Data.Word (Word16, Word32)
+import Data.Word (Word32)
 import Evring.Wai.Conn
+import Evring.Wai.Internal (parseSockAddr)
 import Evring.Wai.Loop (CompletionResult (..), Cont (..), Loop, ioAccept, runLoop, withLoop)
-import Foreign (Ptr, castPtr, mallocBytes, peekByteOff, poke)
+import Foreign (Ptr, castPtr, mallocBytes, poke)
 import Network.Socket
 import Network.Wai (Application)
 import System.Posix.Types (Fd (..))
@@ -109,33 +132,5 @@ acceptCont ctx loop listenFd addrBuf addrLenBuf app = Cont $ \case
         -- This continuation is done (accept cont chain continues independently)
         pure Nothing
 
--- | Parse sockaddr from accept buffer
-parseSockAddr :: Ptr () -> IO SockAddr
-parseSockAddr addrBuf = do
-    family <- peekByteOff addrBuf 0 :: IO Word16
-    case family of
-        2 -> do
-            -- AF_INET
-            port <- peekByteOff addrBuf 2 :: IO Word16
-            addr <- peekByteOff addrBuf 4 :: IO Word32
-            let portNum = fromIntegral (byteSwap16 port)
-            pure $ SockAddrInet portNum addr
-        10 -> do
-            -- AF_INET6
-            port <- peekByteOff addrBuf 2 :: IO Word16
-            let portNum = fromIntegral (byteSwap16 port)
-            pure $ SockAddrInet6 portNum 0 ipv6AnyAddress 0
-        _unknownFamily -> pure $ SockAddrInet 0 0
-
-byteSwap16 :: Word16 -> Word16
-byteSwap16 w = (w `shiftR` 8) .|. (w `shiftL` 8)
-
-{- | IPv6 any address (::) as HostAddress6
-  Wrapper to avoid stan's "big tuple" warning
--}
-ipv6AnyAddress :: HostAddress6
-ipv6AnyAddress = ipv6AddressFromWords 0 0 0 0
-
--- | Construct HostAddress6 from four Word32 components
-ipv6AddressFromWords :: Word32 -> Word32 -> Word32 -> Word32 -> HostAddress6
-ipv6AddressFromWords !a !b !c !d = (a, b, c, d)
+-- Note: parseSockAddr, byteSwap16, ipv6AnyAddress, ipv6AddressFromWords
+-- are imported from Evring.Wai.Internal

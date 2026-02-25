@@ -1,5 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{- |
+Module      : Property.ExperimentalProps
+Description : Property tests for Experimental.Worktree
+
+Property-based tests for the experimental worktree module.
+Tests cover both pure functions and IO operations with storage.
+-}
 module Property.ExperimentalProps where
 
 import Data.Aeson (Value (..), object, (.=))
@@ -16,6 +23,79 @@ import System.IO.Temp (createTempDirectory)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- Pure Function Properties
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- | Property: defaultWorktreeInfo contains the provided root
+prop_defaultWorktreeInfoHasRoot :: Property
+prop_defaultWorktreeInfoHasRoot = property $ do
+    root <- forAll genText
+    let info = Worktree.defaultWorktreeInfo root
+    case info of
+        Object obj -> do
+            KM.lookup (K.fromText "root") obj === Just (String root)
+            KM.lookup (K.fromText "ready") obj === Just (Bool True)
+        _notObject -> failure
+
+-- | Property: resetWorktreeInfo contains the provided root
+prop_resetWorktreeInfoHasRoot :: Property
+prop_resetWorktreeInfoHasRoot = property $ do
+    root <- forAll genText
+    let info = Worktree.resetWorktreeInfo root
+    case info of
+        Object obj -> do
+            KM.lookup (K.fromText "root") obj === Just (String root)
+            KM.lookup (K.fromText "reset") obj === Just (Bool True)
+        _notObject -> failure
+
+-- | Property: worktreeKey is non-empty and has expected structure
+prop_worktreeKeyStructure :: Property
+prop_worktreeKeyStructure = withTests 1 $ property $ do
+    -- Check exact structure (avoids length on list)
+    case Worktree.worktreeKey of
+        [a, b] -> do
+            a === "experimental"
+            b === "worktree"
+        _other -> failure
+
+-- | Property: defaultWorktreeInfo and resetWorktreeInfo produce different objects
+prop_defaultAndResetDiffer :: Property
+prop_defaultAndResetDiffer = property $ do
+    root <- forAll genText
+    let defaultInfo = Worktree.defaultWorktreeInfo root
+        resetInfo' = Worktree.resetWorktreeInfo root
+    -- They should both have the same root but different status flags
+    case (defaultInfo, resetInfo') of
+        (Object defObj, Object resObj) -> do
+            -- Both have same root
+            KM.lookup (K.fromText "root") defObj === KM.lookup (K.fromText "root") resObj
+            -- But different status fields
+            KM.lookup (K.fromText "ready") defObj === Just (Bool True)
+            KM.lookup (K.fromText "reset") resObj === Just (Bool True)
+            -- And they shouldn't have each other's status fields
+            KM.lookup (K.fromText "reset") defObj === Nothing
+            KM.lookup (K.fromText "ready") resObj === Nothing
+        (Null, _) -> failure
+        (String _, _) -> failure
+        (Number _, _) -> failure
+        (Bool _, _) -> failure
+        (Array _, _) -> failure
+        (_, Null) -> failure
+        (_, String _) -> failure
+        (_, Number _) -> failure
+        (_, Bool _) -> failure
+        (_, Array _) -> failure
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- IO Operation Properties
+-- ════════════════════════════════════════════════════════════════════════════
+
+{- | Run a test action with a temporary storage directory.
+
+Creates a temp directory, initializes storage, runs the action,
+cleans up the directory, and returns the result.
+-}
 withStore :: (Storage.StorageConfig -> IO a) -> IO a
 withStore action = do
     tmpDir <- createTempDirectory "/tmp" "experimental-test"
@@ -23,6 +103,7 @@ withStore action = do
     removeDirectoryRecursive tmpDir
     pure result
 
+-- | Property: setInfo followed by getInfo returns the set value.
 prop_worktreeSetGet :: Property
 prop_worktreeSetGet = property $ do
     root <- forAll genText
@@ -32,6 +113,7 @@ prop_worktreeSetGet = property $ do
         Worktree.getInfo store root
     result === value
 
+-- | Property: resetInfo returns an object with the correct root.
 prop_worktreeReset :: Property
 prop_worktreeReset = property $ do
     root <- forAll genText
@@ -82,9 +164,14 @@ prop_worktreeGetAfterRemove = property $ do
         Object _obj -> success
         _notObject -> failure
 
+-- | Generator for non-empty alphanumeric text (1-20 characters).
 genText :: Gen Text
 genText = Gen.text (Range.linear 1 20) Gen.alphaNum
 
+{- | Generator for worktree-like JSON values.
+
+Produces objects with "root" and "ready" fields.
+-}
 genValue :: Gen Value
 genValue = do
     text <- genText
@@ -178,19 +265,30 @@ prop_worktreeIndependentStores = property $ do
     result1 === value1
     result2 === value2
 
+-- | All property tests for the Experimental module
 tests :: TestTree
 tests =
     testGroup
         "Experimental Property Tests"
-        [ testProperty "worktree set/get" prop_worktreeSetGet
-        , testProperty "worktree reset" prop_worktreeReset
-        , testProperty "worktree remove empty" prop_worktreeRemoveEmpty
-        , testProperty "worktree remove after set" prop_worktreeRemoveAfterSet
-        , testProperty "worktree get after remove" prop_worktreeGetAfterRemove
-        , testProperty "worktree set idempotent" prop_worktreeSetIdempotent
-        , testProperty "worktree reset after set" prop_worktreeResetAfterSet
-        , testProperty "worktree get different roots" prop_worktreeGetDifferentRoots
-        , testProperty "worktree remove idempotent" prop_worktreeRemoveIdempotent
-        , testProperty "worktree set preserves fields" prop_worktreeSetPreservesFields
-        , testProperty "worktree independent stores" prop_worktreeIndependentStores
+        [ testGroup
+            "Pure Functions"
+            [ testProperty "defaultWorktreeInfo has correct structure" prop_defaultWorktreeInfoHasRoot
+            , testProperty "resetWorktreeInfo has correct structure" prop_resetWorktreeInfoHasRoot
+            , testProperty "worktreeKey has expected structure" prop_worktreeKeyStructure
+            , testProperty "default and reset info differ" prop_defaultAndResetDiffer
+            ]
+        , testGroup
+            "IO Operations"
+            [ testProperty "worktree set/get" prop_worktreeSetGet
+            , testProperty "worktree reset" prop_worktreeReset
+            , testProperty "worktree remove empty" prop_worktreeRemoveEmpty
+            , testProperty "worktree remove after set" prop_worktreeRemoveAfterSet
+            , testProperty "worktree get after remove" prop_worktreeGetAfterRemove
+            , testProperty "worktree set idempotent" prop_worktreeSetIdempotent
+            , testProperty "worktree reset after set" prop_worktreeResetAfterSet
+            , testProperty "worktree get different roots" prop_worktreeGetDifferentRoots
+            , testProperty "worktree remove idempotent" prop_worktreeRemoveIdempotent
+            , testProperty "worktree set preserves fields" prop_worktreeSetPreservesFields
+            , testProperty "worktree independent stores" prop_worktreeIndependentStores
+            ]
         ]

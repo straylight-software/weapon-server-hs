@@ -1,5 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{- |
+Module      : Property.ProjectProps
+Description : Property tests for Project.Build module
+Stability   : stable
+
+This module contains Hedgehog property tests for the project construction
+functions in "Project.Build". Tests cover both the main 'projectFromDir'
+function and the pure helper functions 'makeProjectId' and 'makeProjectName'.
+-}
 module Property.ProjectProps where
 
 import Api (Project (Project), id)
@@ -13,6 +22,55 @@ import Test.Tasty
 import Test.Tasty.Hedgehog
 import Prelude hiding (id)
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Pure Helper Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: makeProjectId with non-empty basename returns "proj_" prefix
+prop_makeProjectIdNonEmpty :: Property
+prop_makeProjectIdNonEmpty = property $ do
+    basename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    let pid = ProjectBuild.makeProjectId basename
+    T.isPrefixOf "proj_" pid === True
+    T.stripPrefix "proj_" pid === Just basename
+
+-- | Property: makeProjectId with empty basename returns default
+prop_makeProjectIdEmpty :: Property
+prop_makeProjectIdEmpty = property $ do
+    ProjectBuild.makeProjectId "" === "proj_default"
+
+-- | Property: makeProjectName with non-empty basename returns Just basename
+prop_makeProjectNameNonEmpty :: Property
+prop_makeProjectNameNonEmpty = property $ do
+    basename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    ProjectBuild.makeProjectName basename === Just basename
+
+-- | Property: makeProjectName with empty basename returns Nothing
+prop_makeProjectNameEmpty :: Property
+prop_makeProjectNameEmpty = property $ do
+    ProjectBuild.makeProjectName "" === Nothing
+
+-- | Property: makeProjectId is deterministic
+prop_makeProjectIdDeterministic :: Property
+prop_makeProjectIdDeterministic = property $ do
+    basename <- forAll $ Gen.text (Range.linear 0 20) Gen.alphaNum
+    let pid1 = ProjectBuild.makeProjectId basename
+    let pid2 = ProjectBuild.makeProjectId basename
+    pid1 === pid2
+
+-- | Property: makeProjectName is deterministic
+prop_makeProjectNameDeterministic :: Property
+prop_makeProjectNameDeterministic = property $ do
+    basename <- forAll $ Gen.text (Range.linear 0 20) Gen.alphaNum
+    let name1 = ProjectBuild.makeProjectName basename
+    let name2 = ProjectBuild.makeProjectName basename
+    name1 === name2
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- projectFromDir Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: projectFromDir extracts basename correctly
 prop_projectFromDirUsesBase :: Property
 prop_projectFromDirUsesBase = property $ do
     base <- forAll $ Gen.text (Range.linear 1 12) Gen.alphaNum
@@ -24,6 +82,7 @@ prop_projectFromDirUsesBase = property $ do
             wt === T.pack dir
             nm === Just base
 
+-- | Property: projectFromDir handles root directory
 prop_projectFromDirDefault :: Property
 prop_projectFromDirDefault = property $ do
     let dir = "/"
@@ -97,17 +156,42 @@ prop_projectDifferentDirDifferentProject = property $ do
             let p2 = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack dir2)
             assert $ id p1 /= id p2
 
+-- | Property: worktree preserves the full path
+prop_projectWorktreePreservesPath :: Property
+prop_projectWorktreePreservesPath = property $ do
+    segments <-
+        forAll $
+            Gen.list (Range.linear 1 5) $
+                Gen.text (Range.linear 1 10) Gen.alphaNum
+    let path = "/" <> T.unpack (T.intercalate "/" segments)
+    let project = ProjectBuild.projectFromDir path
+    case project of
+        Project _ wt _ -> wt === T.pack path
+
 tests :: TestTree
 tests =
     testGroup
         "Project Property Tests"
-        [ testProperty "projectFromDir uses base name" prop_projectFromDirUsesBase
-        , testProperty "projectFromDir default" prop_projectFromDirDefault
-        , testProperty "project id deterministic" prop_projectIdDeterministic
-        , testProperty "project id format" prop_projectIdFormat
-        , testProperty "project worktree absolute" prop_projectWorktreeAbsolute
-        , testProperty "project name from path" prop_projectNameFromPath
-        , testProperty "project id valid chars" prop_projectIdValidChars
-        , testProperty "project same dir same project" prop_projectSameDirSameProject
-        , testProperty "project different dir different project" prop_projectDifferentDirDifferentProject
+        [ testGroup
+            "Pure Helpers"
+            [ testProperty "makeProjectId non-empty" prop_makeProjectIdNonEmpty
+            , testProperty "makeProjectId empty" prop_makeProjectIdEmpty
+            , testProperty "makeProjectName non-empty" prop_makeProjectNameNonEmpty
+            , testProperty "makeProjectName empty" prop_makeProjectNameEmpty
+            , testProperty "makeProjectId deterministic" prop_makeProjectIdDeterministic
+            , testProperty "makeProjectName deterministic" prop_makeProjectNameDeterministic
+            ]
+        , testGroup
+            "projectFromDir"
+            [ testProperty "uses base name" prop_projectFromDirUsesBase
+            , testProperty "default for root" prop_projectFromDirDefault
+            , testProperty "id deterministic" prop_projectIdDeterministic
+            , testProperty "id format" prop_projectIdFormat
+            , testProperty "worktree absolute" prop_projectWorktreeAbsolute
+            , testProperty "name from path" prop_projectNameFromPath
+            , testProperty "id valid chars" prop_projectIdValidChars
+            , testProperty "same dir same project" prop_projectSameDirSameProject
+            , testProperty "different dir different project" prop_projectDifferentDirDifferentProject
+            , testProperty "worktree preserves path" prop_projectWorktreePreservesPath
+            ]
         ]

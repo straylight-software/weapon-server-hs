@@ -56,6 +56,7 @@ library
     Api
     Api.Experimental
     Api.File
+    Api.Internal
     Api.Message
     Api.Pty
     Api.Session
@@ -65,6 +66,7 @@ library
     Bus.Event
     Config.Config
     Config.Dhall
+    Config.Merge
     Config.Types
     Evring.Event
     Evring.Handle
@@ -74,6 +76,7 @@ library
     Evring.Trace
     Evring.Wai
     Evring.Wai.Conn
+    Evring.Wai.Internal
     Evring.Wai.Loop
     Evring.Wai.MultiCore
     Evring.Wai.Pool
@@ -104,6 +107,7 @@ library
     Proxy.Proxy
     Proxy.Types
     Pty.Connect
+    Pty.Internal
     Pty.Parse
     Pty.Pty
     Pty.Types
@@ -131,6 +135,7 @@ library
     Util.Identifier
     Util.StorageKeys
     Vcs.Diff
+    Vcs.Internal
     Vcs.Status
 
   -- // evring-wai (io_uring bindings)
@@ -281,41 +286,60 @@ test-suite weapon-server-test
   other-modules:
     ApiCompatibilitySpec
     Integration.ApiComplianceTest
+    Integration.ConfigLoadingSpec
+    Integration.FindSearchSpec
     Integration.HandlerSubprocessSpec
     Integration.HaskemathesisTest
+    Integration.StorageSpec
+    Integration.ToolExecSpec
+    Property.AgentAgentProps
     Property.AgentTypesProps
     Property.ApiFileProps
+    Property.ApiSessionProps
     Property.ApiTypesProps
     Property.BusProps
+    Property.ConfigDhallProps
+    Property.ConfigMergeProps
     Property.ConfigProps
     Property.ConfigTypesProps
     Property.DiffProps
+    Property.ErrorFormattersProps
     Property.EventProps
+    Property.EvringProps
+    Property.ExeCacheProps
     Property.ExperimentalProps
+    Property.FileSystemProps
     Property.FindParseProps
     Property.FormatterProps
+    Property.GitProps
     Property.HandlerProps
     Property.HealthProps
     Property.IdentifierProps
+    Property.IoUringProps
     Property.LLMProps
     Property.LLMTypesProps
     Property.LspProps
     Property.MessagePartProps
     Property.MessageProps
+    Property.MessageTypesProps
     Property.MiddlewareProps
     Property.OAuthProps
     Property.OpenApiProps
+    Property.OpenRouterProps
     Property.PathProps
     Property.ProjectDiscoveryProps
     Property.ProjectProps
     Property.PromptAsyncProps
     Property.ProviderProps
+    Property.ProxyProps
     Property.ProxyTypesProps
+    Property.PtyInternalProps
     Property.PtyProps
     Property.PtyTypesProps
     Property.RequestProps
     Property.SandboxProps
     Property.SandboxTypesProps
+    Property.SessionFilterProps
     Property.SessionProps
     Property.SessionStatusProps
     Property.SessionTypesProps
@@ -323,14 +347,17 @@ test-suite weapon-server-test
     Property.StorageKeyProps
     Property.StorageProps
     Property.TodoProps
+    Property.ToolDefsProps
     Property.ToolProps
     Property.ToolTypesProps
     Property.TuiProps
+    Property.VcsInternalProps
     Property.VcsStatusProps
     Test.Fixture
     Test.Helpers
     Unit.AgentSpec
     Unit.ApiSpec
+    Unit.ProviderSpec
     Unit.ToolStreamingSpec
 
   -- // compatibility

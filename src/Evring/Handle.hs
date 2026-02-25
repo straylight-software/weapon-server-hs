@@ -1,19 +1,50 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 
-{- | Generational handles for resource management.
+{- |
+Module      : Evring.Handle
+Description : Generational handles for resource management
+Stability   : stable
 
-A Handle is an index + generation pair that uniquely identifies a resource.
+A 'Handle' is an index + generation pair that uniquely identifies a resource.
 The generation prevents use-after-free: when a resource is closed and its
 slot reused, the old handle becomes invalid because the generation changed.
 
-This is the same pattern as used in the C++ evring library.
+= The ABA Problem
+
+Without generations, reusing a slot index could cause stale references to
+accidentally reference new resources:
+
+1. Resource A gets slot 5
+2. Resource A is closed, slot 5 is freed
+3. Resource B gets slot 5 (reused)
+4. Stale reference to slot 5 now points to B instead of A!
+
+With generations:
+
+1. Resource A gets Handle(index=5, gen=1)
+2. Resource A is closed, slot 5 gen incremented to 2
+3. Resource B gets Handle(index=5, gen=2)
+4. Stale Handle(index=5, gen=1) doesn't match current gen=2, so lookup fails safely
+
+= Implementation
+
+This is the same pattern as used in the C++ evring library and is common
+in game engines (entity-component systems) and other systems requiring
+stable references with slot reuse.
 -}
 module Evring.Handle (
+    -- * Handle type
     Handle (..),
-    invalidHandle,
-    isValid,
+
+    -- * Construction
     makeHandle,
+    invalidHandle,
+
+    -- * Validation
+    isValid,
+
+    -- * Serialization
     packHandle,
     unpackHandle,
 ) where

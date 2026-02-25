@@ -4,6 +4,7 @@ module Property.MessagePartProps where
 
 import Control.Monad (when)
 import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
 import Data.Text (Text)
 import Hedgehog
@@ -138,6 +139,113 @@ prop_emptyPartsOperations = property $ do
     Parts.updatePart pid patch [] === Nothing
     Parts.deletePart pid [] === Nothing
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- partId Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: partId extracts ID from "id" field
+prop_partIdFromId :: Property
+prop_partIdFromId = property $ do
+    pid <- forAll genNonEmptyText
+    let part = object ["id" .= pid, "type" .= ("text" :: Text)]
+    Parts.partId part === Just pid
+
+-- | Property: partId extracts ID from "partID" field as fallback
+prop_partIdFromPartID :: Property
+prop_partIdFromPartID = property $ do
+    pid <- forAll genNonEmptyText
+    let part = object ["partID" .= pid, "type" .= ("text" :: Text)]
+    Parts.partId part === Just pid
+
+-- | Property: partId prefers "id" over "partID"
+prop_partIdPrefersId :: Property
+prop_partIdPrefersId = property $ do
+    pid1 <- forAll genNonEmptyText
+    pid2 <- forAll genNonEmptyText
+    let part = object ["id" .= pid1, "partID" .= pid2, "type" .= ("text" :: Text)]
+    Parts.partId part === Just pid1
+
+-- | Property: partId returns Nothing for non-object values
+prop_partIdNonObject :: Property
+prop_partIdNonObject = property $ do
+    Parts.partId Null === Nothing
+    Parts.partId (String "test") === Nothing
+    Parts.partId (Number 42) === Nothing
+    Parts.partId (Bool True) === Nothing
+
+-- | Property: partId returns Nothing for object without id fields
+prop_partIdNoIdField :: Property
+prop_partIdNoIdField = property $ do
+    let part = object ["type" .= ("text" :: Text), "text" .= ("hello" :: Text)]
+    Parts.partId part === Nothing
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- partExists Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: partExists returns True when part exists
+prop_partExistsTrue :: Property
+prop_partExistsTrue = property $ do
+    pid <- forAll genNonEmptyText
+    part <- forAll (genPart pid)
+    others <- forAll $ Gen.list (Range.linear 0 5) genPartAny
+    assert $ Parts.partExists pid (part : others)
+
+-- | Property: partExists returns False when part doesn't exist
+prop_partExistsFalse :: Property
+prop_partExistsFalse = property $ do
+    pid <- forAll genNonEmptyText
+    otherPid <- forAll (Gen.filter (/= pid) genNonEmptyText)
+    part <- forAll (genPart otherPid)
+    assert $ not $ Parts.partExists pid [part]
+
+-- | Property: partExists returns False for empty list
+prop_partExistsEmpty :: Property
+prop_partExistsEmpty = property $ do
+    pid <- forAll genNonEmptyText
+    assert $ not $ Parts.partExists pid []
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- mergePart Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: mergePart merges objects correctly
+prop_mergePartObjects :: Property
+prop_mergePartObjects = property $ do
+    key1 <- forAll genNonEmptyText
+    val1 <- forAll genNonEmptyText
+    key2 <- forAll genNonEmptyText
+    val2 <- forAll genNonEmptyText
+    let old = object [Key.fromText key1 .= val1]
+    let new = object [Key.fromText key2 .= val2]
+    let merged = Parts.mergePart old new
+    case merged of
+        Object obj -> do
+            -- Both keys should be present
+            KM.size obj === if key1 == key2 then 1 else 2
+        Null -> failure
+        String _ -> failure
+        Number _ -> failure
+        Bool _ -> failure
+        Array _ -> failure
+
+-- | Property: mergePart patch overrides old values
+prop_mergePartOverride :: Property
+prop_mergePartOverride = property $ do
+    key <- forAll genNonEmptyText
+    oldVal <- forAll genNonEmptyText
+    newVal <- forAll genNonEmptyText
+    let old = object [Key.fromText key .= oldVal]
+    let new = object [Key.fromText key .= newVal]
+    Parts.mergePart old new === new
+
+-- | Property: mergePart with non-object returns patch
+prop_mergePartNonObject :: Property
+prop_mergePartNonObject = property $ do
+    patch <- forAll genPatch
+    Parts.mergePart Null patch === patch
+    Parts.mergePart (String "old") patch === patch
+
 genText :: Gen Text
 genText = Gen.text (Range.linear 0 50) Gen.alphaNum
 
@@ -167,15 +275,43 @@ tests :: TestTree
 tests =
     testGroup
         "Message Part Property Tests"
-        [ testProperty "updatePart merges patch" prop_updatePart
-        , testProperty "deletePart removes part" prop_deletePart
-        , testProperty "findPart locates part" prop_findPart
-        , testProperty "update missing part" prop_updateMissingPart
-        , testProperty "delete missing part" prop_deleteMissingPart
-        , testProperty "update preserves other parts" prop_updatePreservesOtherParts
-        , -- Additional edge cases
-          testProperty "update part is idempotent" prop_updatePartIdempotent
-        , testProperty "delete part twice" prop_deletePartTwice
-        , testProperty "find part in nested structure" prop_findPartInNestedStructure
+        [ testGroup
+            "findPart"
+            [ testProperty "locates part" prop_findPart
+            , testProperty "in nested structure" prop_findPartInNestedStructure
+            ]
+        , testGroup
+            "updatePart"
+            [ testProperty "merges patch" prop_updatePart
+            , testProperty "missing part returns Nothing" prop_updateMissingPart
+            , testProperty "preserves other parts" prop_updatePreservesOtherParts
+            , testProperty "is idempotent" prop_updatePartIdempotent
+            ]
+        , testGroup
+            "deletePart"
+            [ testProperty "removes part" prop_deletePart
+            , testProperty "missing part returns Nothing" prop_deleteMissingPart
+            , testProperty "delete twice" prop_deletePartTwice
+            ]
+        , testGroup
+            "partId"
+            [ testProperty "extracts from id field" prop_partIdFromId
+            , testProperty "extracts from partID field" prop_partIdFromPartID
+            , testProperty "prefers id over partID" prop_partIdPrefersId
+            , testProperty "returns Nothing for non-object" prop_partIdNonObject
+            , testProperty "returns Nothing for no id field" prop_partIdNoIdField
+            ]
+        , testGroup
+            "partExists"
+            [ testProperty "returns True when exists" prop_partExistsTrue
+            , testProperty "returns False when missing" prop_partExistsFalse
+            , testProperty "returns False for empty list" prop_partExistsEmpty
+            ]
+        , testGroup
+            "mergePart"
+            [ testProperty "merges objects correctly" prop_mergePartObjects
+            , testProperty "patch overrides old values" prop_mergePartOverride
+            , testProperty "non-object returns patch" prop_mergePartNonObject
+            ]
         , testProperty "empty parts operations" prop_emptyPartsOperations
         ]

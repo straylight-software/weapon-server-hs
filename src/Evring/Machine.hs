@@ -1,16 +1,39 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{- | Pure state machine abstractions for async I/O.
+{- |
+Module      : Evring.Machine
+Description : Pure state machine abstractions for async I/O
+Stability   : stable
+
+This module defines the core state machine abstraction for io_uring.
+
+= Mealy Machines
 
 The core pattern is the Mealy machine:
 
 @
-  State × Event → State × [Operation]
+State × Event → State × [Operation]
 @
 
-Machines are pure: no IO in step/generate, only in the runner.
-This enables deterministic replay testing.
+= Why Pure?
+
+Machines are pure: no IO in step\/generate, only in the runner.
+This enables:
+
+* Deterministic replay testing (see 'Evring.Trace')
+* Property-based testing of state transitions
+* Easy reasoning about machine behavior
+
+= Machine Types
+
+* 'Machine' - Basic event-driven machine
+* 'GeneratorMachine' - Machine that can proactively generate operations
+
+= Running Machines
+
+Use 'Evring.Ring.run' to execute a machine with actual io_uring I/O.
+Use 'replay' to test a machine against recorded events.
 -}
 module Evring.Machine (
     -- * Core Machine class

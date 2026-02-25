@@ -3,15 +3,34 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE UnboxedTuples #-}
 
-{- | Single-threaded event loop with continuations.
+{- |
+Module      : Evring.Wai.Loop
+Description : Single-threaded event loop with continuations
+Stability   : experimental
+
+This module provides the core event loop for the io_uring WAI server.
+It uses continuation-passing style (CPS) for zero-overhead async I/O.
+
+= Architecture
 
 No threads, no MVars, no blocking per-connection. Each io_uring
 completion resumes the corresponding continuation.
 
-Optimizations:
-- Flat array for O(1) continuation lookup (no IntMap)
-- Freelist for slot reuse (no allocation on steady state)
-- Batch completion draining
+= Optimizations
+
+* Flat array for O(1) continuation lookup (no IntMap)
+* Freelist for slot reuse (no allocation in steady state)
+* Batch completion draining (up to 64 per iteration)
+
+= Continuation Model
+
+Each operation is associated with a 'Cont' that handles its completion:
+
+@
+ioRecv loop fd buf len $ Cont $ \\case
+    Success bytesRead -> processData bytesRead
+    Failure errno -> handleError errno
+@
 -}
 module Evring.Wai.Loop (
     -- * Core types

@@ -1,14 +1,46 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- | Tool type definitions
+{- |
+Module      : Tool.Types
+Description : Core type definitions for tool system
+
+This module defines the core types used throughout the tool execution system.
+It includes tool identifiers, input types for each tool, output types, and
+execution context.
+
+== Tool System Overview
+
+The tool system provides a set of file and shell operations that can be
+invoked by AI agents. Each tool has:
+
+* A 'ToolID' for identification
+* An input type (e.g., 'ReadInput', 'WriteInput')
+* A 'ToolDef' describing its schema for the API
+
+== Usage
+
+@
+-- Create a successful tool output
+let output = toolSuccess "Read file.txt" "file contents..."
+
+-- Create an error output
+let err = toolError "Write Error" "Permission denied"
+@
+-}
 module Tool.Types (
-    -- * Tool info
-    ToolDef (..),
+    -- * Tool Identifiers
+    -- $toolids
     ToolID (..),
 
-    -- * Tool inputs
+    -- * Tool Definitions
+    -- $tooldefs
+    ToolDef (..),
+
+    -- * Tool Input Types
+    -- $toolinputs
     ReadInput (..),
     WriteInput (..),
     EditInput (..),
@@ -16,15 +48,19 @@ module Tool.Types (
     GlobInput (..),
     GrepInput (..),
 
-    -- * Tool result
+    -- * Tool Output
+    -- $tooloutput
     ToolOutput (..),
     toolSuccess,
     toolError,
+    toolSuccessWithMeta,
 
-    -- * Context
+    -- * Execution Context
+    -- $context
     ToolContext (..),
 
-    -- * Streaming
+    -- * Streaming Support
+    -- $streaming
     StreamingCallback,
     noStreaming,
 )
@@ -34,7 +70,16 @@ import Data.Aeson
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
--- | Tool identifiers
+{- $toolids
+Tool identifiers enumerate all available tools in the system.
+These are used for routing tool invocations to the correct handler.
+-}
+
+{- | Enumeration of all available tool types.
+
+Each constructor corresponds to a specific tool that can be executed
+by the agent. The JSON serialization uses lowercase names (e.g., "read", "write").
+-}
 data ToolID
     = ReadTool
     | WriteTool
@@ -74,11 +119,23 @@ instance FromJSON ToolID where
         "task" -> pure TaskTool
         t -> fail $ "Unknown tool: " <> show t
 
--- | Tool definition for API
+{- $tooldefs
+Tool definitions describe tools for the API layer, including their
+JSON schema for input validation.
+-}
+
+{- | Definition of a tool for the Anthropic API.
+
+This includes the tool's name, description, and a JSON Schema describing
+the expected input format.
+-}
 data ToolDef = ToolDef
     { tdName :: Text
+    -- ^ Unique identifier for the tool (e.g., "read", "write", "bash")
     , tdDescription :: Text
-    , tdInputSchema :: Value -- JSON Schema
+    -- ^ Human-readable description of what the tool does
+    , tdInputSchema :: Value
+    -- ^ JSON Schema describing the expected input structure
     }
     deriving (Eq, Show, Generic)
 
@@ -90,11 +147,22 @@ instance ToJSON ToolDef where
             , "input_schema" .= tdInputSchema
             ]
 
--- | Read tool input
+{- $toolinputs
+Each tool has a corresponding input type that defines the parameters
+it accepts. These types have JSON instances for serialization.
+-}
+
+{- | Input parameters for the read tool.
+
+The read tool reads file contents or lists directory entries.
+-}
 data ReadInput = ReadInput
     { riFilePath :: Text
+    -- ^ Absolute or relative path to the file or directory
     , riOffset :: Maybe Int
+    -- ^ Line number to start from (1-indexed, defaults to 1)
     , riLimit :: Maybe Int
+    -- ^ Maximum number of lines to read (defaults to 2000)
     }
     deriving (Eq, Show, Generic)
 
@@ -113,10 +181,16 @@ instance ToJSON ReadInput where
             , "limit" .= riLimit
             ]
 
--- | Write tool input
+{- | Input parameters for the write tool.
+
+The write tool creates or overwrites files with the specified content.
+Parent directories are created automatically if they don't exist.
+-}
 data WriteInput = WriteInput
     { wiFilePath :: Text
+    -- ^ Absolute or relative path to the file to write
     , wiContent :: Text
+    -- ^ Content to write to the file
     }
     deriving (Eq, Show, Generic)
 
@@ -133,12 +207,20 @@ instance ToJSON WriteInput where
             , "content" .= wiContent
             ]
 
--- | Edit tool input
+{- | Input parameters for the edit tool.
+
+The edit tool performs string replacement in files. By default, it replaces
+only the first occurrence; use 'eiReplaceAll' to replace all occurrences.
+-}
 data EditInput = EditInput
     { eiFilePath :: Text
+    -- ^ Path to the file to edit
     , eiOldString :: Text
+    -- ^ Text to search for and replace
     , eiNewString :: Text
+    -- ^ Replacement text
     , eiReplaceAll :: Maybe Bool
+    -- ^ If 'True', replace all occurrences; otherwise replace only the first
     }
     deriving (Eq, Show, Generic)
 
@@ -159,12 +241,20 @@ instance ToJSON EditInput where
             , "replaceAll" .= eiReplaceAll
             ]
 
--- | Bash tool input
+{- | Input parameters for the bash tool.
+
+The bash tool executes shell commands with configurable timeout and
+working directory. Output is streamed back in real-time.
+-}
 data BashInput = BashInput
     { biCommand :: Text
+    -- ^ The bash command to execute
     , biDescription :: Text
+    -- ^ Human-readable description of the command's purpose
     , biTimeout :: Maybe Int
+    -- ^ Timeout in milliseconds (defaults to 120000, i.e., 2 minutes)
     , biWorkdir :: Maybe Text
+    -- ^ Working directory for command execution
     }
     deriving (Eq, Show, Generic)
 
@@ -185,10 +275,15 @@ instance ToJSON BashInput where
             , "workdir" .= biWorkdir
             ]
 
--- | Glob tool input
+{- | Input parameters for the glob tool.
+
+The glob tool finds files matching a glob pattern using @fd@.
+-}
 data GlobInput = GlobInput
     { giPattern :: Text
+    -- ^ Glob pattern (e.g., @\"**\/*.hs\"@, @\"src\/**\/*.ts\"@)
     , giPath :: Maybe Text
+    -- ^ Directory to search in (defaults to current directory)
     }
     deriving (Eq, Show, Generic)
 
@@ -205,11 +300,17 @@ instance ToJSON GlobInput where
             , "path" .= giPath
             ]
 
--- | Grep tool input
+{- | Input parameters for the grep tool.
+
+The grep tool searches file contents using @ripgrep@ (rg).
+-}
 data GrepInput = GrepInput
     { grPattern :: Text
+    -- ^ Regular expression pattern to search for
     , grPath :: Maybe Text
+    -- ^ Directory to search in (defaults to current directory)
     , grInclude :: Maybe Text
+    -- ^ File pattern filter (e.g., @\"*.ts\"@, @\"*.{ts,tsx}\"@)
     }
     deriving (Eq, Show, Generic)
 
@@ -228,12 +329,25 @@ instance ToJSON GrepInput where
             , "include" .= grInclude
             ]
 
--- | Tool execution output
+{- $tooloutput
+Tool output represents the result of executing a tool. It includes
+a title, the output content, an error flag, and optional metadata.
+-}
+
+{- | Result of executing a tool.
+
+Use 'toolSuccess', 'toolSuccessWithMeta', or 'toolError' to construct
+instances rather than using the constructor directly.
+-}
 data ToolOutput = ToolOutput
     { toTitle :: Text
+    -- ^ Short title describing the operation (e.g., "Read file.txt")
     , toOutput :: Text
+    -- ^ The output content (file contents, command output, error message)
     , toIsError :: Bool
+    -- ^ 'True' if this represents an error result
     , toMetadata :: Maybe Value
+    -- ^ Optional JSON metadata about the operation
     }
     deriving (Eq, Show, Generic)
 
@@ -254,27 +368,75 @@ instance FromJSON ToolOutput where
             <*> v .: "is_error"
             <*> v .:? "metadata"
 
--- | Context for tool execution
+{- $context
+Execution context provides information about the current session and
+working directory for tool execution.
+-}
+
+{- | Context for tool execution.
+
+This is passed to every tool executor and provides information about
+the current session and working directory.
+-}
 data ToolContext = ToolContext
     { tcSessionID :: Text
+    -- ^ Unique identifier for the current session
     , tcMessageID :: Text
+    -- ^ Unique identifier for the current message/request
     , tcWorkdir :: FilePath
+    -- ^ Working directory for relative path resolution
     }
     deriving (Eq, Show)
 
--- | Smart constructor for successful tool output
+{- | Smart constructor for successful tool output without metadata.
+
+==== __Examples__
+
+@
+toolSuccess "Read file.txt" "line 1\\nline 2\\n"
+@
+-}
 toolSuccess :: Text -> Text -> ToolOutput
 toolSuccess title output = ToolOutput title output False Nothing
 
--- | Smart constructor for error tool output
+{- | Smart constructor for successful tool output with metadata.
+
+==== __Examples__
+
+@
+toolSuccessWithMeta "Glob *.hs" "file1.hs\\nfile2.hs" (Just (object ["count" .= 2]))
+@
+-}
+toolSuccessWithMeta :: Text -> Text -> Maybe Value -> ToolOutput
+toolSuccessWithMeta title output = ToolOutput title output False
+
+{- | Smart constructor for error tool output.
+
+==== __Examples__
+
+@
+toolError "Write Error" "Permission denied: /etc/passwd"
+@
+-}
 toolError :: Text -> Text -> ToolOutput
 toolError title output = ToolOutput title output True Nothing
 
+{- $streaming
+Streaming support allows tools to report incremental output as they execute.
+This is particularly useful for long-running commands where the user wants
+to see progress.
+-}
+
 {- | Callback invoked with accumulated output during streaming tool execution.
+
 The callback receives the total accumulated output so far (not just the delta).
+This allows the UI to replace the previous output rather than append.
 -}
 type StreamingCallback = Text -> IO ()
 
--- | A no-op streaming callback for when streaming is not needed
+{- | A no-op streaming callback for when streaming is not needed.
+
+Use this when you don't need real-time output updates.
+-}
 noStreaming :: StreamingCallback
 noStreaming = const (pure ())

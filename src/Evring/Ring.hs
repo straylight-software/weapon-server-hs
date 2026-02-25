@@ -1,10 +1,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{- | Ring runner: connects pure state machines to actual io_uring I/O.
+{- |
+Module      : Evring.Ring
+Description : Ring runner connecting pure state machines to io_uring
+Stability   : experimental
 
 This is the only module that performs actual I/O. The machine abstraction
 remains pure, enabling deterministic replay testing.
+
+= Event Loop
 
 The runner implements the event loop:
 
@@ -14,6 +19,24 @@ The runner implements the event loop:
 4. Wait for completions
 5. Step machine with completion event
 6. Repeat until done
+
+= Traced Execution
+
+Use 'runTraced' to capture all events for later replay:
+
+@
+(finalState, trace) <- runTraced config myMachine
+-- trace can be saved and replayed without I/O
+@
+
+= Generator Machines
+
+For bulk operations, use 'runGenerate' with a 'GeneratorMachine':
+
+@
+-- StatAll machine generates stat operations for all files
+finalState <- runGenerate config (statAllMachine filePaths)
+@
 -}
 module Evring.Ring (
     -- * Running machines

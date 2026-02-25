@@ -2,12 +2,15 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{- | WAI runner using io_uring for all network I/O.
+{- |
+Module      : Evring.Wai
+Description : WAI runner using io_uring for all network I/O
+Stability   : experimental
 
 This module provides a high-performance HTTP server that uses io_uring
 instead of the traditional epoll/kqueue event loop.
 
-Usage:
+= Usage
 
 @
 import Evring.Wai (runEvring)
@@ -17,15 +20,29 @@ main :: IO ()
 main = runEvring 8080 myApp
 @
 
-Supports:
-- Full HTTP/1.1 request parsing (method, path, query, headers)
-- Request body reading (Content-Length)
-- WAI Application interface compatible with Servant
-- HTTP/1.1 Keep-Alive connections
-- Chunked transfer encoding for streaming responses
-- WebSocket support via ResponseRaw
-- Graceful shutdown on SIGTERM/SIGINT
-- Proper error handling
+= Features
+
+* Full HTTP\/1.1 request parsing (method, path, query, headers)
+* Request body reading (Content-Length)
+* WAI Application interface compatible with Servant
+* HTTP\/1.1 Keep-Alive connections
+* Chunked transfer encoding for streaming responses
+* WebSocket support via 'Network.Wai.Internal.ResponseRaw'
+* Graceful shutdown on SIGTERM\/SIGINT
+* Buffer pooling for reduced allocation pressure
+
+= Architecture
+
+The server uses a single-threaded event loop for io_uring safety.
+Each accepted connection is handled via 'forkOn' pinned to the same
+capability to maintain io_uring thread safety. Buffer pooling reduces
+allocation overhead in steady state.
+
+= Limitations
+
+* Single io_uring ring (see 'Evring.Wai.MultiCore' for multi-core)
+* No TLS support (use a reverse proxy)
+* No HTTP\/2 support
 -}
 module Evring.Wai (
     -- * Running WAI applications
@@ -42,11 +59,6 @@ import Control.Concurrent (forkOn, threadDelay)
 import Control.Exception (SomeException, bracket, catch, finally)
 import Control.Monad (replicateM, unless, void, when)
 
--- import System.Timeout (timeout)  -- Disabled: using io_uring directly
--- Debug timing (disabled):
--- import System.Clock (Clock(Monotonic), getTime, toNanoSecs, diffTimeSpec)
-
-import Data.Bits (shiftL, shiftR, (.|.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder qualified as Builder
@@ -60,8 +72,18 @@ import Data.Maybe (fromMaybe)
 import Data.Primitive (MutablePrimArray, mutablePrimArrayContents, newPinnedPrimArray)
 import Data.Vault.Lazy qualified as Vault
 import Data.Vector qualified as V
-import Data.Word (Word16, Word32, Word8)
+import Data.Word (Word32, Word8)
 import Foreign (Ptr, castPtr, copyBytes, free, mallocBytes)
+
+import Evring.Wai.Internal (
+    checkKeepAliveHeaders,
+    formatHeader,
+    getContentLength,
+    parseSockAddr,
+    splitHeaderBody,
+    splitPathQuery,
+    stripCR,
+ )
 
 -- Note: unsafePerformIO no longer needed - streaming body uses proper IO
 
@@ -85,9 +107,7 @@ import Network.HTTP.Types qualified
 import Network.Socket (
     Family (AF_INET),
     HostAddress,
-    HostAddress6,
-    PortNumber,
-    SockAddr (SockAddrInet, SockAddrInet6),
+    SockAddr (..),
     Socket,
     SocketOption (ReuseAddr),
     SocketType (Stream),
@@ -116,7 +136,6 @@ import Network.Wai.Internal (
 import System.IoUring (IOCtx, IoOp (..), IoResult (..), defaultIoUringParams, submitBatch, withIoUring)
 import System.Posix.Signals (Handler (Catch), installHandler, sigINT, sigTERM)
 import System.Posix.Types (Fd (Fd))
-import Text.Read (readMaybe)
 
 -- | FFI for setsockopt to set TCP_NODELAY
 foreign import ccall unsafe "setsockopt"
@@ -307,17 +326,7 @@ waitForConnections serverStateRef settings = do
 ipv4AnyAddress :: HostAddress
 ipv4AnyAddress = 0
 
-{- | IPv6 any address (::) as HostAddress6
-  HostAddress6 is (Word32, Word32, Word32, Word32) per the network library
--}
-ipv6AnyAddress :: HostAddress6
-ipv6AnyAddress = ipv6AddressFromWords 0 0 0 0
-
-{- | Construct HostAddress6 from four Word32 components
-  This avoids stan's "big tuple" warning while still being type-safe
--}
-ipv6AddressFromWords :: Word32 -> Word32 -> Word32 -> Word32 -> HostAddress6
-ipv6AddressFromWords !a !b !c !d = (a, b, c, d)
+-- Note: ipv6AnyAddress and ipv6AddressFromWords moved to Evring.Wai.Internal
 
 -- | Create and bind a listen socket.
 createListenSocket :: EvringSettings -> IO Socket
@@ -410,37 +419,7 @@ runAcceptLoop ctx listenFd settings app serverStateRef = do
             -- Continue accepting
             acceptLoop addrBuf addrLenBuf
 
-{- | Parse a sockaddr structure from the accept buffer.
-Handles AF_INET (IPv4) and AF_INET6 (IPv6).
--}
-parseSockAddr :: Ptr () -> IO SockAddr
-parseSockAddr addrBuf = do
-    -- First 2 bytes are sa_family
-    family <- peekByteOff addrBuf 0 :: IO Word16
-    case family of
-        2 -> do
-            -- AF_INET
-            -- struct sockaddr_in: family(2) + port(2) + addr(4)
-            port <- peekByteOff addrBuf 2 :: IO Word16
-            addr <- peekByteOff addrBuf 4 :: IO Word32
-            -- Port is in network byte order (big endian)
-            let portNum = fromIntegral (byteSwap16 port) :: PortNumber
-            return $ SockAddrInet portNum addr
-        10 -> do
-            -- AF_INET6
-            -- struct sockaddr_in6: family(2) + port(2) + flowinfo(4) + addr(16) + scope_id(4)
-            port <- peekByteOff addrBuf 2 :: IO Word16
-            let portNum = fromIntegral (byteSwap16 port) :: PortNumber
-            -- For now, return a placeholder IPv6 address
-            -- Full IPv6 parsing would read the 16-byte address
-            return $ SockAddrInet6 portNum 0 ipv6AnyAddress 0
-        _unknownFamily ->
-            -- Unknown family, return placeholder
-            return $ SockAddrInet 0 0
-
--- | Byte swap for 16-bit values (network to host order)
-byteSwap16 :: Word16 -> Word16
-byteSwap16 w = (w `shiftR` 8) .|. (w `shiftL` 8)
+-- Note: parseSockAddr and byteSwap16 moved to Evring.Wai.Internal
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Connection Handler
@@ -596,17 +575,16 @@ processRequest ctx clientFd settings app stateRef serverStateRef req leftover = 
         ResponseBuilder{} -> handleNormalResponse
         ResponseStream{} -> handleNormalResponse
 
--- | Check if connection should be kept alive based on request headers
+{- | Check if connection should be kept alive based on request headers.
+
+Uses 'checkKeepAliveHeaders' from 'Evring.Wai.Internal' with the
+Connection header and HTTP version from the request.
+-}
 checkKeepAlive :: Request -> Bool
 checkKeepAlive req =
-    let connHeader = lookup "Connection" (requestHeaders req)
-        isHttp11 = httpVersion req >= http11
-     in case connHeader of
-            Just val
-                | CI.mk val == "close" -> False
-                | CI.mk val == "keep-alive" -> True
-                | otherwise -> isHttp11 -- Unknown value, default based on version
-            Nothing -> isHttp11 -- HTTP/1.1 defaults to keep-alive
+    checkKeepAliveHeaders
+        (lookup "Connection" (requestHeaders req))
+        (httpVersion req >= http11)
 
 {- | Handle a ResponseRaw (WebSocket, etc.)
 This gives the application direct access to send/receive on the socket
@@ -846,7 +824,13 @@ parseHttpVersion "HTTP/2.0" = Right (HttpVersion 2 0)
 parseHttpVersion "HTTP/2" = Right (HttpVersion 2 0)
 parseHttpVersion v = Left $ "Unknown HTTP version: " ++ BC.unpack v
 
--- | Parse header lines into RequestHeaders
+-- Note: parseHeaders, splitHeaderBody, splitPathQuery, stripCR, getContentLength
+-- moved to Evring.Wai.Internal
+
+{- | Parse header lines into RequestHeaders (local wrapper).
+
+Uses the shared implementation from 'Evring.Wai.Internal'.
+-}
 parseHeaders :: [ByteString] -> RequestHeaders
 parseHeaders = foldr parseHeader []
   where
@@ -857,36 +841,6 @@ parseHeaders = foldr parseHeader []
                 | otherwise ->
                     let value = BS.dropWhile (== 32) (BS.drop 1 rest) -- Drop ':' and leading spaces
                      in (CI.mk name, value) : acc
-
--- | Split raw data into header section and body
-splitHeaderBody :: ByteString -> (ByteString, ByteString)
-splitHeaderBody bs =
-    case BS.breakSubstring "\r\n\r\n" bs of
-        (headers, rest)
-            | BS.null rest -> (headers, BS.empty)
-            | otherwise -> (headers, BS.drop 4 rest) -- Drop the \r\n\r\n
-
--- | Split path from query string at '?'
-splitPathQuery :: ByteString -> (ByteString, ByteString)
-splitPathQuery bs =
-    case BC.break (== '?') bs of
-        (path, query)
-            | BS.null query -> (path, BS.empty)
-            | otherwise -> (path, query) -- Keep the '?' in query string
-
--- | Strip trailing \r from a line
-stripCR :: ByteString -> ByteString
-stripCR bs
-    | BS.null bs = bs
-    | BS.last bs == 13 = BS.init bs -- 13 = '\r'
-    | otherwise = bs
-
--- | Get Content-Length from headers
-getContentLength :: RequestHeaders -> Int
-getContentLength headers =
-    case lookup "Content-Length" headers of
-        Just val -> fromMaybe 0 (readMaybe (BC.unpack val))
-        Nothing -> 0
 
 -- Note: unsafePerformIORef and consumeBody removed - now using attachStreamingBody for proper streaming
 
@@ -991,7 +945,11 @@ sendChunk ctx clientFd chunkData = do
                         ]
     sendBytes ctx clientFd chunkBytes
 
--- | Build HTTP response headers.
+{- | Build HTTP response headers.
+
+Constructs the HTTP response status line, headers, Content-Length,
+and Connection header. Uses 'formatHeader' from 'Evring.Wai.Internal'.
+-}
 buildResponseHeaders ::
     Network.HTTP.Types.Status ->
     [(CI.CI ByteString, ByteString)] ->
@@ -1023,16 +981,12 @@ buildResponseHeaders status headers keepAlive mContentLength =
                     , Builder.byteString connectionHeader
                     , Builder.byteString "\r\n"
                     ]
-  where
-    formatHeader (name, value) =
-        mconcat
-            [ Builder.byteString (CI.original name)
-            , Builder.byteString ": "
-            , Builder.byteString value
-            , Builder.byteString "\r\n"
-            ]
 
--- | Build HTTP response headers for chunked encoding.
+{- | Build HTTP response headers for chunked encoding.
+
+Similar to 'buildResponseHeaders' but adds @Transfer-Encoding: chunked@
+instead of Content-Length. Uses 'formatHeader' from 'Evring.Wai.Internal'.
+-}
 buildChunkedHeaders ::
     Network.HTTP.Types.Status ->
     [(CI.CI ByteString, ByteString)] ->
@@ -1057,14 +1011,6 @@ buildChunkedHeaders status headers keepAlive =
                     , Builder.byteString connectionHeader
                     , Builder.byteString "\r\n"
                     ]
-  where
-    formatHeader (name, value) =
-        mconcat
-            [ Builder.byteString (CI.original name)
-            , Builder.byteString ": "
-            , Builder.byteString value
-            , Builder.byteString "\r\n"
-            ]
 
 {- | Send bytes over the connection.
 Uses the ByteString's internal buffer directly (avoiding an extra copy)

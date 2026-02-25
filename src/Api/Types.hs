@@ -1,35 +1,70 @@
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                 // weapon-server // api/types
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---
--- Shared data models used across multiple API domains. Core types for health,
--- paths, projects, providers, and VCS that form the foundation of the API.
---
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
+{- | ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                                                // weapon-server // api/types
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Shared data models used across multiple API domains. Core types for health,
+paths, projects, providers, and VCS that form the foundation of the API.
+
+= Overview
+
+This module exports:
+
+* 'Health' - Server health status for monitoring
+* 'PathInfo' - System path configuration information
+* 'Project' - Project workspace metadata
+* 'ProviderList' / 'ConfigProviderList' - LLM provider information
+* 'VcsInfo' - Version control system state
+* 'ChatInput' - Simple chat request input
+
+= API Type Definitions
+
+The API type synonyms define Servant routes matching the OpenAPI specification.
+Each type is named with an @API@ suffix (e.g., 'HealthAPI', 'ProjectListAPI').
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-}
 module Api.Types (
     -- * Core Types
+
+    -- ** Health Status
     Health (..),
+
+    -- ** Path Information
     PathInfo (..),
+
+    -- ** Project Management
     Project (..),
+
+    -- ** Provider Management
     ProviderList (..),
     ConfigProviderList (..),
+
+    -- ** Version Control
     VcsInfo (..),
+
+    -- ** Chat Input
     ChatInput (..),
 
     -- * Core API Endpoints
+
+    -- ** Health and Global
     HealthAPI,
     PathAPI,
     GlobalConfigAPI,
+
+    -- ** Project Management
     ProjectListAPI,
     ProjectGetAPI,
     ProjectUpdateAPI,
     ProjectCurrentAPI,
+
+    -- ** Provider and Authentication
     ProviderListAPI,
     ProviderAuthAPI,
     ProviderAPI,
@@ -38,43 +73,94 @@ module Api.Types (
     AuthCreateAPI,
     AuthUpdateAPI,
     AuthDeleteAPI,
+
+    -- ** Agent and Configuration
     AgentAPI,
     ConfigAPI,
     CommandAPI,
+
+    -- ** Language Server and VCS
     LspAPI,
     VcsAPI,
+
+    -- ** Permissions and Questions
     PermissionAPI,
     PermissionReplyAPI,
     QuestionAPI,
     QuestionReplyAPI,
     QuestionRejectAPI,
+
+    -- ** File Search
     FindAPI,
     FindFileAPI,
     FindSymbolAPI,
+
+    -- ** Events
     GlobalEventAPI,
     EventAPI,
+
+    -- ** Lifecycle
     InstanceDisposeAPI,
     GlobalDisposeAPI,
+
+    -- ** Logging
     LogAPI,
+
+    -- ** Skills and Formatters
     SkillAPI,
     FormatterAPI,
+
+    -- ** Chat
     ChatAPI,
 ) where
 
-import Data.Aeson
+import Data.Aeson (
+    FromJSON (..),
+    ToJSON (..),
+    Value,
+    object,
+    withObject,
+    (.:),
+    (.:?),
+    (.=),
+ )
 import Data.Text (Text)
 import Formatter.Status (FormatterStatus)
-import GHC.Generics
-import Servant
+import GHC.Generics (Generic)
+import Servant (
+    Capture,
+    Delete,
+    Get,
+    JSON,
+    Patch,
+    Post,
+    Put,
+    QueryParam,
+    Raw,
+    ReqBody,
+    type (:>),
+ )
 import Skill.Skill (SkillInfo)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // health //
 -- ═══════════════════════════════════════════════════════════════════════════
 
+{- | Server health status for monitoring and load balancers.
+
+Used by @GET /global/health@ to verify server availability.
+
+==== Example JSON
+
+@
+{ "healthy": true, "version": "0.1.0" }
+@
+-}
 data Health = Health
     { healthy :: Bool
+    -- ^ Whether the server is operating normally
     , version :: Text
+    -- ^ Server version string (e.g., "0.1.0")
     }
     deriving (Eq, Show, Generic)
 
@@ -86,12 +172,34 @@ instance FromJSON Health
 -- // path //
 -- ═══════════════════════════════════════════════════════════════════════════
 
+{- | System path configuration for the server.
+
+Provides clients with the resolved paths for home directory, state storage,
+configuration files, and workspace directories.
+
+==== Example JSON
+
+@
+{
+  "home": "/home/user",
+  "state": "/home/user/.local/state/opencode",
+  "config": "/home/user/.config/opencode",
+  "worktree": "/home/user/projects/myapp",
+  "directory": "/home/user/projects/myapp"
+}
+@
+-}
 data PathInfo = PathInfo
     { home :: Text
+    -- ^ User's home directory path
     , state :: Text
+    -- ^ Application state directory (XDG_STATE_HOME)
     , config :: Text
+    -- ^ Application config directory (XDG_CONFIG_HOME)
     , worktree :: Text
+    -- ^ Git worktree root (or project root if not in git)
     , directory :: Text
+    -- ^ Current working directory
     }
     deriving (Eq, Show, Generic)
 
@@ -103,10 +211,24 @@ instance FromJSON PathInfo
 -- // project //
 -- ═══════════════════════════════════════════════════════════════════════════
 
+{- | Project workspace metadata.
+
+Represents a distinct project workspace identified by its worktree path.
+Projects group sessions and configuration together.
+
+==== Example JSON
+
+@
+{ "id": "proj_abc123", "worktree": "/home/user/myproject", "name": "My Project" }
+@
+-}
 data Project = Project
     { id :: Text
+    -- ^ Unique project identifier (prefixed with "proj_")
     , worktree :: Text
+    -- ^ Absolute path to the project worktree
     , name :: Maybe Text
+    -- ^ Optional human-readable project name
     }
     deriving (Eq, Show, Generic)
 
@@ -118,16 +240,24 @@ instance FromJSON Project
 -- // provider //
 -- ═══════════════════════════════════════════════════════════════════════════
 
-{- | Provider list response matching OpenAPI spec
-Returns all providers, default model selection, and connected provider IDs
+{- | Provider list response for @GET /provider@.
+
+Returns all available LLM providers, the default model selection,
+and which providers are currently authenticated.
+
+==== Fields
+
+* 'plAll' - Complete list of provider definitions
+* 'plDefault' - Map of provider ID to default model ID
+* 'plConnected' - List of provider IDs that are authenticated
 -}
 data ProviderList = ProviderList
     { plAll :: [Value]
-    -- ^ All available providers
+    -- ^ All available providers (opaque JSON objects)
     , plDefault :: Value
-    -- ^ Default model selection (map of provider -> model)
+    -- ^ Default model selection map (@{providerId: modelId}@)
     , plConnected :: [Text]
-    -- ^ List of connected provider IDs
+    -- ^ List of connected/authenticated provider IDs
     }
     deriving (Eq, Show, Generic)
 
@@ -146,14 +276,16 @@ instance FromJSON ProviderList where
             <*> v .: "default"
             <*> v .: "connected"
 
-{- | Config providers response type (for /config/providers endpoint)
-Uses "providers" key per the OpenAPI spec for config.providers
+{- | Config providers response for @GET /config/providers@.
+
+Similar to 'ProviderList' but uses "providers" key instead of "all"
+to match the OpenAPI specification for the config endpoint.
 -}
 data ConfigProviderList = ConfigProviderList
     { cplProviders :: [Value]
     -- ^ All available providers
     , cplDefault :: Value
-    -- ^ Default model selection (map of provider -> model)
+    -- ^ Default model selection map
     }
     deriving (Eq, Show, Generic)
 
@@ -174,8 +306,26 @@ instance FromJSON ConfigProviderList where
 -- // vcs //
 -- ═══════════════════════════════════════════════════════════════════════════
 
+{- | Version control system information.
+
+Currently provides Git branch information for the workspace.
+Returns 'Nothing' for the branch if not in a git repository.
+
+==== Example JSON
+
+@
+{ "branch": "main" }
+@
+
+Or when not in a git repo:
+
+@
+{}
+@
+-}
 newtype VcsInfo = VcsInfo
     { branch :: Maybe Text
+    -- ^ Current git branch name, or 'Nothing' if not in a git repository
     }
     deriving (Eq, Show, Generic)
 
@@ -190,9 +340,22 @@ instance FromJSON VcsInfo where
 -- // chat //
 -- ═══════════════════════════════════════════════════════════════════════════
 
+{- | Simple chat request input.
+
+Used for basic chat interactions outside of the full session/message flow.
+Supports an optional model override.
+
+==== Example JSON
+
+@
+{ "message": "Hello, how are you?", "model": "claude-3-opus" }
+@
+-}
 data ChatInput = ChatInput
     { ciMessage :: Text
+    -- ^ The user's message text
     , ciModel :: Maybe Text
+    -- ^ Optional model ID override
     }
     deriving (Eq, Show, Generic)
 
@@ -206,65 +369,160 @@ instance FromJSON ChatInput where
 -- // api type definitions //
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- health and global
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Health and Global
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /global/health@ - Server health check endpoint.
 type HealthAPI = "global" :> "health" :> Get '[JSON] Health
+
+-- | @GET /path@ - Get system path information.
 type PathAPI = "path" :> Get '[JSON] PathInfo
+
+-- | @GET /global/config@ - Get global configuration.
 type GlobalConfigAPI = "global" :> "config" :> Get '[JSON] Value
 
--- project
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Project Management
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /project@ - List all projects.
 type ProjectListAPI = "project" :> Get '[JSON] [Project]
+
+-- | @GET /project/:projectID@ - Get a specific project.
 type ProjectGetAPI = "project" :> Capture "projectID" Text :> Get '[JSON] Project
+
+-- | @PATCH /project/:projectID@ - Update a project.
 type ProjectUpdateAPI = "project" :> Capture "projectID" Text :> ReqBody '[JSON] Value :> Patch '[JSON] Project
+
+-- | @GET /project/current@ - Get the current project for a directory.
 type ProjectCurrentAPI = "project" :> "current" :> QueryParam "directory" Text :> Get '[JSON] Project
 
--- provider and auth
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Provider and Authentication
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /config/providers@ - List providers from config endpoint.
 type ProviderListAPI = "config" :> "providers" :> QueryParam "directory" Text :> Get '[JSON] ConfigProviderList
+
+-- | @GET /provider/auth@ - Get provider authentication status.
 type ProviderAuthAPI = "provider" :> "auth" :> Get '[JSON] Value
+
+-- | @GET /provider@ - List all providers with connection status.
 type ProviderAPI = "provider" :> QueryParam "directory" Text :> Get '[JSON] ProviderList
+
+-- | @POST /provider/:providerID/oauth/authorize@ - Initiate OAuth flow.
 type ProviderOauthAuthorizeAPI =
     "provider" :> Capture "providerID" Text :> "oauth" :> "authorize" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+
+-- | @POST /provider/:providerID/oauth/callback@ - Complete OAuth flow.
 type ProviderOauthCallbackAPI =
     "provider" :> Capture "providerID" Text :> "oauth" :> "callback" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+
+-- | @POST /auth/:providerID@ - Create provider authentication.
 type AuthCreateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+
+-- | @PUT /auth/:providerID@ - Update provider authentication.
 type AuthUpdateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] Value :> Put '[JSON] Bool
+
+-- | @DELETE /auth/:providerID@ - Delete provider authentication.
 type AuthDeleteAPI = "auth" :> Capture "providerID" Text :> Delete '[JSON] Bool
 
--- agent and config
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Agent and Configuration
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /agent@ - List available agents.
 type AgentAPI = "agent" :> Get '[JSON] [Value]
+
+-- | @GET /config@ - Get current configuration.
 type ConfigAPI = "config" :> Get '[JSON] Value
+
+-- | @GET /command@ - List available commands.
 type CommandAPI = "command" :> Get '[JSON] [Value]
 
--- lsp and vcs
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Language Server and VCS
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /lsp@ - List LSP server statuses.
 type LspAPI = "lsp" :> Get '[JSON] [Value]
+
+-- | @GET /vcs@ - Get VCS information.
 type VcsAPI = "vcs" :> Get '[JSON] VcsInfo
 
--- permission and question
--- Note: OpenAPI spec expects Bool response for permission.reply
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Permissions and Questions
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /permission@ - List pending permission requests.
 type PermissionAPI = "permission" :> QueryParam "directory" Text :> Get '[JSON] [Value]
+
+-- | @POST /permission/:requestID/reply@ - Reply to a permission request.
 type PermissionReplyAPI = "permission" :> Capture "requestID" Text :> "reply" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+
+-- | @GET /question@ - List pending questions.
 type QuestionAPI = "question" :> QueryParam "directory" Text :> Get '[JSON] [Value]
+
+-- | @POST /question/:requestID/reply@ - Reply to a question.
 type QuestionReplyAPI = "question" :> Capture "requestID" Text :> "reply" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+
+-- | @POST /question/:requestID/reject@ - Reject a question.
 type QuestionRejectAPI = "question" :> Capture "requestID" Text :> "reject" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
--- find
+-- ─────────────────────────────────────────────────────────────────────────────
+-- File Search
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /find@ - Search for files by query or pattern.
 type FindAPI = "find" :> QueryParam "query" Text :> QueryParam "pattern" Text :> QueryParam "directory" Text :> Get '[JSON] [Value]
+
+-- | @GET /find/file@ - Search for files with advanced options.
 type FindFileAPI = "find" :> "file" :> QueryParam "pattern" Text :> QueryParam "directory" Text :> QueryParam "dirs" Bool :> QueryParam "type" Text :> QueryParam "limit" Int :> Get '[JSON] [Value]
+
+-- | @GET /find/symbol@ - Search for symbols in the codebase.
 type FindSymbolAPI = "find" :> "symbol" :> QueryParam "query" Text :> QueryParam "directory" Text :> Get '[JSON] [Value]
 
--- events
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Events
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /global/event@ - Server-Sent Events stream for global events.
 type GlobalEventAPI = "global" :> "event" :> Raw
+
+-- | @GET /event@ - Server-Sent Events stream for project events.
 type EventAPI = "event" :> Raw
 
--- lifecycle
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Lifecycle
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @POST /instance/dispose@ - Dispose the current instance.
 type InstanceDisposeAPI = "instance" :> "dispose" :> Post '[JSON] Bool
+
+-- | @POST /global/dispose@ - Dispose all instances and shutdown.
 type GlobalDisposeAPI = "global" :> "dispose" :> Post '[JSON] Bool
 
--- logging
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Logging
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @POST /log@ - Submit a log entry.
 type LogAPI = "log" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
--- skill and formatter
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Skills and Formatters
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @GET /skill@ - List available skills.
 type SkillAPI = "skill" :> QueryParam "directory" Text :> Get '[JSON] [SkillInfo]
+
+-- | @GET /formatter@ - List formatter statuses.
 type FormatterAPI = "formatter" :> QueryParam "directory" Text :> Get '[JSON] [FormatterStatus]
 
--- chat
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Chat
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- | @POST /chat@ - Send a simple chat message.
 type ChatAPI = "chat" :> ReqBody '[JSON] ChatInput :> Post '[JSON] Value

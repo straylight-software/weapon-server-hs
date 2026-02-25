@@ -5,14 +5,41 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Config type definitions
-Matches the Dhall configuration schema exactly
+{- |
+Module      : Config.Types
+Description : Configuration type definitions for weapon server
+
+This module defines all configuration types used by the weapon server.
+These types match the Dhall configuration schema exactly and provide
+JSON serialization for API responses.
+
+= Type Hierarchy
+
+The main 'Config' type contains:
+
+* Core settings (model, systemPrompt, maxTokens, logLevel)
+* Nested config records ('KeybindsConfig', 'ServerConfig', etc.)
+* Optional map fields for agents, providers, MCP servers
+* Theme and share settings
+
+= JSON Encoding
+
+All types provide 'ToJSON' and 'FromJSON' instances that use snake_case
+for JSON keys to match the TypeScript client expectations. The 'FromDhall'
+instances use the Dhall naming conventions.
+
+= Defaults
+
+Use 'defaultConfig' to get a fully-populated configuration with sensible
+defaults. Individual default records are also exported for partial overrides.
 -}
 module Config.Types (
     -- * Main Config
     Config (..),
 
     -- * Enums
+
+    -- | Enumeration types for configuration options
     LogLevel (..),
     ShareMode (..),
     Layout (..),
@@ -23,6 +50,8 @@ module Config.Types (
     AutoUpdate (..),
 
     -- * Nested Configs
+
+    -- | Record types for grouped configuration settings
     KeybindsConfig (..),
     ServerConfig (..),
     TUIConfig (..),
@@ -34,37 +63,58 @@ module Config.Types (
     WatcherConfig (..),
 
     -- * Agent
+
+    -- | Agent configuration for custom AI personas
     AgentConfig (..),
     AgentColor (..),
 
     -- * Provider
+
+    -- | LLM provider configuration
     ProviderConfig (..),
     ProviderModel (..),
     ProviderOptions (..),
     ProviderTimeout (..),
 
     -- * MCP
+
+    -- | Model Context Protocol server configuration
     MCPConfig (..),
     MCPLocal (..),
     MCPRemote (..),
 
     -- * Formatter & LSP
+
+    -- | Code formatter and LSP server configuration
     FormatterConfig (..),
     FormatterEntry (..),
     LSPConfig (..),
     LSPEntry (..),
 
     -- * Theme
+
+    -- | UI theme configuration
     ThemeConfig (..),
     Color (..),
 
     -- * Skill & Command
+
+    -- | Custom skill and command definitions
     SkillConfig (..),
     CommandConfig (..),
 
     -- * Defaults
+
+    -- | Default configuration values
     defaultConfig,
     defaultKeybinds,
+    defaultServer,
+    defaultTUI,
+    defaultPermission,
+    defaultCompaction,
+    defaultExperimental,
+    defaultEnterprise,
+    defaultWatcher,
 ) where
 
 import Control.Applicative ((<|>))
@@ -82,7 +132,19 @@ import GHC.Generics (Generic)
 --                                                                      Enums
 -- ════════════════════════════════════════════════════════════════════════════
 
-data LogLevel = DEBUG | INFO | WARN | ERROR
+{- | Log level for controlling verbosity of server output.
+
+Log levels are ordered by severity: DEBUG < INFO < WARN < ERROR
+-}
+data LogLevel
+    = -- | Detailed debugging information
+      DEBUG
+    | -- | Normal operational messages
+      INFO
+    | -- | Warning conditions that may need attention
+      WARN
+    | -- | Error conditions that require attention
+      ERROR
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -100,7 +162,14 @@ instance FromJSON LogLevel where
         "ERROR" -> pure ERROR
         other -> fail $ "Unknown LogLevel: " <> show other
 
-data ShareMode = ShareManual | ShareAuto | ShareDisabled
+-- | Session sharing mode for collaborative features.
+data ShareMode
+    = -- | Require explicit user action to share
+      ShareManual
+    | -- | Automatically share sessions
+      ShareAuto
+    | -- | Disable sharing entirely
+      ShareDisabled
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -116,7 +185,12 @@ instance FromJSON ShareMode where
         "disabled" -> pure ShareDisabled
         other -> fail $ "Unknown ShareMode: " <> show other
 
-data Layout = LayoutAuto | LayoutStretch
+-- | Layout mode for UI elements.
+data Layout
+    = -- | Automatically adjust layout based on content
+      LayoutAuto
+    | -- | Stretch to fill available space
+      LayoutStretch
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -130,7 +204,17 @@ instance FromJSON Layout where
         "stretch" -> pure LayoutStretch
         other -> fail $ "Unknown Layout: " <> show other
 
-data PermissionAction = PermAsk | PermAllow | PermDeny
+{- | Permission action for tool execution requests.
+
+Used to control whether tools require user approval.
+-}
+data PermissionAction
+    = -- | Prompt the user for approval
+      PermAsk
+    | -- | Automatically allow the action
+      PermAllow
+    | -- | Automatically deny the action
+      PermDeny
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -146,7 +230,12 @@ instance FromJSON PermissionAction where
         "deny" -> pure PermDeny
         other -> fail $ "Unknown PermissionAction: " <> show other
 
-data DiffStyle = DiffAuto | DiffStacked
+-- | Diff display style in the TUI.
+data DiffStyle
+    = -- | Automatically choose based on terminal width
+      DiffAuto
+    | -- | Always show diffs in stacked (unified) format
+      DiffStacked
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -160,7 +249,17 @@ instance FromJSON DiffStyle where
         "stacked" -> pure DiffStacked
         other -> fail $ "Unknown DiffStyle: " <> show other
 
-data AgentMode = AgentSubagent | AgentPrimary | AgentAll
+{- | Agent visibility mode.
+
+Controls where an agent appears in the UI and how it can be used.
+-}
+data AgentMode
+    = -- | Only available as a subagent (Task tool)
+      AgentSubagent
+    | -- | Only available as the primary agent
+      AgentPrimary
+    | -- | Available in both contexts
+      AgentAll
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -176,7 +275,19 @@ instance FromJSON AgentMode where
         "all" -> pure AgentAll
         other -> fail $ "Unknown AgentMode: " <> show other
 
-data ModelStatus = ModelAlpha | ModelBeta | ModelDeprecated | ModelStable
+{- | Model release status.
+
+Indicates the maturity level of an LLM model.
+-}
+data ModelStatus
+    = -- | Early testing, may have significant issues
+      ModelAlpha
+    | -- | Beta testing, mostly stable
+      ModelBeta
+    | -- | No longer recommended for use
+      ModelDeprecated
+    | -- | Production ready
+      ModelStable
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -194,7 +305,14 @@ instance FromJSON ModelStatus where
         "stable" -> pure ModelStable
         other -> fail $ "Unknown ModelStatus: " <> show other
 
-data AutoUpdate = AutoUpdateEnabled | AutoUpdateDisabled | AutoUpdateNotify
+-- | Auto-update behavior for the application.
+data AutoUpdate
+    = -- | Automatically download and install updates
+      AutoUpdateEnabled
+    | -- | Do not check for or install updates
+      AutoUpdateDisabled
+    | -- | Check for updates and notify, but don't auto-install
+      AutoUpdateNotify
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -213,7 +331,30 @@ instance FromJSON AutoUpdate where
 --                                                                   Keybinds
 -- ════════════════════════════════════════════════════════════════════════════
 
--- | Keybinds configuration - all 70+ keybinds
+{- | Keybinds configuration for TUI keyboard shortcuts.
+
+Contains all 90+ keybinds that control the application. Each keybind
+is optional ('Maybe Text') and can contain comma-separated alternatives.
+
+= Keybind Format
+
+Keybinds use a simple string format:
+
+* @"ctrl+c"@ - Ctrl+C
+* @"ctrl+c,ctrl+d"@ - Either Ctrl+C or Ctrl+D
+* @"\<leader\>q"@ - Leader key followed by Q
+* @"none"@ - Explicitly disabled
+
+= Critical Keybinds
+
+The most important keybinds that should always be set:
+
+* 'kbAppExit' - Exit the application (default: @"ctrl+c,ctrl+d,\<leader\>q"@)
+* 'kbSessionInterrupt' - Interrupt current operation (default: @"escape"@)
+* 'kbLeader' - Leader key prefix (default: @"ctrl+x"@)
+
+See 'defaultKeybinds' for all default values.
+-}
 data KeybindsConfig = KeybindsConfig
     { kbLeader :: Maybe Text
     , kbAppExit :: Maybe Text
@@ -614,11 +755,28 @@ defaultKeybinds =
 --                                                              Server Config
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | HTTP server configuration.
+
+Controls how the weapon server binds to network interfaces and
+handles cross-origin requests.
+
+@
+server:
+  hostname: "localhost"
+  port: 4096
+  mdns: false
+  cors: true
+@
+-}
 data ServerConfig = ServerConfig
     { scHostname :: Maybe Text
+    -- ^ Hostname to bind to (default: "localhost")
     , scPort :: Maybe Int
+    -- ^ Port number (default: 4096)
     , scMdns :: Maybe Bool
+    -- ^ Enable mDNS discovery (default: false)
     , scCors :: Maybe Bool
+    -- ^ Enable CORS headers (default: true)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -644,10 +802,17 @@ instance FromJSON ServerConfig where
 --                                                                 TUI Config
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | Terminal UI configuration.
+
+Controls scrolling behavior and diff display in the TUI.
+-}
 data TUIConfig = TUIConfig
     { tuiScrollSpeed :: Maybe Int
+    -- ^ Lines to scroll per mouse wheel tick (default: 1)
     , tuiScrollAcceleration :: Maybe Int
+    -- ^ Acceleration factor for fast scrolling (default: 1)
     , tuiDiffStyle :: Maybe DiffStyle
+    -- ^ How to display file diffs (default: 'DiffAuto')
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -671,9 +836,22 @@ instance FromJSON TUIConfig where
 --                                                          Permission Config
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | A permission rule that can be either a single action or path-based.
+
+Path-based rules allow different permissions for different paths:
+
+@
+permission:
+  bash:
+    "/home/user/safe": "allow"
+    "*": "ask"
+@
+-}
 data PermissionRule
-    = PermAction PermissionAction
-    | PermByPath (Map Text PermissionAction)
+    = -- | A single permission for all paths
+      PermAction PermissionAction
+    | -- | Path-specific permissions (glob patterns supported)
+      PermByPath (Map Text PermissionAction)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -686,24 +864,47 @@ instance FromJSON PermissionRule where
         (PermAction <$> parseJSON v)
             <|> (PermByPath <$> parseJSON v)
 
+{- | Tool permission configuration.
+
+Controls which tools require user approval before execution.
+Tools that modify files or execute commands typically require
+more restrictive permissions.
+-}
 data PermissionConfig = PermissionConfig
     { permRead :: Maybe PermissionRule
+    -- ^ Read tool - read file contents
     , permEdit :: Maybe PermissionRule
+    -- ^ Edit tool - modify file contents
     , permGlob :: Maybe PermissionRule
+    -- ^ Glob tool - search for files by pattern
     , permGrep :: Maybe PermissionRule
+    -- ^ Grep tool - search file contents
     , permList :: Maybe PermissionRule
+    -- ^ List tool - list directory contents
     , permBash :: Maybe PermissionRule
+    -- ^ Bash tool - execute shell commands
     , permTask :: Maybe PermissionRule
+    -- ^ Task tool - spawn subagent tasks
     , permExternalDirectory :: Maybe PermissionRule
+    -- ^ Access directories outside project root
     , permTodowrite :: Maybe PermissionAction
+    -- ^ TodoWrite tool - manage task lists
     , permTodoread :: Maybe PermissionAction
+    -- ^ TodoRead tool - read task lists
     , permQuestion :: Maybe PermissionAction
+    -- ^ Question tool - ask user questions
     , permWebfetch :: Maybe PermissionAction
+    -- ^ WebFetch tool - fetch web content
     , permWebsearch :: Maybe PermissionAction
+    -- ^ WebSearch tool - search the web
     , permCodesearch :: Maybe PermissionAction
+    -- ^ CodeSearch tool - semantic code search
     , permLsp :: Maybe PermissionRule
+    -- ^ LSP tool - language server operations
     , permDoomLoop :: Maybe PermissionAction
+    -- ^ Allow agent to continue after repeated failures
     , permSkill :: Maybe PermissionRule
+    -- ^ Skill tool - execute custom skills
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -755,10 +956,18 @@ instance FromJSON PermissionConfig where
 --                                                              Other Configs
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | Context compaction configuration.
+
+Controls automatic context management when conversation history
+exceeds the model's context window.
+-}
 data CompactionConfig = CompactionConfig
     { compAuto :: Maybe Bool
+    -- ^ Enable automatic compaction (default: false)
     , compPrune :: Maybe Bool
+    -- ^ Prune old messages instead of summarizing (default: false)
     , compReserved :: Maybe Int
+    -- ^ Tokens to reserve for response (default: 8192)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -778,12 +987,22 @@ instance FromJSON CompactionConfig where
             <*> v .:? "prune"
             <*> v .:? "reserved"
 
+{- | Experimental features configuration.
+
+These features may change or be removed in future versions.
+Enable at your own risk.
+-}
 data ExperimentalConfig = ExperimentalConfig
     { expThinking :: Maybe Bool
+    -- ^ Enable extended thinking display (default: false)
     , expWorktree :: Maybe Bool
+    -- ^ Enable git worktree support (default: false)
     , expFileCache :: Maybe Bool
+    -- ^ Enable file content caching (default: true)
     , expParallelTools :: Maybe Bool
+    -- ^ Enable parallel tool execution (default: true)
     , expStreaming :: Maybe Bool
+    -- ^ Enable streaming responses (default: true)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -807,9 +1026,16 @@ instance FromJSON ExperimentalConfig where
             <*> v .:? "parallelTools"
             <*> v .:? "streaming"
 
+{- | Enterprise/cloud deployment configuration.
+
+For self-hosted or enterprise deployments that connect to
+a central management server.
+-}
 data EnterpriseConfig = EnterpriseConfig
     { entUrl :: Maybe Text
+    -- ^ Enterprise server URL
     , entApiKey :: Maybe Text
+    -- ^ API key for authentication
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -827,8 +1053,14 @@ instance FromJSON EnterpriseConfig where
             <$> v .:? "url"
             <*> v .:? "apiKey"
 
+{- | File watcher configuration.
+
+Controls which directories are ignored by the file watcher
+to reduce noise and improve performance.
+-}
 newtype WatcherConfig = WatcherConfig
     { watchIgnore :: Maybe [Text]
+    -- ^ Glob patterns for directories to ignore
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -844,9 +1076,15 @@ instance FromJSON WatcherConfig where
 --                                                                      Agent
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | Agent color specification.
+
+Can be either a hex color code or a reference to a theme color.
+-}
 data AgentColor
-    = AgentColorHex Text
-    | AgentColorTheme Text
+    = -- | Hex color code (e.g., "#FF5733")
+      AgentColorHex Text
+    | -- | Theme color reference (e.g., "primary", "accent")
+      AgentColorTheme Text
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -857,14 +1095,34 @@ instance ToJSON AgentColor where
 instance FromJSON AgentColor where
     parseJSON = withText "AgentColor" (pure . AgentColorHex)
 
+{- | Custom agent configuration.
+
+Defines a custom AI persona with specific model, tools, and behavior.
+
+@
+agent:
+  code-reviewer:
+    model: "claude-3-opus"
+    systemPrompt: "You are a code review expert..."
+    tools: ["read", "grep", "glob"]
+    mode: "subagent"
+@
+-}
 data AgentConfig = AgentConfig
     { acModel :: Maybe Text
+    -- ^ Model to use (overrides global default)
     , acMaxTokens :: Maybe Int
+    -- ^ Max tokens for responses
     , acSystemPrompt :: Maybe Text
+    -- ^ Custom system prompt
     , acTools :: Maybe [Text]
+    -- ^ List of allowed tools (empty = all)
     , acMode :: Maybe AgentMode
+    -- ^ Where this agent can be used
     , acColor :: Maybe AgentColor
+    -- ^ UI color for this agent
     , acDescription :: Maybe Text
+    -- ^ Human-readable description
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -896,9 +1154,15 @@ instance FromJSON AgentConfig where
 --                                                                    Provider
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | Provider request timeout configuration.
+
+Controls how long to wait for provider responses.
+-}
 data ProviderTimeout
-    = ProviderTimeoutDisabled
-    | ProviderTimeoutSeconds Int
+    = -- | No timeout (wait indefinitely)
+      ProviderTimeoutDisabled
+    | -- | Timeout after specified seconds
+      ProviderTimeoutSeconds Int
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -911,13 +1175,23 @@ instance FromJSON ProviderTimeout where
     parseJSON (Number n) = pure $ ProviderTimeoutSeconds (round n)
     parseJSON other = fail $ "Unknown ProviderTimeout: " <> show other
 
+{- | Model definition within a provider.
+
+Allows overriding model metadata like context length and visibility.
+-}
 data ProviderModel = ProviderModel
     { pmId :: Text
+    -- ^ Model identifier (e.g., "gpt-4", "claude-3-opus")
     , pmName :: Maybe Text
+    -- ^ Human-readable name (defaults to id)
     , pmContextLength :: Maybe Int
+    -- ^ Override context window size
     , pmMaxOutput :: Maybe Int
+    -- ^ Override max output tokens
     , pmStatus :: Maybe ModelStatus
+    -- ^ Model maturity status
     , pmHidden :: Maybe Bool
+    -- ^ Hide from model selection UI
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -943,9 +1217,15 @@ instance FromJSON ProviderModel where
             <*> v .:? "status"
             <*> v .:? "hidden"
 
+{- | Provider-specific options.
+
+Extra configuration passed to the provider API.
+-}
 data ProviderOptions = ProviderOptions
     { poThinking :: Maybe Bool
+    -- ^ Enable extended thinking (Claude-specific)
     , poVersion :: Maybe Text
+    -- ^ API version string
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -963,13 +1243,33 @@ instance FromJSON ProviderOptions where
             <$> v .:? "thinking"
             <*> v .:? "version"
 
+{- | LLM provider configuration.
+
+Configures an LLM provider like OpenAI, Anthropic, or a custom endpoint.
+
+@
+provider:
+  anthropic:
+    api: "https://api.anthropic.com"
+    timeout: 300
+  custom:
+    api: "https://my-llm.example.com/v1"
+    name: "My Custom LLM"
+@
+-}
 data ProviderConfig = ProviderConfig
     { pcApi :: Maybe Text
+    -- ^ API endpoint URL
     , pcModels :: Maybe [ProviderModel]
+    -- ^ Custom model definitions
     , pcOptions :: Maybe ProviderOptions
+    -- ^ Provider-specific options
     , pcTimeout :: Maybe ProviderTimeout
+    -- ^ Request timeout
     , pcDisabled :: Maybe Bool
+    -- ^ Disable this provider
     , pcName :: Maybe Text
+    -- ^ Human-readable provider name
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -999,11 +1299,19 @@ instance FromJSON ProviderConfig where
 --                                                                         MCP
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | Local MCP server configuration.
+
+Runs an MCP server as a subprocess using stdio transport.
+-}
 data MCPLocal = MCPLocal
     { mcplCommand :: [Text]
+    -- ^ Command and arguments to run
     , mcplEnvironment :: Maybe (Map Text Text)
+    -- ^ Environment variables to set
     , mcplEnabled :: Maybe Bool
+    -- ^ Enable/disable this server
     , mcplTimeout :: Maybe Int
+    -- ^ Startup timeout in milliseconds
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1026,11 +1334,19 @@ instance FromJSON MCPLocal where
             <*> v .:? "enabled"
             <*> v .:? "timeout"
 
+{- | Remote MCP server configuration.
+
+Connects to an MCP server over HTTP/SSE transport.
+-}
 data MCPRemote = MCPRemote
     { mcprUrl :: Text
+    -- ^ Server URL (HTTP or HTTPS)
     , mcprEnabled :: Maybe Bool
+    -- ^ Enable/disable this server
     , mcprHeaders :: Maybe (Map Text Text)
+    -- ^ Additional HTTP headers (e.g., auth)
     , mcprTimeout :: Maybe Int
+    -- ^ Connection timeout in milliseconds
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1053,9 +1369,25 @@ instance FromJSON MCPRemote where
             <*> v .:? "headers"
             <*> v .:? "timeout"
 
+{- | MCP server configuration (local or remote).
+
+Model Context Protocol servers extend the agent with custom tools.
+
+@
+mcp:
+  filesystem:
+    type: "local"
+    command: ["npx", "-y", "\@modelcontextprotocol/server-filesystem", "/home"]
+  weather:
+    type: "remote"
+    url: "https://mcp.example.com/weather"
+@
+-}
 data MCPConfig
-    = MCPConfigLocal MCPLocal
-    | MCPConfigRemote MCPRemote
+    = -- | Local subprocess server
+      MCPConfigLocal MCPLocal
+    | -- | Remote HTTP server
+      MCPConfigRemote MCPRemote
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -1077,9 +1409,15 @@ instance FromJSON MCPConfig where
 --                                                           Formatter & LSP
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | Code formatter entry for a file extension.
+
+Defines the command to format files of a specific type.
+-}
 data FormatterEntry = FormatterEntry
     { feCommand :: [Text]
+    -- ^ Formatter command and arguments (file path appended)
     , feTimeout :: Maybe Int
+    -- ^ Timeout in milliseconds
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1097,9 +1435,23 @@ instance FromJSON FormatterEntry where
             <$> v .: "command"
             <*> v .:? "timeout"
 
+{- | Code formatter configuration.
+
+Maps file extensions to formatter commands.
+
+@
+formatter:
+  ".hs": { command: ["ormolu", "--mode", "inplace"] }
+  ".py": { command: ["black"] }
+@
+
+Set to @false@ to disable formatting entirely.
+-}
 data FormatterConfig
-    = FormatterDisabled
-    | FormatterEnabled (Map Text FormatterEntry)
+    = -- | Formatting disabled
+      FormatterDisabled
+    | -- | Extension-to-formatter mapping
+      FormatterEnabled (Map Text FormatterEntry)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -1119,11 +1471,19 @@ parseFormatterMap = withObject "FormatterMap" $ \obj ->
             (\(k, val) -> (Key.toText k,) <$> parseJSON val)
             (KM.toList obj)
 
+{- | LSP server entry for a language.
+
+Configures how to start the language server for a specific language.
+-}
 data LSPEntry = LSPEntry
     { lspCommand :: [Text]
+    -- ^ Command and arguments to start the LSP server
     , lspArgs :: Maybe [Text]
+    -- ^ Additional arguments
     , lspInitializationOptions :: Maybe Text
+    -- ^ JSON initialization options
     , lspRootUri :: Maybe Text
+    -- ^ Override workspace root URI
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1145,9 +1505,23 @@ instance FromJSON LSPEntry where
             <*> v .:? "initializationOptions"
             <*> v .:? "rootUri"
 
+{- | LSP configuration.
+
+Maps languages to their LSP server configurations.
+
+@
+lsp:
+  haskell: { command: ["haskell-language-server-wrapper", "--lsp"] }
+  python: { command: ["pylsp"] }
+@
+
+Set to @false@ to disable LSP integration entirely.
+-}
 data LSPConfig
-    = LSPDisabled
-    | LSPEnabled (Map Text LSPEntry)
+    = -- | LSP integration disabled
+      LSPDisabled
+    | -- | Language-to-LSP-server mapping
+      LSPEnabled (Map Text LSPEntry)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
@@ -1171,11 +1545,19 @@ parseLSPMap = withObject "LSPMap" $ \obj ->
 --                                                                       Theme
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | RGBA color value.
+
+Components are in the range [0.0, 1.0].
+-}
 data Color = Color
     { colorR :: Double
+    -- ^ Red component [0.0, 1.0]
     , colorG :: Double
+    -- ^ Green component [0.0, 1.0]
     , colorB :: Double
+    -- ^ Blue component [0.0, 1.0]
     , colorA :: Double
+    -- ^ Alpha component [0.0, 1.0] (1.0 = opaque)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1197,7 +1579,11 @@ instance FromJSON Color where
             <*> v .: "b"
             <*> v .: "a"
 
--- | Theme config (simplified - full theme has 50+ colors)
+{- | UI theme configuration.
+
+Defines colors for the TUI. This is a simplified subset of the
+full theme which has 50+ color definitions.
+-}
 data ThemeConfig = ThemeConfig
     { thPrimary :: Color
     , thSecondary :: Color
@@ -1264,13 +1650,32 @@ instance FromJSON ThemeConfig where
 --                                                            Skill & Command
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | Custom skill configuration.
+
+Skills are reusable prompts that can be invoked with @/skill name@.
+
+@
+skill:
+  code-review:
+    name: "Code Review"
+    description: "Review code for best practices"
+    prompt: "Please review this code for..."
+    tools: ["read", "grep"]
+@
+-}
 data SkillConfig = SkillConfig
     { skillName :: Text
+    -- ^ Display name for the skill
     , skillDescription :: Text
+    -- ^ Brief description shown in skill list
     , skillPrompt :: Text
+    -- ^ System prompt or instructions
     , skillTools :: Maybe [Text]
+    -- ^ Allowed tools (empty = inherit from agent)
     , skillAgent :: Maybe Text
+    -- ^ Agent to use for this skill
     , skillModel :: Maybe Text
+    -- ^ Model override for this skill
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1296,11 +1701,27 @@ instance FromJSON SkillConfig where
             <*> v .:? "agent"
             <*> v .:? "model"
 
+{- | Custom command configuration.
+
+Commands are shell commands that can be run with @/run name@.
+
+@
+command:
+  build:
+    command: "cargo build --release"
+    description: "Build the project in release mode"
+    workdir: "./backend"
+@
+-}
 data CommandConfig = CommandConfig
     { cmdCommand :: Text
+    -- ^ Shell command to execute
     , cmdDescription :: Maybe Text
+    -- ^ Brief description
     , cmdEnvironment :: Maybe (Map Text Text)
+    -- ^ Environment variables
     , cmdWorkdir :: Maybe Text
+    -- ^ Working directory (relative to project root)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1326,41 +1747,94 @@ instance FromJSON CommandConfig where
 --                                                                 Full Config
 -- ════════════════════════════════════════════════════════════════════════════
 
--- | Full configuration type matching Dhall schema
+{- | Main configuration type for the weapon server.
+
+This type matches the Dhall configuration schema exactly. Configuration
+is loaded in layers:
+
+1. Built-in defaults ('defaultConfig')
+2. Global config (~\/.config\/weapon\/weapon.dhall)
+3. Project config (project\/weapon.dhall)
+
+Each layer overrides the previous, with project config having highest priority.
+
+= Example Dhall Configuration
+
+@
+{ model = Some "claude-3-opus"
+, logLevel = Some \<INFO\>
+, server = { port = Some 8080 }
+}
+@
+
+= Usage
+
+@
+cache <- newDhallCache
+config <- loadConfigCached cache "\/path\/to\/project"
+@
+
+See 'Config.Config.load' for the primary loading function.
+-}
 data Config = Config
     { -- Core settings
       cfgModel :: Maybe Text
+    -- ^ Default model identifier (e.g., "claude-3-opus")
     , cfgSystemPrompt :: Maybe Text
+    -- ^ Override the default system prompt
     , cfgMaxTokens :: Maybe Int
+    -- ^ Maximum tokens for model responses
     , cfgLogLevel :: Maybe LogLevel
+    -- ^ Logging verbosity (default: 'INFO')
     , -- Nested configs
       cfgKeybinds :: KeybindsConfig
+    -- ^ TUI keyboard shortcuts
     , cfgServer :: ServerConfig
+    -- ^ HTTP server settings
     , cfgTui :: TUIConfig
+    -- ^ Terminal UI settings
     , cfgPermission :: PermissionConfig
+    -- ^ Tool permission rules
     , cfgCompaction :: CompactionConfig
+    -- ^ Context compaction settings
     , cfgExperimental :: ExperimentalConfig
+    -- ^ Experimental feature flags
     , cfgEnterprise :: EnterpriseConfig
+    -- ^ Enterprise deployment settings
     , cfgWatcher :: WatcherConfig
+    -- ^ File watcher settings
     , -- Map fields
       cfgAgent :: Maybe (Map Text AgentConfig)
+    -- ^ Custom agent definitions
     , cfgProvider :: Maybe (Map Text ProviderConfig)
+    -- ^ LLM provider configurations
     , cfgMcp :: Maybe (Map Text MCPConfig)
+    -- ^ MCP server configurations
     , cfgFormatter :: Maybe FormatterConfig
+    -- ^ Code formatter settings
     , cfgLsp :: Maybe LSPConfig
+    -- ^ Language server settings
     , cfgSkill :: Maybe (Map Text SkillConfig)
+    -- ^ Custom skill definitions
     , cfgCommand :: Maybe (Map Text CommandConfig)
+    -- ^ Custom command definitions
     , -- Theme settings
       cfgTheme :: Maybe Text
+    -- ^ Active theme name (default: "ono-sendai")
     , cfgThemes :: Maybe (Map Text ThemeConfig)
+    -- ^ Custom theme definitions
     , -- Share settings
       cfgShare :: Maybe ShareMode
+    -- ^ Session sharing mode
     , -- Auto-update
       cfgAutoUpdate :: Maybe AutoUpdate
+    -- ^ Auto-update behavior (default: 'AutoUpdateNotify')
     , -- Disabled tools
       cfgDisabledTools :: Maybe [Text]
+    -- ^ List of tool names to disable
     , -- Instrumentation
       cfgInstrumentation :: Maybe Bool
+    -- ^ Enable telemetry/instrumentation (default: false)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1428,6 +1902,10 @@ instance FromJSON Config where
 --                                                                    Defaults
 -- ════════════════════════════════════════════════════════════════════════════
 
+{- | Default server configuration.
+
+Binds to localhost:4096 with CORS enabled and mDNS disabled.
+-}
 defaultServer :: ServerConfig
 defaultServer =
     ServerConfig
@@ -1437,6 +1915,10 @@ defaultServer =
         , scCors = Just True
         }
 
+{- | Default TUI configuration.
+
+Standard scroll speed with automatic diff style.
+-}
 defaultTUI :: TUIConfig
 defaultTUI =
     TUIConfig
@@ -1445,6 +1927,10 @@ defaultTUI =
         , tuiDiffStyle = Just DiffAuto
         }
 
+{- | Default permission configuration.
+
+All permissions are unset (will use system defaults).
+-}
 defaultPermission :: PermissionConfig
 defaultPermission =
     PermissionConfig
@@ -1467,6 +1953,10 @@ defaultPermission =
         , permSkill = Nothing
         }
 
+{- | Default compaction configuration.
+
+Compaction disabled, 8192 tokens reserved for responses.
+-}
 defaultCompaction :: CompactionConfig
 defaultCompaction =
     CompactionConfig
@@ -1475,6 +1965,10 @@ defaultCompaction =
         , compReserved = Just 8192
         }
 
+{- | Default experimental features configuration.
+
+File caching, parallel tools, and streaming enabled by default.
+-}
 defaultExperimental :: ExperimentalConfig
 defaultExperimental =
     ExperimentalConfig
@@ -1485,6 +1979,10 @@ defaultExperimental =
         , expStreaming = Just True
         }
 
+{- | Default enterprise configuration.
+
+No enterprise server configured.
+-}
 defaultEnterprise :: EnterpriseConfig
 defaultEnterprise =
     EnterpriseConfig
@@ -1492,6 +1990,10 @@ defaultEnterprise =
         , entApiKey = Nothing
         }
 
+{- | Default watcher configuration.
+
+Ignores common build output and dependency directories.
+-}
 defaultWatcher :: WatcherConfig
 defaultWatcher =
     WatcherConfig

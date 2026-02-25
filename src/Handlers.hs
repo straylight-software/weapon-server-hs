@@ -185,6 +185,7 @@ import Pty.Pty qualified as Pty
 import Pty.Types qualified as PtyT
 import Request.Store qualified as RequestStore
 import Servant
+import Server.ErrorFormatters (errorResponse)
 import Session.Session qualified as Sess
 import Session.Types (GlobalSession)
 import Skill.Skill qualified as Skill
@@ -242,19 +243,23 @@ withSessionUpdate st sid f = do
 healthHandler :: AppState -> Handler Health
 healthHandler st = return $ HealthBuild.buildHealth (stVersion st)
 
+{- | Handler for the /path endpoint.
+Returns information about various paths used by the application.
+-}
 pathHandler :: AppState -> Handler PathInfo
 pathHandler st = liftIO $ do
     cwd <- getCurrentDirectory
     home <- getHomeDirectory
     cfg <- Config.globalConfigPath
-    let workdir = unpack (stDirectory st)
-    let stateDir = workdir </> ".opencode" </> "state"
+    let workdir = stDirectory st
+    -- Use pure function for state directory computation
+    let stateDir = PathBuild.computeStateDir workdir
     return $
         PathBuild.buildPath
             (pack home)
-            (pack stateDir)
+            stateDir
             (pack cfg)
-            (pack workdir)
+            workdir
             (pack cwd)
 
 globalConfigHandler :: AppState -> Handler Value
@@ -495,10 +500,6 @@ extractTextList (String _) _ = []
 extractTextList (Number _) _ = []
 extractTextList (Bool _) _ = []
 extractTextList Null _ = []
-
--- | Create a JSON error response object
-errorResponse :: Text -> Value
-errorResponse msg = object ["error" .= msg]
 
 configHandler :: AppState -> Handler Value
 configHandler st = liftIO $ do

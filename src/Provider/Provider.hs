@@ -1,10 +1,47 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Provider module - AI provider management
-Mirrors the TypeScript Provider namespace
+{- |
+Module      : Provider.Provider
+Description : AI provider management operations
+Stability   : experimental
+
+This module provides operations for managing AI providers, including
+listing providers, retrieving API keys, managing authentication,
+and querying provider/model information.
+
+== Overview
+
+The module supports both static (Anthropic, OpenAI) and dynamic (OpenRouter)
+providers. Dynamic providers fetch their model lists from external APIs.
+
+== Authentication
+
+API keys can be provided via:
+
+1. Environment variables (e.g., @ANTHROPIC_API_KEY@)
+2. Stored authentication (via 'setAuth')
+
+Environment variables take precedence over stored authentication.
+
+== Usage
+
+@
+import qualified Provider.Provider as Provider
+import qualified Storage.Storage as Storage
+
+main = Storage.withStorage ".opencode" $ \storage -> do
+    -- List all providers
+    providers <- Provider.list
+
+    -- Get API key for a provider
+    mKey <- Provider.getApiKey storage "anthropic"
+
+    -- Check auth status
+    auths <- Provider.authStatus storage
+@
 -}
 module Provider.Provider (
-    -- * Types
+    -- * Types (re-exported from Provider.Types)
     Provider.Types.Provider (..),
     Provider.Types.Model (..),
     Provider.Types.ModelCost (..),
@@ -13,11 +50,13 @@ module Provider.Provider (
     Provider.Types.ModelModalities (..),
     Provider.Types.ProviderAuth (..),
 
-    -- * Operations
+    -- * Provider queries
     list,
     listWithModels,
     get,
     getModel,
+
+    -- * Authentication operations
     getApiKey,
     authStatus,
     listConnected,
@@ -26,11 +65,19 @@ module Provider.Provider (
 
     -- * Built-in providers
     builtinProviders,
+
+    -- * Pure helpers (exported for testing)
+    extractTextField,
+    findProvider,
+    findModel,
+    updateProviderModels,
+    determineAuthMethod,
 ) where
 
 import Control.Exception qualified
 import Control.Monad (filterM)
 import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
@@ -42,7 +89,112 @@ import System.Environment (lookupEnv)
 import Provider.Types
 import Storage.Storage qualified as Storage
 
--- | Built-in provider definitions
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Pure helper functions (no IO, easy to test)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Extract a text field from a JSON object by key.
+
+This is a generalized helper that replaces the duplicate extractToken/extractMethod
+functions. It safely extracts a text value from a JSON object.
+
+==== Examples
+
+@
+extractTextField "token" (object ["token" .= "abc"]) == Just "abc"
+extractTextField "missing" (object ["token" .= "abc"]) == Nothing
+extractTextField "token" (String "not an object") == Nothing
+@
+-}
+extractTextField :: Text -> Value -> Maybe Text
+extractTextField key (Object obj) = case KM.lookup (K.fromText key) obj of
+    Just (String t) -> Just t
+    _other -> Nothing
+extractTextField _key _other = Nothing
+
+{- | Find a provider by ID in a list of providers.
+
+Pure function for provider lookup, avoiding IO when not needed.
+
+==== Examples
+
+@
+findProvider "anthropic" builtinProviders == Just anthropicProvider
+findProvider "unknown" builtinProviders == Nothing
+@
+-}
+findProvider :: Text -> [Provider] -> Maybe Provider
+findProvider pid providers = lookup pid [(providerId p, p) | p <- providers]
+
+{- | Find a model by ID within a provider.
+
+Pure function for model lookup.
+-}
+findModel :: Text -> Provider -> Maybe Model
+findModel mid provider = Map.lookup mid (providerModels provider)
+
+{- | Update a specific provider's models in a provider list.
+
+Returns a new list with the specified provider's models replaced.
+If the provider is not found, returns the original list unchanged.
+
+==== Parameters
+
+* @targetId@ - The provider ID to update
+* @newModels@ - The new model map to use
+* @providers@ - The list of providers to update
+-}
+updateProviderModels :: Text -> Map.Map Text Model -> [Provider] -> [Provider]
+updateProviderModels targetId newModels providers =
+    [ if providerId p == targetId
+        then p{providerModels = newModels}
+        else p
+    | p <- providers
+    ]
+
+{- | Determine the authentication method based on stored and environment auth.
+
+This is a pure function that encapsulates the auth method determination logic,
+making it easy to test without IO.
+
+==== Parameters
+
+* @storedMethod@ - Method from stored auth (if any)
+* @hasStored@ - Whether there is stored auth
+* @hasEnvAuth@ - Whether environment variable auth is present
+
+==== Returns
+
+The authentication method string, or Nothing if not authenticated.
+-}
+determineAuthMethod :: Maybe Text -> Bool -> Bool -> Maybe Text
+determineAuthMethod storedMethod hasStored hasEnvAuth =
+    case storedMethod of
+        Just m -> Just m
+        Nothing
+            | hasStored -> Just "api_key"
+            | hasEnvAuth -> Just "env"
+            | otherwise -> Nothing
+
+{- | Build a model map from a list of models.
+
+Creates a map keyed by model ID for efficient lookup.
+-}
+buildModelMap :: [Model] -> Map.Map Text Model
+buildModelMap models = Map.fromList [(modelId m, m) | m <- models]
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Built-in providers
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Built-in provider definitions.
+
+Contains the static configuration for well-known providers:
+
+* __anthropic__ - Anthropic (Claude models)
+* __openai__ - OpenAI (GPT and o-series models)
+* __openrouter__ - OpenRouter (dynamic model loading)
+-}
 builtinProviders :: [Provider]
 builtinProviders =
     [ Provider
@@ -111,108 +263,160 @@ builtinProviders =
         }
     ]
 
--- | List all providers (without fetching dynamic models)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Provider query operations
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | List all built-in providers.
+
+Returns the static list of providers without fetching dynamic models.
+For providers with dynamic model loading (e.g., OpenRouter), use 'listWithModels'.
+-}
 list :: IO [Provider]
 list = pure builtinProviders
 
-{- | List all providers with dynamically fetched models
+{- | List all providers with dynamically fetched models.
+
 For OpenRouter, fetches models from API if an API key is available.
+Falls back to built-in providers on API errors.
+
+This function performs network IO and may be slow. Consider caching
+the results if called frequently.
 -}
 listWithModels :: Storage.StorageConfig -> IO [Provider]
 listWithModels storage = do
-    -- Try to get OpenRouter API key
     mKey <- getApiKey storage "openrouter"
     case mKey of
         Nothing -> pure builtinProviders
-        Just apiKey -> do
-            -- Fetch models from OpenRouter
-            client <- OpenRouter.newClient apiKey
-            result <- OpenRouter.fetchModels client
-            case result of
-                Left _err -> pure builtinProviders -- Fall back to empty models on error
-                Right models -> do
-                    let modelMap = Map.fromList [(modelId m, m) | m <- models]
-                    -- Update the openrouter provider with fetched models
-                    pure
-                        [ if providerId p == "openrouter"
-                            then p{providerModels = modelMap}
-                            else p
-                        | p <- builtinProviders
-                        ]
+        Just apiKey -> fetchAndUpdateOpenRouterModels apiKey
 
-{- | Get API key for a provider
-Checks environment variable first, then falls back to stored auth.
+{- | Fetch OpenRouter models and update the provider list.
+
+Internal helper that handles the OpenRouter API call and integrates
+the results into the provider list.
+-}
+fetchAndUpdateOpenRouterModels :: Text -> IO [Provider]
+fetchAndUpdateOpenRouterModels apiKey = do
+    client <- OpenRouter.newClient apiKey
+    result <- OpenRouter.fetchModels client
+    case result of
+        Left _err -> pure builtinProviders
+        Right models ->
+            let modelMap = buildModelMap models
+             in pure $ updateProviderModels "openrouter" modelMap builtinProviders
+
+{- | Get a provider by ID.
+
+Looks up a provider in the built-in provider list.
+-}
+get :: Text -> IO (Maybe Provider)
+get pid = pure $ findProvider pid builtinProviders
+
+{- | Get a model by provider and model ID.
+
+Looks up a specific model within a provider.
+
+==== Example
+
+@
+mModel <- getModel "anthropic" "claude-sonnet-4-20250514"
+@
+-}
+getModel :: Text -> Text -> IO (Maybe Model)
+getModel providerID mid = do
+    mProvider <- get providerID
+    pure $ mProvider >>= findModel mid
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Authentication operations
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Get API key for a provider.
+
+Checks for API keys in the following order:
+
+1. Environment variables (takes precedence)
+2. Stored authentication
+
+Returns 'Nothing' if no key is found in either location.
+
+==== Example
+
+@
+mKey <- getApiKey storage "anthropic"
+case mKey of
+    Just key -> useKey key
+    Nothing -> error "No API key configured"
+@
 -}
 getApiKey :: Storage.StorageConfig -> Text -> IO (Maybe Text)
 getApiKey storage providerID = do
-    -- Check environment variable first
-    mProvider <- get providerID
-    envKey <- case mProvider of
-        Just p -> do
-            keys <- mapM (lookupEnv . T.unpack) (providerEnv p)
-            pure $ case [k | Just k <- keys, not (null k)] of
-                (k : _) -> Just (T.pack k)
-                [] -> Nothing
-        Nothing -> pure Nothing
+    envKey <- getEnvApiKey providerID
     case envKey of
         Just k -> pure (Just k)
-        Nothing -> do
-            -- Fall back to stored auth
-            stored <-
-                Control.Exception.catch
-                    (Just <$> (Storage.read storage ["auth", providerID] :: IO Value))
-                    (\(_ :: Control.Exception.SomeException) -> pure Nothing)
-            pure $ stored >>= extractToken
+        Nothing -> getStoredApiKey storage providerID
 
--- | Extract token from stored auth value
-extractToken :: Value -> Maybe Text
-extractToken (Object obj) = case KM.lookup "token" obj of
-    Just (String t) -> Just t
-    Just _otherValue -> Nothing
-    Nothing -> Nothing
-extractToken _otherValue = Nothing
+{- | Get API key from environment variables.
 
--- | Get a provider by ID
-get :: Text -> IO (Maybe Provider)
-get pid = do
-    providers <- list
-    pure $ lookup pid [(providerId p, p) | p <- providers]
-
--- | Get a model by provider and model ID
-getModel :: Text -> Text -> IO (Maybe Model)
-getModel providerID modelID = do
-    mprovider <- get providerID
-    case mprovider of
+Internal helper that checks all environment variables configured
+for a provider.
+-}
+getEnvApiKey :: Text -> IO (Maybe Text)
+getEnvApiKey providerID = do
+    mProvider <- get providerID
+    case mProvider of
         Nothing -> pure Nothing
-        Just provider -> pure $ Map.lookup modelID (providerModels provider)
+        Just p -> do
+            keys <- mapM (lookupEnv . T.unpack) (providerEnv p)
+            pure $ firstNonEmpty keys
+  where
+    firstNonEmpty :: [Maybe String] -> Maybe Text
+    firstNonEmpty envVals =
+        case [k | Just k <- envVals, not (null k)] of
+            (k : _) -> Just (T.pack k)
+            [] -> Nothing
 
--- | Get auth status for all providers
+{- | Get API key from stored authentication.
+
+Internal helper that retrieves the token from storage.
+-}
+getStoredApiKey :: Storage.StorageConfig -> Text -> IO (Maybe Text)
+getStoredApiKey storage providerID = do
+    stored <- readStoredAuth storage providerID
+    pure $ stored >>= extractTextField "token"
+
+{- | Read stored authentication value for a provider.
+
+Internal helper that safely reads auth from storage,
+returning Nothing on any error (not found, decode error, etc.).
+-}
+readStoredAuth :: Storage.StorageConfig -> Text -> IO (Maybe Value)
+readStoredAuth storage providerID =
+    Control.Exception.catch
+        (Just <$> (Storage.read storage ["auth", providerID] :: IO Value))
+        (\(_ :: Control.Exception.SomeException) -> pure Nothing)
+
+{- | Get authentication status for all providers.
+
+Returns the authentication status for each built-in provider,
+indicating whether it's authenticated and by what method.
+-}
 authStatus :: Storage.StorageConfig -> IO [ProviderAuth]
 authStatus storage = do
     providers <- list
     mapM (checkAuth storage) providers
 
--- | Check auth for a single provider
+{- | Check authentication status for a single provider.
+
+Internal helper that checks both stored auth and environment variables.
+-}
 checkAuth :: Storage.StorageConfig -> Provider -> IO ProviderAuth
 checkAuth storage provider = do
-    stored <-
-        Control.Exception.catch
-            (Just <$> (Storage.read storage ["auth", providerId provider] :: IO Value))
-            -- Catch NotFoundError and any other exceptions (including JSON decode errors)
-            (\(_ :: Control.Exception.SomeException) -> pure Nothing)
+    stored <- readStoredAuth storage (providerId provider)
     envAuth <- anyM hasEnv (providerEnv provider)
-    let storedMethod = stored >>= extractMethod
+    let storedMethod = stored >>= extractTextField "method"
     let hasAuth = isJust stored || envAuth
-    let method =
-            case storedMethod of
-                Just m -> Just m
-                Nothing ->
-                    if isJust stored
-                        then Just "api_key"
-                        else
-                            if envAuth
-                                then Just "env"
-                                else Nothing
+    let method = determineAuthMethod storedMethod (isJust stored) envAuth
     pure $
         ProviderAuth
             { paProviderID = providerId provider
@@ -220,41 +424,63 @@ checkAuth storage provider = do
             , paMethod = method
             }
 
-extractMethod :: Value -> Maybe Text
-extractMethod (Object obj) = case KM.lookup "method" obj of
-    Just (String t) -> Just t
-    Just _otherValue -> Nothing
-    Nothing -> Nothing
-extractMethod _otherValue = Nothing
+{- | Check if an environment variable is set and non-empty.
 
+Returns 'True' if the variable exists and has a non-empty value.
+-}
 hasEnv :: Text -> IO Bool
 hasEnv key = do
     val <- lookupEnv (T.unpack key)
-    pure $ case val of
-        Nothing -> False
-        Just "" -> False
-        Just _otherValue -> True
+    pure $ isNonEmpty val
+  where
+    isNonEmpty :: Maybe String -> Bool
+    isNonEmpty Nothing = False
+    isNonEmpty (Just "") = False
+    isNonEmpty (Just _) = True
 
+{- | Monadic version of 'any' for predicates returning IO Bool.
+
+Short-circuits on the first True result.
+-}
 anyM :: (a -> IO Bool) -> [a] -> IO Bool
 anyM _ [] = pure False
 anyM f (x : xs) = do
     ok <- f x
     if ok then pure True else anyM f xs
 
--- | List connected provider IDs (those with env auth OR stored auth)
+{- | List provider IDs that have valid authentication.
+
+Returns IDs of providers that have either:
+
+* A valid environment variable set
+* Stored authentication credentials
+-}
 listConnected :: Storage.StorageConfig -> IO [Text]
 listConnected storage = do
     providers <- list
     let providerIds = map providerId providers
-    -- Check which providers have API keys (either from env or storage)
     filterM (fmap isJust . getApiKey storage) providerIds
 
--- | Set auth for a provider
+{- | Store authentication credentials for a provider.
+
+Saves the API key token to storage. The stored auth uses the @"api_key"@
+method by default.
+
+==== Example
+
+@
+setAuth storage "openai" "sk-..."
+@
+-}
 setAuth :: Storage.StorageConfig -> Text -> Text -> IO ()
 setAuth storage providerID token =
     Storage.write storage ["auth", providerID] (object ["token" .= token, "method" .= ("api_key" :: Text)])
 
--- | Remove auth for a provider
+{- | Remove stored authentication for a provider.
+
+Deletes any stored credentials. Note that environment variable
+authentication will still work after removal.
+-}
 removeAuth :: Storage.StorageConfig -> Text -> IO ()
 removeAuth storage providerID =
     Storage.remove storage ["auth", providerID]

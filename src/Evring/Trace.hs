@@ -1,20 +1,46 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 
-{- | Event trace recording and replay for deterministic testing.
+{- |
+Module      : Evring.Trace
+Description : Event trace recording and replay for deterministic testing
+Stability   : stable
 
 A 'Trace' captures completion events from a machine run, allowing
 exact replay without actual I/O. This is the key to testability:
 record once, replay deterministically forever.
 
-Usage:
+= Recording
 
 @
 -- Record a trace during actual I/O
 (result, trace) <- runTraced ring machine
 
--- Later, replay without I/O
+-- Save for later
+BS.writeFile \"trace.bin\" (serializeTrace trace)
+@
+
+= Replay
+
+@
+-- Load saved trace
+Right trace <- deserializeTrace \<$\> BS.readFile \"trace.bin\"
+
+-- Replay without I/O (deterministic!)
 let replayResult = replay machine (traceEvents trace)
+@
+
+= Golden Testing
+
+Traces enable golden testing: record the \"correct\" behavior once,
+then verify future runs match exactly:
+
+@
+test_golden :: TestTree
+test_golden = testCase \"behavior matches golden trace\" $ do
+    golden <- loadGoldenTrace \"test\/golden\/my_machine.trace\"
+    let result = replay myMachine (traceEvents golden)
+    result \@?= expectedFinalState
 @
 -}
 module Evring.Trace (

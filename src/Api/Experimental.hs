@@ -1,47 +1,101 @@
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                          // weapon-server // api/experimental
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---
--- Experimental API endpoints. Unstable features for tool execution, worktree
--- management, and other capabilities under active development.
---
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 
+{- | ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                                         // weapon-server // api/experimental
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Experimental API endpoints. Unstable features for tool execution, worktree
+management, and other capabilities under active development.
+
+= Stability Warning
+
+These endpoints are experimental and may change or be removed without
+notice. They are provided for testing and development purposes.
+
+= Features
+
+* __Tool Endpoints__ - Direct tool execution and listing
+* __Worktree Endpoints__ - Git worktree management
+* __Session Endpoints__ - Global cross-project session listing
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-}
 module Api.Experimental (
     -- * Experimental API Endpoints
+
+    -- ** Tool Execution
     ExperimentalToolIdsAPI,
     ExperimentalToolAPI,
     ExperimentalToolListAPI,
+
+    -- ** Worktree Management
     ExperimentalWorktreeGetAPI,
     ExperimentalWorktreePostAPI,
     ExperimentalWorktreeResetAPI,
     ExperimentalWorktreeDeleteAPI,
+
+    -- ** Global Sessions
     ExperimentalSessionListAPI,
 ) where
 
 import Data.Aeson (Value)
 import Data.Text (Text)
-import Servant
+import Servant (
+    Delete,
+    Get,
+    JSON,
+    Post,
+    QueryParam,
+    QueryParam',
+    ReqBody,
+    Required,
+    type (:>),
+ )
 
 import Session.Types (GlobalSession)
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- // api type definitions //
+-- // tool endpoints //
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ─────────────────────────────────────────────────────────────────────────────
--- tool endpoints
--- ─────────────────────────────────────────────────────────────────────────────
+{- | @GET /experimental/tool/ids@ - Get list of all tool IDs.
 
--- get list of tool ids
+Returns an array of available tool identifiers.
+Useful for discovering what tools are available.
+-}
 type ExperimentalToolIdsAPI = "experimental" :> "tool" :> "ids" :> Get '[JSON] [Text]
 
--- execute a tool
+{- | @POST /experimental/tool@ - Execute a tool directly.
+
+Executes a tool with the provided parameters and returns the result.
+This bypasses the normal message/session flow.
+
+==== Request Body
+
+@
+{
+  "tool": "read_file",
+  "params": { "path": "src/Main.hs" }
+}
+@
+-}
 type ExperimentalToolAPI = "experimental" :> "tool" :> ReqBody '[JSON] Value :> Post '[JSON] Value
 
--- list available tools for a provider/model
+{- | @GET /experimental/tool@ - List available tools for a provider/model.
+
+Returns the list of tools that would be available for the specified
+provider and model combination.
+
+__Required query parameters:__
+
+* @provider@ - Provider ID (e.g., "anthropic")
+* @model@ - Model ID (e.g., "claude-3-opus-20240229")
+
+__Optional query parameters:__
+
+* @directory@ - Project directory context
+-}
 type ExperimentalToolListAPI =
     "experimental"
         :> "tool"
@@ -50,36 +104,52 @@ type ExperimentalToolListAPI =
         :> QueryParam "directory" Text
         :> Get '[JSON] [Value]
 
--- ─────────────────────────────────────────────────────────────────────────────
--- worktree endpoints
--- ─────────────────────────────────────────────────────────────────────────────
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // worktree endpoints //
+-- ═══════════════════════════════════════════════════════════════════════════
 
--- get worktree list (returns array of directory strings)
+{- | @GET /experimental/worktree@ - Get worktree list.
+
+Returns an array of worktree directory paths for the current project.
+-}
 type ExperimentalWorktreeGetAPI = "experimental" :> "worktree" :> QueryParam "directory" Text :> Get '[JSON] [Text]
 
--- create/update worktree
+{- | @POST /experimental/worktree@ - Create or update a worktree.
+
+Creates a new git worktree or updates an existing one.
+-}
 type ExperimentalWorktreePostAPI = "experimental" :> "worktree" :> ReqBody '[JSON] Value :> Post '[JSON] Value
 
--- reset worktree
+{- | @POST /experimental/worktree/reset@ - Reset a worktree.
+
+Resets the worktree to a clean state, discarding local changes.
+-}
 type ExperimentalWorktreeResetAPI = "experimental" :> "worktree" :> "reset" :> QueryParam "directory" Text :> Post '[JSON] Bool
 
--- delete worktree
+{- | @DELETE /experimental/worktree@ - Delete a worktree.
+
+Removes a git worktree and cleans up associated resources.
+-}
 type ExperimentalWorktreeDeleteAPI = "experimental" :> "worktree" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Delete '[JSON] Bool
 
--- ─────────────────────────────────────────────────────────────────────────────
--- session endpoints (global cross-project session listing)
--- ─────────────────────────────────────────────────────────────────────────────
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // session endpoints //
+-- ═══════════════════════════════════════════════════════════════════════════
 
-{- | List sessions globally across all projects
-GET /experimental/session
-Query params:
-  directory: Filter by project directory
-  roots: Only return root sessions (no parentID)
-  start: Filter sessions updated on or after this timestamp (ms since epoch)
-  cursor: Return sessions updated before this timestamp (ms since epoch)
-  search: Filter by title (case-insensitive)
-  limit: Maximum sessions to return
-  archived: Include archived sessions (default false)
+{- | @GET /experimental/session@ - List sessions globally across all projects.
+
+Unlike the standard session list endpoint, this returns sessions from
+all projects with project information included.
+
+__Query parameters:__
+
+* @directory@ - Filter by project directory
+* @roots@ - Only return root sessions (no parentID)
+* @start@ - Filter sessions updated on or after this timestamp (ms since epoch)
+* @cursor@ - Return sessions updated before this timestamp (ms since epoch)
+* @search@ - Filter by title (case-insensitive)
+* @limit@ - Maximum sessions to return
+* @archived@ - Include archived sessions (default false)
 -}
 type ExperimentalSessionListAPI =
     "experimental"

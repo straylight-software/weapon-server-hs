@@ -8,6 +8,7 @@ import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
 import Data.Foldable (toList)
+import Data.List qualified as List
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -24,7 +25,16 @@ import Test.Helpers (listLength)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.Hedgehog
 import Tool.Defs qualified as Tool
-import Tool.Exec (execute, processBashOutput, processGlobOutput, processGrepOutput)
+import Tool.Exec (
+    execute,
+    formatLinesWithNumbers,
+    processBashOutput,
+    processGlobOutput,
+    processGrepOutput,
+    replaceFirst,
+    resolvePath,
+    truncateLines,
+ )
 import Tool.Types
 
 -- | Create a test context
@@ -453,6 +463,91 @@ prop_editNonexistentFile = propertyWithTempDir $ \tmpDir -> do
         execute (testContext tmpDir) "edit" input
     assert $ toIsError result
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Pure Text Utility Tests
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: replaceFirst replaces only the first occurrence
+prop_replaceFirstOnlyFirst :: Property
+prop_replaceFirstOnlyFirst = property $ do
+    let input = "foo bar foo baz foo"
+    let result = replaceFirst "foo" "XXX" input
+    result === "XXX bar foo baz foo"
+
+-- | Property: replaceFirst returns original when pattern not found
+prop_replaceFirstNotFound :: Property
+prop_replaceFirstNotFound = property $ do
+    original <- forAll $ Gen.text (Range.linear 1 100) Gen.alphaNum
+    -- Use a pattern that definitely won't be in alphanumeric text
+    let result = replaceFirst "###NOTFOUND###" "new" original
+    result === original
+
+-- | Property: formatLinesWithNumbers adds correct line numbers
+prop_formatLinesWithNumbers :: Property
+prop_formatLinesWithNumbers = property $ do
+    numLines <- forAll $ Gen.int (Range.linear 1 20)
+    let lines' = [T.pack $ "line" <> show i | i <- [1 .. numLines]]
+    let result = formatLinesWithNumbers lines'
+    listLength result === numLines
+    -- First line should start with "1: "
+    case result of
+        (first : _) -> assert $ T.isPrefixOf "1: " first
+        [] -> failure
+    -- Last line should start with the correct number
+    case List.unsnoc result of
+        Just (_, lastLine) -> assert $ T.isPrefixOf (T.pack (show numLines) <> ": ") lastLine
+        Nothing -> failure
+
+-- | Property: formatLinesWithNumbers preserves content
+prop_formatLinesWithNumbersContent :: Property
+prop_formatLinesWithNumbersContent = property $ do
+    content <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
+    let results = formatLinesWithNumbers [content]
+    case results of
+        [result] -> assert $ T.isSuffixOf content result
+        [] -> failure
+        (_ : _ : _) -> failure
+
+-- | Property: truncateLines respects limit
+prop_truncateLinesLimit :: Property
+prop_truncateLinesLimit = property $ do
+    numLines <- forAll $ Gen.int (Range.linear 10 100)
+    limit <- forAll $ Gen.int (Range.linear 1 20)
+    let lines' = [T.pack $ "line" <> show i | i <- [1 .. numLines]]
+    let result = truncateLines limit lines'
+    listLength result === min limit numLines
+
+-- | Property: truncateLines preserves order
+prop_truncateLinesOrder :: Property
+prop_truncateLinesOrder = property $ do
+    numLines <- forAll $ Gen.int (Range.linear 5 20)
+    limit <- forAll $ Gen.int (Range.linear 1 numLines)
+    let lines' = [T.pack $ show i | i <- [1 .. numLines :: Int]]
+    let result = truncateLines limit lines'
+    -- First element should be "1"
+    case result of
+        (first : _) -> first === "1"
+        [] -> failure
+
+-- | Property: resolvePath keeps absolute paths unchanged
+prop_resolvePathAbsolute :: Property
+prop_resolvePathAbsolute = property $ do
+    segments <- forAll $ Gen.list (Range.linear 1 5) (Gen.text (Range.linear 1 10) Gen.alphaNum)
+    let absPath = "/" <> T.intercalate "/" segments
+    let ctx = ToolContext "s" "m" "/some/workdir"
+    resolvePath ctx absPath === absPath
+
+-- | Property: resolvePath prefixes relative paths with workdir
+prop_resolvePathRelative :: Property
+prop_resolvePathRelative = property $ do
+    segments <- forAll $ Gen.list (Range.linear 1 3) (Gen.text (Range.linear 1 10) Gen.alphaNum)
+    let relPath = T.intercalate "/" segments
+    workdir <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    let ctx = ToolContext "s" "m" (T.unpack $ "/" <> workdir)
+    let result = resolvePath ctx relPath
+    assert $ T.isPrefixOf ("/" <> workdir <> "/") result
+    assert $ T.isSuffixOf relPath result
+
 -- Generators
 genText :: Gen Text
 genText = Gen.text (Range.linear 0 100) Gen.alphaNum
@@ -509,4 +604,13 @@ tests =
         , testProperty "grep output no matches" prop_grepOutputNoMatches
         , testProperty "grep output real error" prop_grepOutputRealError
         , testProperty "grep output failure stdout" prop_grepOutputFailureStdout
+        , -- Pure text utility tests
+          testProperty "replaceFirst only first" prop_replaceFirstOnlyFirst
+        , testProperty "replaceFirst not found" prop_replaceFirstNotFound
+        , testProperty "formatLinesWithNumbers" prop_formatLinesWithNumbers
+        , testProperty "formatLinesWithNumbers content" prop_formatLinesWithNumbersContent
+        , testProperty "truncateLines limit" prop_truncateLinesLimit
+        , testProperty "truncateLines order" prop_truncateLinesOrder
+        , testProperty "resolvePath absolute" prop_resolvePathAbsolute
+        , testProperty "resolvePath relative" prop_resolvePathRelative
         ]

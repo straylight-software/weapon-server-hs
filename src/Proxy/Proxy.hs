@@ -2,41 +2,76 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-{- | MITM Proxy for full-take surveillance of LLM API traffic
+{- |
+Module      : Proxy.Proxy
+Description : MITM Proxy for LLM API traffic surveillance
 
-Architecture:
-  Sandbox ──HTTP_PROXY──▶ Proxy ──HTTPS──▶ api.anthropic.com
+A Man-In-The-Middle (MITM) proxy for capturing and logging LLM API traffic.
+This module provides the core proxy server implementation.
+
+== Architecture
+
+@
+Sandbox ──HTTP_PROXY──▶ Proxy ──HTTPS──▶ api.anthropic.com
                             │
                             ├── TLS termination (dynamic certs)
-                            ├── Full request/response logging
+                            ├── Full request\/response logging
                             ├── SSE stream capture
                             └── Token counting
+@
 
-Every request/response logged to JSONL for audit.
+== Usage
+
+Start a proxy server with 'start', then configure your sandbox to use it
+as an HTTP proxy. All requests are logged to JSONL files and token usage
+is tracked per session.
+
+@
+config <- 'defaultProxyConfig' "\/var\/log\/proxy"
+server <- 'start' config
+-- ... use the proxy ...
+'stop' server
+@
+
+== Logging
+
+Every request/response pair is logged to @\<logDir\>\/requests.jsonl@ in
+JSON Lines format. Use 'getSessionLogs' to retrieve logs for a specific
+session, or parse the file directly for bulk analysis.
 -}
 module Proxy.Proxy (
     -- * Proxy Server
-    ProxyServer,
+    -- $proxyserver
+    ProxyServer (..),
     start,
     stop,
 
-    -- * Logging
+    -- * Log Retrieval
+    -- $logretieval
     getSessionLogs,
     getTokenUsage,
+
+    -- * Pure Helpers (for testing)
+    -- $purehelpers
+    parseTokensFromJson,
+    parseHostPort,
+    buildRequestUrl,
+    truncateBody,
+    isStreamingResponse,
+    filterSessionLogs,
 ) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_)
-import Data.Aeson (Value (..), decode, encode, (.:), (.:?))
-import Data.Aeson.Types (parseMaybe)
-import Data.CaseInsensitive (original)
+import Data.Aeson (Object, Value (..), decode, encode, (.:), (.:?))
+import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8)
-import Data.Time (diffUTCTime, getCurrentTime)
+import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Network.HTTP.Types
 import Network.Wai
 import Network.Wai.Handler.Warp (run)
@@ -55,15 +90,49 @@ import Network.Socket.ByteString qualified as SocketBS
 
 import Proxy.Types
 
--- | Running proxy server
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Proxy Server Type
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- $proxyserver
+The 'ProxyServer' type represents a running proxy instance. Create one
+with 'start' and stop it with 'stop'. The server runs in a background
+thread and can handle multiple concurrent connections.
+-}
+
+{- | A running proxy server instance.
+
+Contains the runtime state, HTTP client manager, server thread, and
+log file path. Use 'start' to create and 'stop' to terminate.
+-}
 data ProxyServer = ProxyServer
-    { psState :: ProxyState
-    , psManager :: HC.Manager
-    , psThread :: ThreadId
-    , psLogFile :: FilePath
+    { psState :: !ProxyState
+    -- ^ Runtime state (counters, token totals)
+    , psManager :: !HC.Manager
+    -- ^ HTTP client manager for outbound requests
+    , psThread :: !ThreadId
+    -- ^ Server thread ID
+    , psLogFile :: !FilePath
+    -- ^ Path to the JSONL log file
     }
 
--- | Start the MITM proxy
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Server Lifecycle
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Start the MITM proxy server.
+
+Creates the log directory if it doesn't exist, initializes state,
+and starts the WAI server in a background thread.
+
+==== __Examples__
+
+@
+config <- 'defaultProxyConfig' "\/tmp\/proxy-logs"
+server <- 'start' config
+-- Server is now running on port 8888
+@
+-}
 start :: ProxyConfig -> IO ProxyServer
 start config = do
     -- Setup log directory
@@ -73,15 +142,7 @@ start config = do
     manager <- HC.newManager HCT.tlsManagerSettings
 
     -- Initialize state
-    requestCount <- newTVarIO 0
-    tokenTotals <- newTVarIO Map.empty
-
-    let state =
-            ProxyState
-                { psConfig = config
-                , psRequestCount = requestCount
-                , psTokenTotals = tokenTotals
-                }
+    state <- initProxyState config
 
     let logFile = pcLogDir config <> "/requests.jsonl"
 
@@ -96,154 +157,164 @@ start config = do
             , psLogFile = logFile
             }
 
--- | Stop the proxy
+-- | Initialize proxy state with fresh TVars.
+initProxyState :: ProxyConfig -> IO ProxyState
+initProxyState config = do
+    requestCount <- newTVarIO 0
+    tokenTotals <- newTVarIO Map.empty
+    pure
+        ProxyState
+            { psConfig = config
+            , psRequestCount = requestCount
+            , psTokenTotals = tokenTotals
+            }
+
+{- | Stop the proxy server.
+
+Kills the server thread. Any in-flight requests may be interrupted.
+Consider using a graceful shutdown mechanism for production use.
+-}
 stop :: ProxyServer -> IO ()
 stop ProxyServer{..} = killThread psThread
 
--- | The proxy WAI application
-proxyApp :: ProxyState -> HC.Manager -> FilePath -> Application
-proxyApp state manager logFile req respond = do
-    let method = requestMethod req
+-- ═══════════════════════════════════════════════════════════════════════════
+-- WAI Application
+-- ═══════════════════════════════════════════════════════════════════════════
 
-    -- Handle CONNECT for HTTPS tunneling
-    if method == "CONNECT"
-        then handleConnect state manager logFile req respond
+{- | The main WAI application that handles all proxy requests.
+
+Routes CONNECT requests to 'handleConnect' for HTTPS tunneling,
+and all other requests to 'handleHttp' for proxying and logging.
+-}
+proxyApp :: ProxyState -> HC.Manager -> FilePath -> Application
+proxyApp state manager logFile req respond =
+    if requestMethod req == "CONNECT"
+        then handleConnect req respond
         else handleHttp state manager logFile req respond
 
--- | Handle regular HTTP requests (non-CONNECT)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- HTTP Request Handling
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Handle regular HTTP requests (non-CONNECT).
+
+This is the main request processing pipeline:
+
+1. Extract session ID and generate request ID
+2. Build the outbound request
+3. Forward to upstream and capture response
+4. Parse token usage from LLM responses
+5. Log the complete transaction
+6. Forward response to client
+-}
 handleHttp :: ProxyState -> HC.Manager -> FilePath -> Application
 handleHttp state manager logFile req respond = do
+    -- Capture timing
     startTime <- getCurrentTime
-    let method = requestMethod req
 
-    -- Extract session ID from header (injected by sandbox)
-    let sessionId =
-            maybe "unknown" decodeUtf8 (lookup "X-Opencode-Session" (requestHeaders req))
+    -- Extract request metadata
+    let sessionId = extractSessionId req
+        method = requestMethod req
+        host = extractHost req
+        maxBodySize = pcMaxBodyLog (psConfig state)
 
-    -- Generate request ID
-    reqId <- atomically $ do
-        n <- readTVar (psRequestCount state)
-        writeTVar (psRequestCount state) (n + 1)
-        pure $ "req_" <> T.pack (show n)
+    -- Generate unique request ID
+    reqId <- generateRequestId state
 
-    -- Read request body
+    -- Read and process request body
     body <- strictRequestBody req
-    let bodyText =
-            if LBS.length body > 0
-                then
-                    Just $
-                        decodeUtf8 $
-                            LBS.toStrict $
-                                LBS.take (fromIntegral $ pcMaxBodyLog $ psConfig state) body
-                else Nothing
+    let bodyText = truncateBody maxBodySize body
+        reqLog = buildRequestLog req bodyText (fromIntegral $ LBS.length body)
 
-    -- Build outbound request
-    -- For proxy requests, reconstruct full URL from Host header + path
-    let host = maybe "unknown" decodeUtf8 (requestHeaderHost req)
-        path = rawPathInfo req <> rawQueryString req
-        url =
-            if "http" `BS.isPrefixOf` path
-                then T.unpack $ decodeUtf8 path -- Already full URL
-                else "http://" <> T.unpack host <> T.unpack (decodeUtf8 path)
+    -- Build URL for outbound request
+    let url = buildRequestUrl host (rawPathInfo req <> rawQueryString req)
 
-    -- Log request
-    let reqLog =
-            RequestLog
-                { rlHeaders = Map.fromList [(decodeUtf8 (original k), decodeUtf8 v) | (k, v) <- requestHeaders req]
-                , rlBody = bodyText
-                , rlSize = fromIntegral $ LBS.length body
-                }
-
-    -- Forward request
-    outReq <- HC.parseRequest url
-    let outReq' =
-            outReq
-                { HC.method = method
-                , HC.requestHeaders = filter (not . isHopHeader . fst) (requestHeaders req)
-                , HC.requestBody = HC.RequestBodyLBS body
-                }
-
-    -- Execute and capture response
-    result <- try @SomeException $ HC.httpLbs outReq' manager
+    -- Forward request and handle response
+    result <- forwardRequest manager method url (requestHeaders req) body
 
     endTime <- getCurrentTime
-    let duration = realToFrac (diffUTCTime endTime startTime) * 1000
+    let duration = calculateDuration startTime endTime
 
     case result of
-        Left _err -> do
-            -- Log failed request
-            let entry =
-                    LogEntry
-                        { leTimestamp = startTime
-                        , leSessionId = sessionId
-                        , leRequestId = reqId
-                        , leMethod = decodeUtf8 method
-                        , leUrl = T.pack url
-                        , leHost = host
-                        , leRequest = reqLog
-                        , leResponse = Nothing
-                        , leTokens = Nothing
-                        , leDuration = duration
-                        }
-            appendLog logFile entry
+        Left _err ->
+            handleFailedRequest logFile startTime sessionId reqId method url host reqLog duration respond
+        Right resp ->
+            handleSuccessfulResponse state logFile startTime sessionId reqId method url host reqLog resp maxBodySize duration respond
 
-            respond $ responseLBS status502 [] "Proxy error"
-        Right resp -> do
-            let respBody = HC.responseBody resp
-                respStatus = HC.responseStatus resp
-                respHeaders = HC.responseHeaders resp
-                isStream =
-                    maybe False ("text/event-stream" `BS.isInfixOf`) $
-                        lookup "content-type" respHeaders
+-- | Handle a failed upstream request.
+handleFailedRequest ::
+    FilePath ->
+    UTCTime ->
+    Text ->
+    Text ->
+    ByteString ->
+    String ->
+    Text ->
+    RequestLog ->
+    Double ->
+    (Network.Wai.Response -> IO ResponseReceived) ->
+    IO ResponseReceived
+handleFailedRequest logFile startTime sessionId reqId method url host reqLog duration respond = do
+    let entry = buildLogEntry startTime sessionId reqId method url host reqLog Nothing Nothing duration
+    appendLog logFile entry
+    respond $ responseLBS status502 [] "Proxy error"
 
-            -- Parse token usage from response
-            tokens <- parseTokenUsage host respBody
+-- | Handle a successful upstream response.
+handleSuccessfulResponse ::
+    ProxyState ->
+    FilePath ->
+    UTCTime ->
+    Text ->
+    Text ->
+    ByteString ->
+    String ->
+    Text ->
+    RequestLog ->
+    HC.Response LBS.ByteString ->
+    Int ->
+    Double ->
+    (Network.Wai.Response -> IO ResponseReceived) ->
+    IO ResponseReceived
+handleSuccessfulResponse state logFile startTime sessionId reqId method url host reqLog resp maxBodySize duration respond = do
+    let respBody = HC.responseBody resp
+        respStatus = HC.responseStatus resp
+        respHeaders = HC.responseHeaders resp
+        isStream = isStreamingResponse respHeaders
 
-            -- Update session totals
-            forM_ tokens $ \t ->
-                atomically $
-                    modifyTVar' (psTokenTotals state) $
-                        Map.insertWith addTokens sessionId t
+    -- Parse token usage from response
+    tokens <- parseTokenUsage host respBody
 
-            -- Log response
-            let respLog =
-                    ResponseLog
-                        { rsStatus = statusCode respStatus
-                        , rsHeaders = Map.fromList [(decodeUtf8 (original k), decodeUtf8 v) | (k, v) <- respHeaders]
-                        , rsBody =
-                            Just $
-                                decodeUtf8 $
-                                    LBS.toStrict $
-                                        LBS.take (fromIntegral $ pcMaxBodyLog $ psConfig state) respBody
-                        , rsSize = fromIntegral $ LBS.length respBody
-                        , rsStream = isStream
-                        }
+    -- Update session totals
+    forM_ tokens $ \t ->
+        atomically $
+            modifyTVar' (psTokenTotals state) $
+                Map.insertWith addTokens sessionId t
 
-            let entry =
-                    LogEntry
-                        { leTimestamp = startTime
-                        , leSessionId = sessionId
-                        , leRequestId = reqId
-                        , leMethod = decodeUtf8 method
-                        , leUrl = T.pack url
-                        , leHost = host
-                        , leRequest = reqLog
-                        , leResponse = Just respLog
-                        , leTokens = tokens
-                        , leDuration = duration
-                        }
-            appendLog logFile entry
+    -- Build response log
+    let respLog = buildResponseLog respStatus respHeaders respBody maxBodySize isStream
 
-            -- Forward response
-            respond $
-                responseLBS
-                    respStatus
-                    (filter (not . isHopHeader . fst) respHeaders)
-                    respBody
+    -- Log the transaction
+    let entry = buildLogEntry startTime sessionId reqId method url host reqLog (Just respLog) tokens duration
+    appendLog logFile entry
 
--- | Handle CONNECT requests (HTTPS tunneling with MITM)
-handleConnect :: ProxyState -> HC.Manager -> FilePath -> Application
-handleConnect _state _manager _logFile req respond = do
+    -- Forward response to client
+    respond $
+        responseLBS
+            respStatus
+            (filter (not . isHopHeader . fst) respHeaders)
+            respBody
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CONNECT Handling (HTTPS Tunneling)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Handle CONNECT requests for HTTPS tunneling.
+
+Establishes a raw TCP tunnel between the client and the target server.
+This allows HTTPS traffic to pass through without MITM interception.
+-}
+handleConnect :: Application
+handleConnect req respond = do
     let rawTarget = C8.unpack $ rawPathInfo req
     case parseHostPort rawTarget of
         Nothing ->
@@ -258,6 +329,66 @@ handleConnect _state _manager _logFile req respond = do
                     (tunnel host port)
                     (responseLBS status502 [("Content-Type", "text/plain")] "Proxy error")
 
+-- | Establish a bidirectional tunnel between client and server.
+tunnel :: String -> Int -> IO ByteString -> (ByteString -> IO ()) -> IO ()
+tunnel host port readClient writeClient = do
+    addrInfos <- Socket.getAddrInfo Nothing (Just host) (Just (show port))
+    case addrInfos of
+        [] -> writeClient "HTTP/1.1 502 Bad Gateway\r\n\r\n"
+        (addr : _) -> do
+            sock <- Socket.socket (Socket.addrFamily addr) Socket.Stream Socket.defaultProtocol
+            Socket.connect sock (Socket.addrAddress addr)
+            writeClient "HTTP/1.1 200 Connection Established\r\n\r\n"
+            upstreamThread <- forkIO $ pumpClientToServer sock readClient
+            pumpServerToClient sock writeClient
+            killThread upstreamThread
+            Socket.close sock
+
+-- | Pump data from client to server.
+pumpClientToServer :: Socket.Socket -> IO ByteString -> IO ()
+pumpClientToServer sock readClient = do
+    bs <- readClient
+    if BS.null bs
+        then pure ()
+        else do
+            SocketBS.sendAll sock bs
+            pumpClientToServer sock readClient
+
+-- | Pump data from server to client.
+pumpServerToClient :: Socket.Socket -> (ByteString -> IO ()) -> IO ()
+pumpServerToClient sock writeClient = do
+    bs <- SocketBS.recv sock 4096
+    if BS.null bs
+        then pure ()
+        else do
+            writeClient bs
+            pumpServerToClient sock writeClient
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Pure Helpers
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- $purehelpers
+Pure helper functions extracted from IO code for easier testing.
+These functions handle URL parsing, body truncation, and response
+detection without any side effects.
+-}
+
+{- | Parse a host:port string from a CONNECT target.
+
+Handles both @\/host:port@ and @host:port@ formats.
+
+==== __Examples__
+
+>>> parseHostPort "/api.anthropic.com:443"
+Just ("api.anthropic.com", 443)
+
+>>> parseHostPort "example.com:8080"
+Just ("example.com", 8080)
+
+>>> parseHostPort "invalid"
+Nothing
+-}
 parseHostPort :: String -> Maybe (String, Int)
 parseHostPort target =
     let stripped = case target of
@@ -269,122 +400,262 @@ parseHostPort target =
                 _otherReads -> Nothing
             _otherParts -> Nothing
 
-tunnel :: String -> Int -> IO ByteString -> (ByteString -> IO ()) -> IO ()
-tunnel host port readClient writeClient = do
-    addrInfos <- Socket.getAddrInfo Nothing (Just host) (Just (show port))
-    case addrInfos of
-        [] -> writeClient "HTTP/1.1 502 Bad Gateway\r\n\r\n"
-        (addr : _) -> do
-            sock <- Socket.socket (Socket.addrFamily addr) Socket.Stream Socket.defaultProtocol
-            Socket.connect sock (Socket.addrAddress addr)
-            writeClient "HTTP/1.1 200 Connection Established\r\n\r\n"
-            upstreamThread <- forkIO $ pumpClient sock
-            pumpServer sock
-            killThread upstreamThread
-            Socket.close sock
-  where
-    pumpClient sock = do
-        bs <- readClient
-        if BS.null bs
-            then pure ()
-            else do
-                SocketBS.sendAll sock bs
-                pumpClient sock
-    pumpServer sock = do
-        bs <- SocketBS.recv sock 4096
-        if BS.null bs
-            then pure ()
-            else do
-                writeClient bs
-                pumpServer sock
+{- | Build the full URL for an outbound request.
 
--- | Check if header should not be forwarded
-isHopHeader :: HeaderName -> Bool
-isHopHeader h =
-    h
-        `elem` [ "connection"
-               , "keep-alive"
-               , "proxy-authenticate"
-               , "proxy-authorization"
-               , "te"
-               , "trailer"
-               , "transfer-encoding"
-               , "upgrade"
-               ]
+If the path already starts with @http@, it's returned as-is.
+Otherwise, the host is prepended with @http:\/\/@.
 
--- | Parse token usage from LLM API response
+==== __Examples__
+
+>>> buildRequestUrl "api.example.com" "/v1/chat"
+"http://api.example.com/v1/chat"
+
+>>> buildRequestUrl "ignored" "http://other.com/path"
+"http://other.com/path"
+-}
+buildRequestUrl :: Text -> ByteString -> String
+buildRequestUrl host path
+    | "http" `BS.isPrefixOf` path = T.unpack $ decodeUtf8 path
+    | otherwise = "http://" <> T.unpack host <> T.unpack (decodeUtf8 path)
+
+{- | Truncate a body to the maximum size for logging.
+
+Returns 'Nothing' for empty bodies, or 'Just' the truncated text.
+
+==== __Examples__
+
+>>> truncateBody 10 ""
+Nothing
+
+>>> truncateBody 5 "hello world"
+Just "hello"
+-}
+truncateBody :: Int -> LBS.ByteString -> Maybe Text
+truncateBody maxSize body
+    | LBS.length body == 0 = Nothing
+    | otherwise = Just $ decodeUtf8 $ LBS.toStrict $ LBS.take (fromIntegral maxSize) body
+
+{- | Check if a response is a streaming (SSE) response.
+
+==== __Examples__
+
+>>> isStreamingResponse [("content-type", "text/event-stream")]
+True
+
+>>> isStreamingResponse [("content-type", "application/json")]
+False
+-}
+isStreamingResponse :: ResponseHeaders -> Bool
+isStreamingResponse headers =
+    maybe False ("text/event-stream" `BS.isInfixOf`) $
+        lookup "content-type" headers
+
+{- | Filter log entries by session ID (pure version).
+
+==== __Examples__
+
+>>> filterSessionLogs "session_123" entries
+[... entries with leSessionId == "session_123" ...]
+-}
+filterSessionLogs :: Text -> [LogEntry] -> [LogEntry]
+filterSessionLogs sessionId = filter (\e -> leSessionId e == sessionId)
+
+{- | Parse token usage from JSON response.
+
+Supports both Anthropic and OpenAI response formats.
+Returns 'Nothing' for non-LLM responses or unrecognized formats.
+-}
+parseTokensFromJson :: Text -> Value -> Maybe TokenUsage
+parseTokensFromJson host json = flip parseMaybe json $ \case
+    Object obj ->
+        if "anthropic" `T.isInfixOf` host
+            then parseAnthropicTokens obj
+            else
+                if "openai" `T.isInfixOf` host
+                    then parseOpenAITokens obj
+                    else fail "Unknown provider"
+    _otherValue -> fail "Not an object"
+
+-- | Parse Anthropic-format token usage.
+parseAnthropicTokens :: Data.Aeson.Object -> Data.Aeson.Types.Parser TokenUsage
+parseAnthropicTokens obj = do
+    usage <- obj .: "usage"
+    inputTokens <- usage .: "input_tokens"
+    outputTokens <- usage .: "output_tokens"
+    cacheRead <- usage .:? "cache_read_input_tokens"
+    cacheWrite <- usage .:? "cache_creation_input_tokens"
+    model <- obj .: "model"
+    pure
+        TokenUsage
+            { tuProvider = "anthropic"
+            , tuModel = model
+            , tuInputTokens = inputTokens
+            , tuOutputTokens = outputTokens
+            , tuCacheRead = cacheRead
+            , tuCacheWrite = cacheWrite
+            }
+
+-- | Parse OpenAI-format token usage.
+parseOpenAITokens :: Data.Aeson.Object -> Data.Aeson.Types.Parser TokenUsage
+parseOpenAITokens obj = do
+    usage <- obj .: "usage"
+    inputTokens <- usage .: "prompt_tokens"
+    outputTokens <- usage .: "completion_tokens"
+    model <- obj .: "model"
+    pure
+        TokenUsage
+            { tuProvider = "openai"
+            , tuModel = model
+            , tuInputTokens = inputTokens
+            , tuOutputTokens = outputTokens
+            , tuCacheRead = Nothing
+            , tuCacheWrite = Nothing
+            }
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Internal Helpers
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Extract session ID from request headers.
+extractSessionId :: Request -> Text
+extractSessionId req =
+    maybe "unknown" decodeUtf8 (lookup "X-Opencode-Session" (requestHeaders req))
+
+-- | Extract host from request headers.
+extractHost :: Request -> Text
+extractHost req =
+    maybe "unknown" decodeUtf8 (requestHeaderHost req)
+
+-- | Generate a unique request ID.
+generateRequestId :: ProxyState -> IO Text
+generateRequestId state = atomically $ do
+    n <- readTVar (psRequestCount state)
+    writeTVar (psRequestCount state) (n + 1)
+    pure $ "req_" <> T.pack (show n)
+
+-- | Calculate duration in milliseconds.
+calculateDuration :: UTCTime -> UTCTime -> Double
+calculateDuration startTime endTime = realToFrac (diffUTCTime endTime startTime) * 1000
+
+-- | Forward a request to upstream.
+forwardRequest ::
+    HC.Manager ->
+    ByteString ->
+    String ->
+    RequestHeaders ->
+    LBS.ByteString ->
+    IO (Either SomeException (HC.Response LBS.ByteString))
+forwardRequest manager method url headers body = do
+    outReq <- HC.parseRequest url
+    let outReq' =
+            outReq
+                { HC.method = method
+                , HC.requestHeaders = filter (not . isHopHeader . fst) headers
+                , HC.requestBody = HC.RequestBodyLBS body
+                }
+    try @SomeException $ HC.httpLbs outReq' manager
+
+-- | Build a RequestLog from request data.
+buildRequestLog :: Request -> Maybe Text -> Int -> RequestLog
+buildRequestLog req bodyText bodySize =
+    RequestLog
+        { rlHeaders = headersToMap (requestHeaders req)
+        , rlBody = bodyText
+        , rlSize = bodySize
+        }
+
+-- | Build a ResponseLog from response data.
+buildResponseLog :: Status -> ResponseHeaders -> LBS.ByteString -> Int -> Bool -> ResponseLog
+buildResponseLog status headers body maxBodySize isStream =
+    ResponseLog
+        { rsStatus = statusCode status
+        , rsHeaders = headersToMap headers
+        , rsBody = truncateBody maxBodySize body
+        , rsSize = fromIntegral $ LBS.length body
+        , rsStream = isStream
+        }
+
+-- | Build a complete LogEntry.
+buildLogEntry ::
+    UTCTime ->
+    Text ->
+    Text ->
+    ByteString ->
+    String ->
+    Text ->
+    RequestLog ->
+    Maybe ResponseLog ->
+    Maybe TokenUsage ->
+    Double ->
+    LogEntry
+buildLogEntry timestamp sessionId reqId method url host reqLog respLog tokens duration =
+    LogEntry
+        { leTimestamp = timestamp
+        , leSessionId = sessionId
+        , leRequestId = reqId
+        , leMethod = decodeUtf8 method
+        , leUrl = T.pack url
+        , leHost = host
+        , leRequest = reqLog
+        , leResponse = respLog
+        , leTokens = tokens
+        , leDuration = duration
+        }
+
+-- | Parse token usage from response body.
 parseTokenUsage :: Text -> LBS.ByteString -> IO (Maybe TokenUsage)
 parseTokenUsage host body = do
     let mJson = decode body :: Maybe Value
     case mJson of
-        Nothing -> pure Nothing -- Not JSON or SSE
+        Nothing -> pure Nothing
         Just json -> pure $ parseTokensFromJson host json
 
-parseTokensFromJson :: Text -> Value -> Maybe TokenUsage
-parseTokensFromJson host json = flip parseMaybe json $ \case
-    Object obj -> do
-        -- Try Anthropic format
-        if "anthropic" `T.isInfixOf` host
-            then do
-                usage <- obj .: "usage"
-                inputTokens <- usage .: "input_tokens"
-                outputTokens <- usage .: "output_tokens"
-                cacheRead <- usage .:? "cache_read_input_tokens"
-                cacheWrite <- usage .:? "cache_creation_input_tokens"
-                model <- obj .: "model"
-                pure
-                    TokenUsage
-                        { tuProvider = "anthropic"
-                        , tuModel = model
-                        , tuInputTokens = inputTokens
-                        , tuOutputTokens = outputTokens
-                        , tuCacheRead = cacheRead
-                        , tuCacheWrite = cacheWrite
-                        }
-            -- Try OpenAI format
-            else
-                if "openai" `T.isInfixOf` host
-                    then do
-                        usage <- obj .: "usage"
-                        inputTokens <- usage .: "prompt_tokens"
-                        outputTokens <- usage .: "completion_tokens"
-                        model <- obj .: "model"
-                        pure
-                            TokenUsage
-                                { tuProvider = "openai"
-                                , tuModel = model
-                                , tuInputTokens = inputTokens
-                                , tuOutputTokens = outputTokens
-                                , tuCacheRead = Nothing
-                                , tuCacheWrite = Nothing
-                                }
-                    else fail "Unknown provider"
-    _otherValue -> fail "Not an object"
-
--- | Add token counts
-addTokens :: TokenUsage -> TokenUsage -> TokenUsage
-addTokens a b =
-    a
-        { tuInputTokens = tuInputTokens a + tuInputTokens b
-        , tuOutputTokens = tuOutputTokens a + tuOutputTokens b
-        , tuCacheRead = (+) <$> tuCacheRead a <*> tuCacheRead b
-        , tuCacheWrite = (+) <$> tuCacheWrite a <*> tuCacheWrite b
-        }
-
--- | Append a log entry to the JSONL file
+-- | Append a log entry to the JSONL file.
 appendLog :: FilePath -> LogEntry -> IO ()
 appendLog path entry = do
     let line = LBS.toStrict (encode entry) <> "\n"
     BS.appendFile path line
 
--- | Get logs for a session
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Log Retrieval
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- $logretieval
+Functions for retrieving logged data from a running proxy server.
+-}
+
+{- | Get all log entries for a specific session.
+
+Reads the JSONL log file and filters entries by session ID.
+This is an O(n) operation that reads the entire log file.
+
+==== __Examples__
+
+@
+logs <- 'getSessionLogs' server "session_abc123"
+mapM_ print logs
+@
+-}
 getSessionLogs :: ProxyServer -> Text -> IO [LogEntry]
 getSessionLogs ProxyServer{..} sessionId = do
     content <- BS.readFile psLogFile
     let chunks = C8.lines content
         entries = catMaybes [decode (LBS.fromStrict l) | l <- chunks]
-    pure [e | e <- entries, leSessionId e == sessionId]
+    pure $ filterSessionLogs sessionId entries
 
--- | Get token usage totals
+{- | Get aggregated token usage for all sessions.
+
+Returns a map from session ID to total token usage.
+This reflects the current in-memory state, not the log file.
+
+==== __Examples__
+
+@
+usage <- 'getTokenUsage' server
+case Map.lookup "session_abc123" usage of
+    Just tokens -> print (tuInputTokens tokens + tuOutputTokens tokens)
+    Nothing -> putStrLn "No usage for session"
+@
+-}
 getTokenUsage :: ProxyServer -> IO (Map Text TokenUsage)
 getTokenUsage ProxyServer{..} = readTVarIO (psTokenTotals psState)

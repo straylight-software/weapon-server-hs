@@ -9,9 +9,20 @@ module Property.EventProps where
 
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString.Builder (toLazyByteString)
+import Data.ByteString.Lazy qualified as BSL
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Global.Event (wrapGlobalEvent)
+import Global.Event (
+    formatSSEMessage,
+    heartbeatIntervalMicros,
+    mkRawEvent,
+    serverConnectedRaw,
+    serverHeartbeatRaw,
+    sseHeaders,
+    wrapEventPayload,
+    wrapGlobalEvent,
+ )
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
@@ -369,6 +380,224 @@ genUUID = do
     pure $ Text.intercalate "-" parts
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- // wrapEventPayload properties //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: wrapEventPayload produces valid structure with directory and payload
+prop_wrapEventPayload_structure :: Property
+prop_wrapEventPayload_structure = property $ do
+    dir <- forAll genDirectory
+    payload <- forAll genProperties
+
+    let result = wrapEventPayload dir payload
+
+    case result of
+        Object obj -> do
+            -- Must have "directory" field
+            case KM.lookup "directory" obj of
+                Just (String d) -> d === dir
+                Just other -> do
+                    annotate $ "directory field is not a string: " ++ show other
+                    failure
+                Nothing -> do
+                    annotate "missing directory field"
+                    failure
+
+            -- Must have "payload" field equal to input
+            case KM.lookup "payload" obj of
+                Just p -> p === payload
+                Nothing -> do
+                    annotate "missing payload field"
+                    failure
+        other -> failOnNonObject "wrapEventPayload result" other
+
+{- | Property: wrapEventPayload is consistent with wrapGlobalEvent
+When we construct the inner payload ourselves, both should produce the same result.
+-}
+prop_wrapEventPayload_consistent_with_wrapGlobalEvent :: Property
+prop_wrapEventPayload_consistent_with_wrapGlobalEvent = property $ do
+    dir <- forAll genDirectory
+    eventType <- forAll genEventType
+    props <- forAll genProperties
+
+    let innerPayload =
+            object
+                [ "type" .= eventType
+                , "properties" .= props
+                ]
+    let result1 = wrapEventPayload dir innerPayload
+    let result2 = wrapGlobalEvent dir eventType props
+
+    result1 === result2
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // mkRawEvent properties //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: mkRawEvent produces valid raw event structure
+prop_mkRawEvent_structure :: Property
+prop_mkRawEvent_structure = property $ do
+    eventType <- forAll genEventType
+    props <- forAll genProperties
+
+    let result = mkRawEvent eventType props
+
+    case result of
+        Object obj -> do
+            -- Must have "type" field
+            case KM.lookup "type" obj of
+                Just (String t) -> t === eventType
+                Just other -> do
+                    annotate $ "type field is not a string: " ++ show other
+                    failure
+                Nothing -> do
+                    annotate "missing type field"
+                    failure
+
+            -- Must have "properties" field
+            case KM.lookup "properties" obj of
+                Just p -> p === props
+                Nothing -> do
+                    annotate "missing properties field"
+                    failure
+        other -> failOnNonObject "mkRawEvent result" other
+
+-- | Property: mkRawEvent is deterministic
+prop_mkRawEvent_deterministic :: Property
+prop_mkRawEvent_deterministic = property $ do
+    eventType <- forAll genEventType
+    props <- forAll genProperties
+
+    let result1 = mkRawEvent eventType props
+    let result2 = mkRawEvent eventType props
+    result1 === result2
+
+-- | Property: mkRawEvent encodes to valid JSON
+prop_mkRawEvent_encodable :: Property
+prop_mkRawEvent_encodable = property $ do
+    eventType <- forAll genEventType
+    props <- forAll genProperties
+
+    let result = mkRawEvent eventType props
+    let encoded = encode result
+    let decoded = decode encoded :: Maybe Value
+
+    decoded === Just result
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // formatSSEMessage properties //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Property: formatSSEMessage produces valid SSE wire format
+Format: "data: <json>\n\n"
+-}
+prop_formatSSEMessage_format :: Property
+prop_formatSSEMessage_format = property $ do
+    eventType <- forAll genEventType
+    props <- forAll genProperties
+
+    let event = mkRawEvent eventType props
+    let jsonBytes = encode event
+    let builders = formatSSEMessage jsonBytes
+    let result = BSL.toStrict $ mconcat $ map toLazyByteString builders
+
+    -- Must start with "data: "
+    assert $ "data: " `BSL.isPrefixOf` BSL.fromStrict result
+    -- Must end with "\n\n"
+    assert $ "\n\n" `BSL.isSuffixOf` BSL.fromStrict result
+
+-- | Property: formatSSEMessage preserves JSON content
+prop_formatSSEMessage_preserves_content :: Property
+prop_formatSSEMessage_preserves_content = property $ do
+    eventType <- forAll genEventType
+    props <- forAll genProperties
+
+    let event = mkRawEvent eventType props
+    let jsonBytes = encode event
+    let builders = formatSSEMessage jsonBytes
+    let result = BSL.toStrict $ mconcat $ map toLazyByteString builders
+
+    -- Extract JSON from SSE format (remove "data: " prefix and "\n\n" suffix)
+    let withoutPrefix = BSL.drop 6 (BSL.fromStrict result) -- "data: " is 6 bytes
+    let withoutSuffix = BSL.take (BSL.length withoutPrefix - 2) withoutPrefix -- "\n\n" is 2 bytes
+    withoutSuffix === jsonBytes
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // Pre-built event constants //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: serverConnectedRaw is valid JSON
+prop_serverConnectedRaw_valid_json :: Property
+prop_serverConnectedRaw_valid_json = property $ do
+    let decoded = decode serverConnectedRaw :: Maybe Value
+    case decoded of
+        Just (Object obj) -> do
+            -- Must have "type" field with "server.connected"
+            case KM.lookup "type" obj of
+                Just (String t) -> t === "server.connected"
+                Just other -> do
+                    annotate $ "type field is not a string: " ++ show other
+                    failure
+                Nothing -> do
+                    annotate "missing type field"
+                    failure
+            -- Must have "properties" field
+            case KM.lookup "properties" obj of
+                Just (Object _) -> success
+                Just other -> failOnNonObject "properties field" other
+                Nothing -> failOnNothing "properties field"
+        Just other -> failOnNonObject "serverConnectedRaw" other
+        Nothing -> do
+            annotate "serverConnectedRaw is not valid JSON"
+            failure
+
+-- | Property: serverHeartbeatRaw has correct structure
+prop_serverHeartbeatRaw_structure :: Property
+prop_serverHeartbeatRaw_structure = property $ do
+    case serverHeartbeatRaw of
+        Object obj -> do
+            case KM.lookup "type" obj of
+                Just (String t) -> t === "server.heartbeat"
+                Just other -> do
+                    annotate $ "type field is not a string: " ++ show other
+                    failure
+                Nothing -> do
+                    annotate "missing type field"
+                    failure
+            case KM.lookup "properties" obj of
+                Just (Object _) -> success
+                Just other -> failOnNonObject "properties field" other
+                Nothing -> failOnNothing "properties field"
+        other -> failOnNonObject "serverHeartbeatRaw" other
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // Configuration constants //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: sseHeaders contains required SSE headers
+prop_sseHeaders_contains_required :: Property
+prop_sseHeaders_contains_required = property $ do
+    let headers = sseHeaders
+    let headerNames = map fst headers
+
+    -- Must have Content-Type
+    assert $ "Content-Type" `elem` headerNames
+    -- Must have Cache-Control
+    assert $ "Cache-Control" `elem` headerNames
+
+-- | Property: sseHeaders has correct Content-Type
+prop_sseHeaders_content_type :: Property
+prop_sseHeaders_content_type = property $ do
+    let contentType = lookup "Content-Type" sseHeaders
+    contentType === Just "text/event-stream"
+
+-- | Property: heartbeatIntervalMicros is reasonable (between 1 and 60 seconds)
+prop_heartbeatInterval_reasonable :: Property
+prop_heartbeatInterval_reasonable = property $ do
+    assert $ heartbeatIntervalMicros >= 1000000 -- at least 1 second
+    assert $ heartbeatIntervalMicros <= 60000000 -- at most 60 seconds
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- // Test tree //
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -387,5 +616,32 @@ tests =
             , testProperty "handles nested properties" prop_wrapGlobalEvent_nested_properties
             , testProperty "different directories produce different outputs" prop_wrapGlobalEvent_different_directories
             , testProperty "different event types produce different outputs" prop_wrapGlobalEvent_different_types
+            ]
+        , testGroup
+            "wrapEventPayload"
+            [ testProperty "produces valid structure" prop_wrapEventPayload_structure
+            , testProperty "is consistent with wrapGlobalEvent" prop_wrapEventPayload_consistent_with_wrapGlobalEvent
+            ]
+        , testGroup
+            "mkRawEvent"
+            [ testProperty "produces valid raw event structure" prop_mkRawEvent_structure
+            , testProperty "is deterministic" prop_mkRawEvent_deterministic
+            , testProperty "encodes to valid JSON" prop_mkRawEvent_encodable
+            ]
+        , testGroup
+            "formatSSEMessage"
+            [ testProperty "produces valid SSE wire format" prop_formatSSEMessage_format
+            , testProperty "preserves JSON content" prop_formatSSEMessage_preserves_content
+            ]
+        , testGroup
+            "Pre-built events"
+            [ testProperty "serverConnectedRaw is valid JSON" prop_serverConnectedRaw_valid_json
+            , testProperty "serverHeartbeatRaw has correct structure" prop_serverHeartbeatRaw_structure
+            ]
+        , testGroup
+            "Configuration"
+            [ testProperty "sseHeaders contains required headers" prop_sseHeaders_contains_required
+            , testProperty "sseHeaders has correct Content-Type" prop_sseHeaders_content_type
+            , testProperty "heartbeatIntervalMicros is reasonable" prop_heartbeatInterval_reasonable
             ]
         ]

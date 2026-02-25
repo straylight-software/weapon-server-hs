@@ -1,6 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Proxy.Types property tests
+{- |
+Module      : Property.ProxyTypesProps
+Description : Property tests for Proxy.Types
+
+Property-based tests for the proxy types module, including:
+
+* JSON serialization round-trips for all types
+* Token arithmetic correctness
+* Header conversion utilities
+* Configuration defaults
+-}
 module Property.ProxyTypesProps where
 
 import Data.Aeson (decode, encode)
@@ -153,19 +163,209 @@ prop_logEntryDurationNonNegative = property $ do
     le <- forAll genLogEntry
     assert $ leDuration le >= 0
 
+-- ============================================================================
+-- Token Arithmetic Properties
+-- ============================================================================
+
+-- | Property: addTokens is commutative for token counts
+prop_addTokensCommutative :: Property
+prop_addTokensCommutative = property $ do
+    t1 <- forAll genTokenUsage
+    t2 <- forAll genTokenUsage
+    let r1 = addTokens t1 t2
+        r2 = addTokens t2 t1
+    -- Token counts should be the same regardless of order
+    tuInputTokens r1 === tuInputTokens r2
+    tuOutputTokens r1 === tuOutputTokens r2
+
+-- | Property: addTokens is associative for token counts
+prop_addTokensAssociative :: Property
+prop_addTokensAssociative = property $ do
+    t1 <- forAll genTokenUsage
+    t2 <- forAll genTokenUsage
+    t3 <- forAll genTokenUsage
+    let r1 = addTokens (addTokens t1 t2) t3
+        r2 = addTokens t1 (addTokens t2 t3)
+    -- Token counts should be the same regardless of grouping
+    tuInputTokens r1 === tuInputTokens r2
+    tuOutputTokens r1 === tuOutputTokens r2
+
+-- | Property: addTokens correctly sums input tokens
+prop_addTokensSumsInput :: Property
+prop_addTokensSumsInput = property $ do
+    t1 <- forAll genTokenUsage
+    t2 <- forAll genTokenUsage
+    let result = addTokens t1 t2
+    tuInputTokens result === tuInputTokens t1 + tuInputTokens t2
+
+-- | Property: addTokens correctly sums output tokens
+prop_addTokensSumsOutput :: Property
+prop_addTokensSumsOutput = property $ do
+    t1 <- forAll genTokenUsage
+    t2 <- forAll genTokenUsage
+    let result = addTokens t1 t2
+    tuOutputTokens result === tuOutputTokens t1 + tuOutputTokens t2
+
+-- | Property: addTokens preserves provider from first argument
+prop_addTokensPreservesProvider :: Property
+prop_addTokensPreservesProvider = property $ do
+    t1 <- forAll genTokenUsage
+    t2 <- forAll genTokenUsage
+    let result = addTokens t1 t2
+    tuProvider result === tuProvider t1
+
+-- | Property: addTokens preserves model from first argument
+prop_addTokensPreservesModel :: Property
+prop_addTokensPreservesModel = property $ do
+    t1 <- forAll genTokenUsage
+    t2 <- forAll genTokenUsage
+    let result = addTokens t1 t2
+    tuModel result === tuModel t1
+
+-- | Property: addTokens with zero tokens is identity on counts
+prop_addTokensZeroIdentity :: Property
+prop_addTokensZeroIdentity = property $ do
+    t <- forAll genTokenUsage
+    let zero =
+            TokenUsage
+                { tuProvider = "test"
+                , tuModel = "test"
+                , tuInputTokens = 0
+                , tuOutputTokens = 0
+                , tuCacheRead = Nothing
+                , tuCacheWrite = Nothing
+                }
+    let result = addTokens t zero
+    tuInputTokens result === tuInputTokens t
+    tuOutputTokens result === tuOutputTokens t
+
+-- | Property: addTokens combines cache values with applicative semantics
+prop_addTokensCacheCombines :: Property
+prop_addTokensCacheCombines = property $ do
+    cacheRead1 <- forAll $ Gen.int (Range.linear 0 1000)
+    cacheRead2 <- forAll $ Gen.int (Range.linear 0 1000)
+    cacheWrite1 <- forAll $ Gen.int (Range.linear 0 1000)
+    cacheWrite2 <- forAll $ Gen.int (Range.linear 0 1000)
+    let t1 =
+            TokenUsage
+                { tuProvider = "anthropic"
+                , tuModel = "claude-3"
+                , tuInputTokens = 100
+                , tuOutputTokens = 50
+                , tuCacheRead = Just cacheRead1
+                , tuCacheWrite = Just cacheWrite1
+                }
+        t2 =
+            TokenUsage
+                { tuProvider = "anthropic"
+                , tuModel = "claude-3"
+                , tuInputTokens = 200
+                , tuOutputTokens = 75
+                , tuCacheRead = Just cacheRead2
+                , tuCacheWrite = Just cacheWrite2
+                }
+        result = addTokens t1 t2
+    tuCacheRead result === Just (cacheRead1 + cacheRead2)
+    tuCacheWrite result === Just (cacheWrite1 + cacheWrite2)
+
+-- | Property: addTokens returns Nothing for cache when either is Nothing
+prop_addTokensCacheNothing :: Property
+prop_addTokensCacheNothing = property $ do
+    cacheRead <- forAll $ Gen.int (Range.linear 0 1000)
+    let t1 =
+            TokenUsage
+                { tuProvider = "openai"
+                , tuModel = "gpt-4"
+                , tuInputTokens = 100
+                , tuOutputTokens = 50
+                , tuCacheRead = Just cacheRead
+                , tuCacheWrite = Nothing
+                }
+        t2 =
+            TokenUsage
+                { tuProvider = "openai"
+                , tuModel = "gpt-4"
+                , tuInputTokens = 200
+                , tuOutputTokens = 75
+                , tuCacheRead = Nothing
+                , tuCacheWrite = Nothing
+                }
+        result = addTokens t1 t2
+    tuCacheRead result === Nothing
+    tuCacheWrite result === Nothing
+
+-- ============================================================================
+-- Header Utilities Properties
+-- ============================================================================
+
+-- | Property: isHopHeader returns True for all known hop headers
+prop_isHopHeaderKnownHeaders :: Property
+prop_isHopHeaderKnownHeaders = withTests 1 $ property $ do
+    let hopHeaders =
+            [ "connection"
+            , "keep-alive"
+            , "proxy-authenticate"
+            , "proxy-authorization"
+            , "te"
+            , "trailer"
+            , "transfer-encoding"
+            , "upgrade"
+            ]
+    mapM_ (assert . isHopHeader) hopHeaders
+
+-- | Property: isHopHeader returns False for content headers
+prop_isHopHeaderContentHeaders :: Property
+prop_isHopHeaderContentHeaders = withTests 1 $ property $ do
+    let contentHeaders =
+            [ "content-type"
+            , "content-length"
+            , "content-encoding"
+            , "accept"
+            , "authorization"
+            , "host"
+            , "user-agent"
+            ]
+    mapM_ (assert . not . isHopHeader) contentHeaders
+
 -- Test tree
 tests :: TestTree
 tests =
     testGroup
         "Proxy.Types Property Tests"
-        [ testProperty "RequestLog round-trip" prop_requestLogRoundtrip
-        , testProperty "ResponseLog round-trip" prop_responseLogRoundtrip
-        , testProperty "TokenUsage round-trip" prop_tokenUsageRoundtrip
-        , testProperty "LogEntry round-trip" prop_logEntryRoundtrip
-        , testProperty "defaultProxyConfig port" prop_defaultProxyConfigPort
-        , testProperty "defaultProxyConfig maxBodyLog" prop_defaultProxyConfigMaxBodyLog
-        , testProperty "defaultProxyConfig allowedHosts" prop_defaultProxyConfigAllowedHosts
-        , testProperty "ResponseLog valid status" prop_responseLogValidStatus
-        , testProperty "TokenUsage non-negative" prop_tokenUsageNonNegative
-        , testProperty "LogEntry duration non-negative" prop_logEntryDurationNonNegative
+        [ testGroup
+            "Serialization"
+            [ testProperty "RequestLog round-trip" prop_requestLogRoundtrip
+            , testProperty "ResponseLog round-trip" prop_responseLogRoundtrip
+            , testProperty "TokenUsage round-trip" prop_tokenUsageRoundtrip
+            , testProperty "LogEntry round-trip" prop_logEntryRoundtrip
+            ]
+        , testGroup
+            "Configuration"
+            [ testProperty "defaultProxyConfig port" prop_defaultProxyConfigPort
+            , testProperty "defaultProxyConfig maxBodyLog" prop_defaultProxyConfigMaxBodyLog
+            , testProperty "defaultProxyConfig allowedHosts" prop_defaultProxyConfigAllowedHosts
+            ]
+        , testGroup
+            "Validation"
+            [ testProperty "ResponseLog valid status" prop_responseLogValidStatus
+            , testProperty "TokenUsage non-negative" prop_tokenUsageNonNegative
+            , testProperty "LogEntry duration non-negative" prop_logEntryDurationNonNegative
+            ]
+        , testGroup
+            "Token Arithmetic"
+            [ testProperty "addTokens commutative" prop_addTokensCommutative
+            , testProperty "addTokens associative" prop_addTokensAssociative
+            , testProperty "addTokens sums input" prop_addTokensSumsInput
+            , testProperty "addTokens sums output" prop_addTokensSumsOutput
+            , testProperty "addTokens preserves provider" prop_addTokensPreservesProvider
+            , testProperty "addTokens preserves model" prop_addTokensPreservesModel
+            , testProperty "addTokens zero identity" prop_addTokensZeroIdentity
+            , testProperty "addTokens cache combines" prop_addTokensCacheCombines
+            , testProperty "addTokens cache nothing" prop_addTokensCacheNothing
+            ]
+        , testGroup
+            "Header Utilities"
+            [ testProperty "isHopHeader known headers" prop_isHopHeaderKnownHeaders
+            , testProperty "isHopHeader content headers" prop_isHopHeaderContentHeaders
+            ]
         ]

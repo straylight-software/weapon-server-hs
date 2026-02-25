@@ -1,10 +1,59 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Identifier generation compatible with opencode TUI
-IDs are lexicographically sortable with a time-based prefix
-Format: 12 hex chars (timestamp) + 14 base62 random chars = 26 chars total
+{- |
+Module      : Util.Identifier
+Description : Lexicographically sortable identifier generation
 
-The module exposes both pure functions for testing and IO wrappers for production use.
+This module generates unique, lexicographically sortable identifiers
+compatible with the weapon TUI. IDs are designed to sort chronologically
+when sorted as strings.
+
+= ID Format
+
+Each ID is 26 characters:
+
+@
+┌────────────────┬──────────────────────┐
+│ 12 hex chars   │ 14 base62 chars      │
+│ (timestamp)    │ (random)             │
+└────────────────┴──────────────────────┘
+@
+
+The timestamp portion encodes @timestamp * 0x1000 + counter@, giving
+millisecond precision with sub-millisecond ordering via the counter.
+
+= Ascending vs Descending
+
+* __Ascending IDs__ sort in chronological order (oldest first)
+* __Descending IDs__ sort in reverse chronological order (newest first)
+
+Descending IDs are created by bit-complementing the timestamp portion,
+which inverts the sort order.
+
+= Thread Safety
+
+The 'IdGenState' uses an 'MVar' for thread-safe counter management.
+Multiple threads can safely generate IDs concurrently.
+
+= Pure vs IO API
+
+For production use, use the IO API ('ascending', 'descending', etc.).
+For testing, use the pure API ('createPure', 'IdParams') with deterministic
+inputs.
+
+= Usage Example
+
+@
+-- Production usage
+idGen <- 'newIdGenState'
+msgId <- 'ascendingWithPrefix' idGen "msg"
+-- msgId = "msg_01abc..."
+
+-- Testing with pure API
+let params = 'IdParams' 1740000000000 1 "aaaaaaaaaaaaaa" False
+let testId = 'createPure' params
+-- testId is deterministic
+@
 -}
 module Util.Identifier (
     -- * IO API (production use)

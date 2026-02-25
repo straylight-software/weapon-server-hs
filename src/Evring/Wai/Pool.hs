@@ -1,14 +1,42 @@
 {-# LANGUAGE RecordWildCards #-}
 
-{- | Buffer pool for zero-allocation steady-state operation.
+{- |
+Module      : Evring.Wai.Pool
+Description : Buffer pool for zero-allocation steady-state operation
+Stability   : experimental
 
 Pre-allocates a fixed number of buffers that get recycled.
 Each connection gets a recv buffer from the pool and returns it on close.
+
+= Why Pooling?
+
+Allocating buffers per-connection causes GC pressure. By reusing a fixed
+pool of pinned buffers, we achieve zero allocation in steady state.
+
+= Usage
+
+@
+pool <- newBufferPool 1000 16384  -- 1000 buffers of 16KB each
+
+buf <- acquireBuffer pool
+-- use buf.bufPtr for io_uring operations
+releaseBuffer pool buf
+@
+
+= Overflow Behavior
+
+If the pool is exhausted, 'acquireBuffer' allocates a new buffer.
+When released, it's added to the pool for future reuse.
 -}
 module Evring.Wai.Pool (
+    -- * Pool management
     BufferPool,
-    Buffer (..),
     newBufferPool,
+
+    -- * Buffer type
+    Buffer (..),
+
+    -- * Acquire and release
     acquireBuffer,
     releaseBuffer,
 )

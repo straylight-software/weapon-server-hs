@@ -160,6 +160,20 @@ genChatResponse =
         <*> Gen.maybe genStopReason
         <*> genUsage
 
+-- | Property: isMessageStop correctly identifies MessageStop
+prop_isMessageStopTrue :: Property
+prop_isMessageStopTrue = property $ do
+    assert $ isMessageStop MessageStop
+
+-- | Property: isMessageStop returns False for non-MessageStop events
+prop_isMessageStopFalse :: Property
+prop_isMessageStopFalse = property $ do
+    assert $ not $ isMessageStop Ping
+    let usage = Usage 0 0 Nothing Nothing
+    assert $ not $ isMessageStop (MessageDelta EndTurn usage)
+    assert $ not $ isMessageStop (ContentBlockStop 0)
+    assert $ not $ isMessageStop (ContentBlockDelta 0 "test")
+
 -- Test tree
 tests :: TestTree
 tests =
@@ -174,4 +188,6 @@ tests =
         , testProperty "ToolResult round-trip" prop_toolResultRoundtrip
         , testProperty "Message round-trip" prop_messageRoundtrip
         , testProperty "ChatResponse round-trip" prop_chatResponseRoundtrip
+        , testProperty "isMessageStop true for MessageStop" prop_isMessageStopTrue
+        , testProperty "isMessageStop false for other events" prop_isMessageStopFalse
         ]

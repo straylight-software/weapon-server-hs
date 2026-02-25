@@ -1,25 +1,54 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- | LLM API types
+{- |
+Module      : LLM.Types
+Description : Core types for LLM API interactions
+
+This module defines the shared types used for communicating with LLM APIs
+(Anthropic Claude, OpenRouter, etc.). It provides JSON serialization for
+messages, content blocks, tool interactions, and streaming events.
+
+The types follow the Anthropic Messages API format, which is the canonical
+format used internally. OpenRouter types are converted to/from this format
+when needed.
+-}
 module LLM.Types (
-    -- * Messages
-    Message (..),
+    -- * Message Roles
+    -- $roles
     Role (..),
+
+    -- * Message Content
+    -- $content
     Content (..),
     ContentBlock (..),
+
+    -- * Tool Interactions
+    -- $tools
     ToolUse (..),
     ToolResult (..),
 
+    -- * Messages
+    -- $messages
+    Message (..),
+
     -- * Request/Response
+    -- $requests
     ChatRequest (..),
     ChatResponse (..),
+
+    -- * Usage and Stop Reasons
     Usage (..),
     StopReason (..),
 
     -- * Streaming
+    -- $streaming
     StreamEvent (..),
+
+    -- * Utilities
+    isMessageStop,
 )
 where
 
@@ -27,8 +56,29 @@ import Data.Aeson
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
--- | Message role
-data Role = User | Assistant | System
+{- $roles
+Roles define who is sending a message in the conversation.
+The 'User' role represents human input, 'Assistant' represents
+the LLM's responses, and 'System' is used for system prompts.
+-}
+
+{- | The role of a message sender in the conversation.
+
+==== Examples
+
+>>> encode User
+"\"user\""
+
+>>> encode Assistant
+"\"assistant\""
+-}
+data Role
+    = -- | Human user input
+      User
+    | -- | LLM assistant response
+      Assistant
+    | -- | System instructions/prompt
+      System
     deriving (Eq, Show, Generic)
 
 instance ToJSON Role where
@@ -43,12 +93,30 @@ instance FromJSON Role where
         "system" -> pure System
         _otherRole -> fail "Unknown role"
 
--- | Content block types
+{- $content
+Content blocks represent the different types of content that can appear
+in a message. Text is the most common, but images and tool interactions
+are also supported.
+-}
+
+{- | A single block of content within a message.
+
+Messages can contain multiple content blocks of different types.
+This allows for rich interactions including text, images, and tool use.
+-}
 data ContentBlock
-    = TextBlock Text
-    | ImageBlock Text Text -- media_type, base64 data
-    | ToolUseBlock ToolUse
-    | ToolResultBlock ToolResult
+    = -- | Plain text content
+      TextBlock Text
+    | -- | Base64-encoded image with media type (e.g., "image/png")
+      ImageBlock
+        -- | Media type (e.g., "image/png", "image/jpeg")
+        Text
+        -- | Base64-encoded image data
+        Text
+    | -- | Tool use request from the assistant
+      ToolUseBlock ToolUse
+    | -- | Result of a tool execution from the user
+      ToolResultBlock ToolResult
     deriving (Eq, Show, Generic)
 
 instance ToJSON ContentBlock where
@@ -92,11 +160,24 @@ instance FromJSON ContentBlock where
             "tool_result" -> ToolResultBlock <$> parseJSON (Object v)
             _otherType -> fail "Unknown content block type"
 
--- | Tool use request from assistant
+{- $tools
+Tool interactions allow the LLM to request external actions and receive
+results. The assistant sends 'ToolUse' blocks to request tool execution,
+and the user responds with 'ToolResult' blocks containing the output.
+-}
+
+{- | A tool use request from the assistant.
+
+When the LLM wants to use a tool, it generates a ToolUse block
+specifying which tool to call and what arguments to pass.
+-}
 data ToolUse = ToolUse
     { tuId :: Text
+    -- ^ Unique identifier for this tool use (used to match results)
     , tuName :: Text
+    -- ^ Name of the tool to invoke
     , tuInput :: Value
+    -- ^ JSON object containing tool arguments
     }
     deriving (Eq, Show, Generic)
 
@@ -115,11 +196,19 @@ instance FromJSON ToolUse where
             <*> v .: "name"
             <*> v .: "input"
 
--- | Tool result from user
+{- | The result of executing a tool, sent back to the assistant.
+
+After executing a tool requested via 'ToolUse', the result is sent
+back using this type. The 'trToolUseId' must match the 'tuId' from
+the original request.
+-}
 data ToolResult = ToolResult
     { trToolUseId :: Text
+    -- ^ ID of the tool use this is responding to
     , trContent :: Text
+    -- ^ Text content of the result (output or error message)
     , trIsError :: Bool
+    -- ^ Whether the tool execution failed
     }
     deriving (Eq, Show, Generic)
 
@@ -138,10 +227,16 @@ instance FromJSON ToolResult where
             <*> v .: "content"
             <*> v .:? "is_error" .!= False
 
--- | Message content - can be string or blocks
+{- | Message content, which can be simple text or structured blocks.
+
+Simple content is just a text string. Block content is a list of
+content blocks that can include text, images, and tool interactions.
+-}
 data Content
-    = SimpleContent Text
-    | BlockContent [ContentBlock]
+    = -- | Simple text content (serializes as a JSON string)
+      SimpleContent Text
+    | -- | Structured content with multiple blocks (serializes as JSON array)
+      BlockContent [ContentBlock]
     deriving (Eq, Show, Generic)
 
 instance ToJSON Content where
@@ -155,10 +250,22 @@ instance FromJSON Content where
         toList = foldr (:) []
     parseJSON _ = fail "Content must be string or array"
 
--- | A chat message
+{- $messages
+Messages are the fundamental unit of conversation. Each message has a
+role (who is speaking) and content (what they're saying).
+-}
+
+{- | A single message in the conversation.
+
+Messages form the conversation history sent to the LLM. Each message
+has a role indicating the sender and content which can be simple text
+or structured blocks.
+-}
 data Message = Message
     { msgRole :: Role
+    -- ^ Who sent this message
     , msgContent :: Content
+    -- ^ The message content
     }
     deriving (Eq, Show, Generic)
 
@@ -175,15 +282,31 @@ instance FromJSON Message where
             <$> v .: "role"
             <*> v .: "content"
 
--- | Chat completion request
+{- $requests
+Request and response types for the chat completion API.
+-}
+
+{- | A request for chat completion from the LLM.
+
+This contains all parameters needed to make a chat completion request,
+including the conversation history, model selection, and optional
+parameters like temperature and tool definitions.
+-}
 data ChatRequest = ChatRequest
     { crModel :: Text
+    -- ^ Model identifier (e.g., "claude-3-opus-20240229")
     , crMessages :: [Message]
+    -- ^ Conversation history
     , crMaxTokens :: Int
+    -- ^ Maximum tokens to generate in the response
     , crSystem :: Maybe Text
+    -- ^ Optional system prompt
     , crTemperature :: Maybe Double
-    , crTools :: Maybe [Value] -- Tool definitions
+    -- ^ Sampling temperature (0.0-1.0, lower is more deterministic)
+    , crTools :: Maybe [Value]
+    -- ^ Optional tool definitions (JSON schema format)
     , crStream :: Bool
+    -- ^ Whether to stream the response
     }
     deriving (Eq, Show, Generic)
 
@@ -201,8 +324,23 @@ instance ToJSON ChatRequest where
                 , "stream" .= crStream
                 ]
 
--- | Stop reason
-data StopReason = EndTurn | MaxTokens | ToolUseSR | StopSequence
+{- | The reason why the LLM stopped generating.
+
+Understanding the stop reason helps determine what to do next:
+- 'EndTurn': Normal completion, the assistant finished its response
+- 'MaxTokens': Hit the token limit, response may be truncated
+- 'ToolUseSR': The assistant wants to use a tool (execute and continue)
+- 'StopSequence': Hit a stop sequence (custom termination)
+-}
+data StopReason
+    = -- | Normal end of response
+      EndTurn
+    | -- | Hit maximum token limit
+      MaxTokens
+    | -- | Requesting tool use (SR suffix to avoid conflict with ToolUse type)
+      ToolUseSR
+    | -- | Hit a stop sequence
+      StopSequence
     deriving (Eq, Show, Generic)
 
 instance FromJSON StopReason where
@@ -219,12 +357,20 @@ instance ToJSON StopReason where
     toJSON ToolUseSR = "tool_use"
     toJSON StopSequence = "stop_sequence"
 
--- | Token usage
+{- | Token usage statistics for a request/response.
+
+This tracks how many tokens were used, which is important for
+cost tracking and staying within context limits.
+-}
 data Usage = Usage
     { usageInputTokens :: Int
+    -- ^ Tokens in the input (prompt)
     , usageOutputTokens :: Int
+    -- ^ Tokens in the output (response)
     , usageCacheRead :: Maybe Int
+    -- ^ Tokens read from cache (Anthropic prompt caching)
     , usageCacheWrite :: Maybe Int
+    -- ^ Tokens written to cache (Anthropic prompt caching)
     }
     deriving (Eq, Show, Generic)
 
@@ -245,14 +391,24 @@ instance ToJSON Usage where
             , "cache_creation_input_tokens" .= usageCacheWrite
             ]
 
--- | Chat completion response
+{- | The response from a chat completion request.
+
+Contains the generated content along with metadata about the response
+including token usage and why generation stopped.
+-}
 data ChatResponse = ChatResponse
     { respId :: Text
+    -- ^ Unique identifier for this response
     , respModel :: Text
+    -- ^ Model that generated this response
     , respRole :: Role
+    -- ^ Role of the responder (always 'Assistant')
     , respContent :: [ContentBlock]
+    -- ^ Generated content blocks
     , respStopReason :: Maybe StopReason
+    -- ^ Why generation stopped (may be Nothing during streaming)
     , respUsage :: Usage
+    -- ^ Token usage statistics
     }
     deriving (Eq, Show, Generic)
 
@@ -277,13 +433,46 @@ instance FromJSON ChatResponse where
             <*> v .:? "stop_reason"
             <*> v .: "usage"
 
--- | Streaming event types
+{- $streaming
+Streaming events allow real-time processing of LLM responses. The API
+sends a sequence of events as the response is generated, starting with
+'MessageStart' and ending with 'MessageStop'.
+-}
+
+{- | Streaming event types for Server-Sent Events (SSE) from LLM APIs.
+
+These events are received during streaming chat completions and allow
+real-time processing of the response as it's generated.
+-}
 data StreamEvent
-    = MessageStart ChatResponse
-    | ContentBlockStart Int ContentBlock
-    | ContentBlockDelta Int Text -- index, delta text
-    | ContentBlockStop Int
-    | MessageDelta StopReason Usage
-    | MessageStop
-    | Ping
+    = -- | Initial message metadata (id, model, etc.)
+      MessageStart ChatResponse
+    | -- | A new content block is starting at the given index
+      ContentBlockStart Int ContentBlock
+    | -- | Delta update for content at the given index
+      ContentBlockDelta Int Text
+    | -- | Content block at the given index is complete
+      ContentBlockStop Int
+    | -- | Final message delta with stop reason and usage
+      MessageDelta StopReason Usage
+    | -- | Message is complete
+      MessageStop
+    | -- | Keep-alive ping from the server
+      Ping
     deriving (Eq, Show, Generic)
+
+{- | Check if a stream event signals the end of the message.
+
+This is useful for determining when to stop reading from an SSE stream.
+
+==== Examples
+
+>>> isMessageStop MessageStop
+True
+
+>>> isMessageStop (ContentBlockDelta 0 "hello")
+False
+-}
+isMessageStop :: StreamEvent -> Bool
+isMessageStop MessageStop = True
+isMessageStop _ = False

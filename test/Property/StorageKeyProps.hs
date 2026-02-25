@@ -1,6 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Storage key helpers property tests
+{- |
+Module      : Property.StorageKeyProps
+Description : Property tests for StorageKeys module
+
+Property-based tests for the storage key builder functions.
+
+These tests verify:
+
+  * Key format correctness (namespace, segments)
+  * Key/prefix consistency (keys start with their prefix)
+  * Builder function behavior
+-}
 module Property.StorageKeyProps where
 
 import Data.List (isPrefixOf)
@@ -53,6 +64,30 @@ prop_todoKeyFormat = property $ do
     let key = todoKey sid
     key === ["todo", sid]
 
+-- | Property: projectKey produces ["project", projectId]
+prop_projectKeyFormat :: Property
+prop_projectKeyFormat = property $ do
+    projectId <- forAll genId
+    let key = projectKey projectId
+    key === ["project", projectId]
+
+-- | Property: buildKey prepends namespace to segments
+prop_buildKeyFormat :: Property
+prop_buildKeyFormat = property $ do
+    namespace <- forAll genId
+    seg1 <- forAll genId
+    seg2 <- forAll genId
+    let key = buildKey namespace [seg1, seg2]
+    key === [namespace, seg1, seg2]
+
+-- | Property: buildPrefixKey produces [namespace, keyId]
+prop_buildPrefixKeyFormat :: Property
+prop_buildPrefixKeyFormat = property $ do
+    namespace <- forAll genId
+    keyId <- forAll genId
+    let key = buildPrefixKey namespace keyId
+    key === [namespace, keyId]
+
 -- | Property: sessionKey and sessionPrefix are consistent
 prop_sessionKeyPrefixConsistent :: Property
 prop_sessionKeyPrefixConsistent = property $ do
@@ -88,11 +123,23 @@ tests :: TestTree
 tests =
     testGroup
         "Storage Key Property Tests"
-        [ testProperty "sessionKey format" prop_sessionKeyFormat
-        , testProperty "sessionPrefix format" prop_sessionPrefixFormat
-        , testProperty "messageKey format" prop_messageKeyFormat
-        , testProperty "messagePrefix format" prop_messagePrefixFormat
-        , testProperty "todoKey format" prop_todoKeyFormat
-        , testProperty "sessionKey/Prefix consistent" prop_sessionKeyPrefixConsistent
-        , testProperty "messageKey/Prefix consistent" prop_messageKeyPrefixConsistent
+        [ testGroup
+            "Key Formats"
+            [ testProperty "sessionKey format" prop_sessionKeyFormat
+            , testProperty "sessionPrefix format" prop_sessionPrefixFormat
+            , testProperty "messageKey format" prop_messageKeyFormat
+            , testProperty "messagePrefix format" prop_messagePrefixFormat
+            , testProperty "todoKey format" prop_todoKeyFormat
+            , testProperty "projectKey format" prop_projectKeyFormat
+            ]
+        , testGroup
+            "Helper Functions"
+            [ testProperty "buildKey format" prop_buildKeyFormat
+            , testProperty "buildPrefixKey format" prop_buildPrefixKeyFormat
+            ]
+        , testGroup
+            "Consistency"
+            [ testProperty "sessionKey/Prefix consistent" prop_sessionKeyPrefixConsistent
+            , testProperty "messageKey/Prefix consistent" prop_messageKeyPrefixConsistent
+            ]
         ]

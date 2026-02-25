@@ -1,16 +1,37 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 
-{- | Events and Operations for the evring state machine model.
+{- |
+Module      : Evring.Event
+Description : Events and Operations for the evring state machine model
+Stability   : stable
 
-An 'Event' is a completion from the kernel (what happened).
-An 'Operation' is a request to the kernel (what to do).
+This module defines the event\/operation model for io_uring state machines.
+
+= Concepts
+
+* 'Event' - A completion notification from the kernel (what happened)
+* 'Operation' - A request to submit to the kernel (what to do)
+
+= State Machine Model
 
 The state machine processes Events and emits Operations:
 
 @
-  step :: State -> Event -> (State, [Operation])
+step :: State -> Event -> (State, [Operation])
 @
+
+This separation enables:
+
+* Pure state machines (no IO in step function)
+* Deterministic replay testing
+* Clear separation of concerns
+
+= Operation Types
+
+Operations cover file, socket, directory, and timing operations
+available through io_uring. Each operation type has associated
+parameters and a builder function.
 -}
 module Evring.Event (
     -- * Events (completions from kernel)

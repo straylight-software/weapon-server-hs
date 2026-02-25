@@ -2,7 +2,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- | PTY types for sandboxed shell sessions
+{- |
+Module      : Pty.Types
+Description : Types for PTY (pseudo-terminal) sessions
+
+This module defines the core data types used for managing PTY sessions,
+including session info, status tracking, input types for creating and
+updating sessions, and the output buffer for terminal data.
+
+PTY sessions can be sandboxed using bwrap for security isolation.
+-}
 module Pty.Types (
     -- * PTY Info
     PtyInfo (..),
@@ -13,9 +22,13 @@ module Pty.Types (
     UpdatePtyInput (..),
     ResizeInput (..),
 
-    -- * PTY State
+    -- * PTY Buffer
     PtyBuffer (..),
     emptyBuffer,
+    appendToBuffer,
+
+    -- * Replay Data Calculation
+    calculateReplayData,
 
     -- * Constants
     bufferLimit,
@@ -24,6 +37,7 @@ module Pty.Types (
 
 import Data.Aeson
 import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
 import Data.Text (Text)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -154,3 +168,41 @@ bufferLimit = 2 * 1024 * 1024
 -- | Chunk size for sending data
 bufferChunk :: Int
 bufferChunk = 64 * 1024
+
+-- ----------------------------------------------------------------------------
+-- Pure Buffer Operations
+-- ----------------------------------------------------------------------------
+
+{- | Append data to the buffer, enforcing the buffer limit.
+
+This is a pure function that calculates the new buffer state after
+appending data. It handles buffer wraparound by dropping old data
+when the limit is reached.
+
+@since 0.1.0
+-}
+appendToBuffer :: ByteString -> PtyBuffer -> PtyBuffer
+appendToBuffer bs buf =
+    let newCursor = pbCursor buf + fromIntegral (BS.length bs)
+        newData = BS.take bufferLimit (pbData buf <> bs)
+        excess = max 0 (BS.length newData - bufferLimit)
+        newBufferCursor = pbBufferCursor buf + fromIntegral excess
+     in buf
+            { pbData = newData
+            , pbCursor = newCursor
+            , pbBufferCursor = newBufferCursor
+            }
+
+{- | Calculate replay data for a client reconnecting at a given cursor position.
+
+Returns the data that should be sent to replay missed terminal output.
+Returns 'mempty' if the cursor is at or past the current position.
+
+@since 0.1.0
+-}
+calculateReplayData :: Word64 -> PtyBuffer -> ByteString
+calculateReplayData replayFrom buf
+    | replayFrom >= pbCursor buf = BS.empty
+    | otherwise =
+        let offset = max 0 (fromIntegral $ replayFrom - pbBufferCursor buf)
+         in BS.drop offset (pbData buf)

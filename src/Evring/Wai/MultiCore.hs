@@ -2,14 +2,36 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-{- | Multi-core evring-wai: one io_uring ring per core.
+{- |
+Module      : Evring.Wai.MultiCore
+Description : Multi-core evring-wai server with per-core io_uring rings
+Stability   : experimental
 
-Each core runs its own event loop with its own ring.
-SO_REUSEPORT lets kernel load-balance accepts across all listeners.
-No cross-core communication, no locks, linear scaling.
+This module provides a multi-core HTTP server where each core runs its
+own io_uring event loop. The kernel load-balances incoming connections
+across all listeners via @SO_REUSEPORT@.
+
+= Architecture
+
+* One io_uring ring per core
+* Each core has its own accept loop and buffer pools
+* No cross-core communication or locks needed
+* Linear scaling with core count
+
+= Usage
+
+@
+import Evring.Wai.MultiCore (runServerMultiCore, defaultServerSettings)
+
+main :: IO ()
+main = runServerMultiCore defaultServerSettings myApp
+@
 -}
 module Evring.Wai.MultiCore (
+    -- * Running the server
     runServerMultiCore,
+
+    -- * Configuration
     ServerSettings (..),
     defaultServerSettings,
 )
@@ -17,11 +39,11 @@ where
 
 import Control.Concurrent (forkOn, getNumCapabilities, newEmptyMVar, putMVar, takeMVar)
 import Control.Monad (forM_, replicateM)
-import Data.Bits (shiftL, shiftR, (.|.))
-import Data.Word (Word16, Word32)
+import Data.Word (Word32)
 import Evring.Wai.Conn
+import Evring.Wai.Internal (parseSockAddr)
 import Evring.Wai.Loop
-import Foreign (Ptr, castPtr, mallocBytes, peekByteOff, poke)
+import Foreign (Ptr, castPtr, mallocBytes, poke)
 import GHC.Conc (setNumCapabilities)
 import Network.Socket
 import Network.Wai (Application)
@@ -146,32 +168,5 @@ acceptCont ctx loop listenFd addrBuf addrLenBuf app = Cont $ \case
 
         pure Nothing
 
--- | Parse sockaddr from accept buffer
-parseSockAddr :: Ptr () -> IO SockAddr
-parseSockAddr addrBuf = do
-    family <- peekByteOff addrBuf 0 :: IO Word16
-    case family of
-        2 -> do
-            -- AF_INET
-            port <- peekByteOff addrBuf 2 :: IO Word16
-            addr <- peekByteOff addrBuf 4 :: IO Word32
-            pure $ SockAddrInet (fromIntegral (byteSwap16 port)) addr
-        10 -> do
-            -- AF_INET6
-            port <- peekByteOff addrBuf 2 :: IO Word16
-            -- IPv6 any address (::) as HostAddress6
-            pure $ SockAddrInet6 (fromIntegral (byteSwap16 port)) 0 ipv6AnyAddress 0
-        _unknownFamily -> pure $ SockAddrInet 0 0
-
-byteSwap16 :: Word16 -> Word16
-byteSwap16 w = (w `shiftR` 8) .|. (w `shiftL` 8)
-
-{- | IPv6 any address (::) as HostAddress6
-  Wrapper to avoid stan's "big tuple" warning
--}
-ipv6AnyAddress :: HostAddress6
-ipv6AnyAddress = ipv6AddressFromWords 0 0 0 0
-
--- | Construct HostAddress6 from four Word32 components
-ipv6AddressFromWords :: Word32 -> Word32 -> Word32 -> Word32 -> HostAddress6
-ipv6AddressFromWords !a !b !c !d = (a, b, c, d)
+-- Note: parseSockAddr, byteSwap16, ipv6AnyAddress, ipv6AddressFromWords
+-- are imported from Evring.Wai.Internal

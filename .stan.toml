@@ -21,3 +21,8 @@ file = "src/Evring/Wai/MultiCore.hs"
 type = "Exclude"
 id = "STAN-0302"
 file = "src/Evring/Wai/Server.hs"
+
+[[check]]
+type = "Exclude"
+id = "STAN-0302"
+file = "src/Evring/Wai/Internal.hs"
