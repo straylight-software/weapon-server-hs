@@ -10,11 +10,16 @@ module Tool.Exec (
 
     -- * Streaming process execution
     runProcessStreaming,
+
+    -- * Pure output processing (for testing)
+    processBashOutput,
+    processGlobOutput,
+    processGrepOutput,
 )
 where
 
 import Control.Concurrent.Async (wait, withAsync)
-import Control.Exception (SomeException, try)
+import Control.Exception (IOException, SomeException, try)
 import Data.Aeson (FromJSON, Value, eitherDecode, encode)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -250,9 +255,9 @@ readHandleStreaming h stdoutRef stderrRef callback = do
     maxStreamingChars :: Int
     maxStreamingChars = 50000 -- ~50KB limit for streaming updates
     loop chunksRef = do
-        result <- try @SomeException $ BS.hGetSome h 4096
+        result <- try @IOException $ BS.hGetSome h 4096
         case result of
-            Left _e -> hClose h -- EOF or error, close handle
+            Left _e -> hClose h -- IO error, close handle
             Right chunk
                 | BS.null chunk -> hClose h -- EOF
                 | otherwise -> do
@@ -280,7 +285,7 @@ readHandleToRef :: Handle -> IORef Text -> IO ()
 readHandleToRef h ref = loop
   where
     loop = do
-        result <- try @SomeException $ BS.hGetSome h 4096
+        result <- try @IOException $ BS.hGetSome h 4096
         case result of
             Left _e -> hClose h
             Right chunk
@@ -312,14 +317,19 @@ execBashStreaming ctx BashInput{..} callback = do
                 }
 
     (exitCode, stdout, stderr) <- runProcessStreaming cmd callback
+    pure $ processBashOutput biDescription exitCode stdout stderr
+
+-- | Pure output processing for bash tool results
+processBashOutput :: Text -> ExitCode -> Text -> Text -> ToolOutput
+processBashOutput description exitCode stdout stderr =
     let output = stdout <> (if T.null stderr then "" else "\n[stderr]\n" <> stderr)
-    let output' =
+        output' =
             if T.null output
                 then "Command completed successfully with no output."
                 else output
-    if exitCode /= ExitSuccess
-        then pure $ toolError "Command failed" output
-        else pure $ toolSuccess biDescription output'
+     in if exitCode /= ExitSuccess
+            then toolError "Command failed" output
+            else toolSuccess description output'
 
 -- | Glob file search with streaming output
 execGlobStreaming :: ToolContext -> GlobInput -> StreamingCallback -> IO ToolOutput
@@ -332,12 +342,16 @@ execGlobStreaming ctx GlobInput{..} callback = do
                 }
 
     (exitCode, stdout, stderr) <- runProcessStreaming cmd callback
+    pure $ processGlobOutput giPattern exitCode stdout stderr
+
+-- | Pure output processing for glob tool results
+processGlobOutput :: Text -> ExitCode -> Text -> Text -> ToolOutput
+processGlobOutput pat exitCode stdout stderr =
     let outputLines = take 100 (T.lines stdout)
-    let output = T.unlines outputLines
-    case exitCode of
-        ExitSuccess -> pure $ toolSuccess ("Glob " <> giPattern) output
-        ExitFailure _exitCode ->
-            pure $
+        output = T.unlines outputLines
+     in case exitCode of
+            ExitSuccess -> toolSuccess ("Glob " <> pat) output
+            ExitFailure _exitCode ->
                 toolError
                     "Glob Error"
                     (if T.null stderr then stdout else stderr)
@@ -355,13 +369,17 @@ execGrepStreaming ctx GrepInput{..} callback = do
                 }
 
     (exitCode, stdout, stderr) <- runProcessStreaming cmd callback
+    pure $ processGrepOutput grPattern exitCode stdout stderr
+
+-- | Pure output processing for grep tool results
+processGrepOutput :: Text -> ExitCode -> Text -> Text -> ToolOutput
+processGrepOutput pat exitCode stdout stderr =
     let outputLines = take 100 (T.lines stdout)
-    let output = T.unlines outputLines
-    case exitCode of
-        ExitSuccess -> pure $ toolSuccess ("Grep " <> grPattern) output
-        ExitFailure 1 | T.null stdout -> pure $ toolSuccess ("Grep " <> grPattern) ""
-        ExitFailure _exitCode ->
-            pure $
+        output = T.unlines outputLines
+     in case exitCode of
+            ExitSuccess -> toolSuccess ("Grep " <> pat) output
+            ExitFailure 1 | T.null stdout -> toolSuccess ("Grep " <> pat) ""
+            ExitFailure _exitCode ->
                 toolError
                     "Grep Error"
                     (if T.null stderr then stdout else stderr)

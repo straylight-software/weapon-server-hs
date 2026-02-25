@@ -4,7 +4,6 @@
 module Integration.ServerComparison where
 
 import ApiCompatibilitySpec (Endpoint (..), haskellEndpoints, typescriptOnlyEndpoints)
-import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson

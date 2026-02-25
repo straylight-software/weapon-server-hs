@@ -125,6 +125,7 @@ library
     Tool.Tool
     Tool.Types
     Tui.Store
+    Util.ExeCache
     Util.FileSystem
     Util.Git
     Util.Identifier
@@ -323,12 +324,12 @@ test-suite weapon-server-test
     Property.StorageProps
     Property.TodoProps
     Property.ToolProps
-    Property.ToolStreamingProps
     Property.ToolTypesProps
     Property.TuiProps
     Property.VcsStatusProps
     Test.Fixture
     Unit.ApiSpec
+    Unit.ToolStreamingSpec
 
   -- // compatibility
   -- // integration

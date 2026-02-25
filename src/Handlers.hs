@@ -313,7 +313,7 @@ projectUpdateHandler st pid input = do
                     Just n -> current{Api.name = Just n}
                     Nothing -> current
             -- Store project metadata for persistence
-            Storage.write (stStorage st) (projectKey pid) updated
+            Storage.writeCached (stDirCache st) (stStorage st) (projectKey pid) updated
             -- Publish update event
             Bus.publish (stBus st) "project.updated" (object ["info" .= updated])
             return updated
@@ -389,7 +389,7 @@ providerOauthAuthorizeHandler st pid input = liftIO $ do
     let scopes = extractTextList input "scopes"
     let url = OAuth.buildAuthorizeUrl pid state redirect scopes
     let payload = object ["providerID" .= pid, "state" .= state, "url" .= url]
-    Storage.write (stStorage st) ["auth", "oauth", pid] (object ["state" .= state, "redirect" .= redirect])
+    Storage.writeCached (stDirCache st) (stStorage st) ["auth", "oauth", pid] (object ["state" .= state, "redirect" .= redirect])
     return payload
 
 providerOauthCallbackHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
@@ -623,7 +623,7 @@ sessionShareDeleteHandler st sid =
 sessionDiffHandler :: AppState -> Text -> Maybe Text -> Handler [FileDiff]
 sessionDiffHandler st _sid _mMessageID = liftIO $ do
     -- Load file-level diffs for the session
-    fileDiffs <- Diff.loadFileDiffs (unpack (stDirectory st))
+    fileDiffs <- Diff.loadFileDiffs (stExeCache st) (unpack (stDirectory st))
     return $ map toApiFileDiff fileDiffs
   where
     toApiFileDiff fd =
@@ -642,13 +642,13 @@ sessionDiffHandler st _sid _mMessageID = liftIO $ do
 
 sessionSummarizeHandler :: AppState -> Text -> Handler Bool
 sessionSummarizeHandler st sid = do
-    summary <- liftIO $ loadSummary (unpack (stDirectory st))
+    summary <- liftIO $ loadSummary (stExeCache st) (unpack (stDirectory st))
     _ <- withSessionUpdate st sid $ \s -> s{sessionSummary = Just summary}
     return True
 
-loadSummary :: FilePath -> IO SessionSummary
-loadSummary root = do
-    mresult <- Diff.loadDiff root
+loadSummary :: Formatter.ExeCache -> FilePath -> IO SessionSummary
+loadSummary exeCache root = do
+    mresult <- Diff.loadDiff exeCache root
     case mresult of
         Nothing -> pure (SessionSummary 0 0 (Just 0))
         Just (_, summary) -> pure summary
@@ -825,12 +825,12 @@ createMessageIO st sid input = do
                 }
 
     -- Write to storage
-    Storage.write (stStorage st) ["message", sid, uMsgId] uMsg
-    Storage.write (stStorage st) ["message", sid, aMsgId] aMsg
+    Storage.writeCached (stDirCache st) (stStorage st) ["message", sid, uMsgId] uMsg
+    Storage.writeCached (stDirCache st) (stStorage st) ["message", sid, aMsgId] aMsg
 
     let todos = Todo.extractTodos (cmiParts input)
     unless (null todos) $
-        Storage.write (stStorage st) ["todo", sid] todos
+        Storage.writeCached (stDirCache st) (stStorage st) ["todo", sid] todos
 
     -- Publish user message event (send just info, not full message)
     -- Must include required fields: id, sessionID, role, time, agent, model
@@ -956,7 +956,7 @@ createMessageIO st sid input = do
                         Bus.publish (stBus st) "message.part.updated" (object ["part" .= errPart])
                         -- Minor #10: Persist error parts to storage
                         let updatedMsg = aMsg{msgParts = [errPart]}
-                        Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
+                        Storage.writeCached (stDirCache st) (stStorage st) ["message", sid, aMsgId] updatedMsg
                         completeMessage st sid aMsgId uMsgId providerId modelId agentName t
                     Just key -> do
                         -- Always use OpenRouter - it can proxy to all providers
@@ -1192,7 +1192,7 @@ createMessageIO st sid input = do
                         -- Critical #1: Persist assistant message parts to storage
                         finalParts <- readTVarIO partsRef
                         let updatedMsg = aMsg{msgParts = finalParts}
-                        Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
+                        Storage.writeCached (stDirCache st) (stStorage st) ["message", sid, aMsgId] updatedMsg
 
                         completeMessage st sid aMsgId uMsgId providerId modelId agentName t
                 -- Unregister thread on normal completion
@@ -1219,7 +1219,7 @@ createMessageIO st sid input = do
                             Bus.publish (stBus st) "message.part.updated" (object ["part" .= cancelPart])
                             -- Persist the cancelled message
                             let updatedMsg = aMsg{msgParts = [cancelPart]}
-                            Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
+                            Storage.writeCached (stDirCache st) (stStorage st) ["message", sid, aMsgId] updatedMsg
                             -- Complete the message normally so session goes back to idle
                             completeMessage st sid aMsgId uMsgId providerId modelId agentName t
                         else do
@@ -1237,7 +1237,7 @@ createMessageIO st sid input = do
                             Bus.publish (stBus st) "message.part.updated" (object ["part" .= errPart])
                             -- Minor #10: Persist error parts to storage
                             let updatedMsg = aMsg{msgParts = [errPart]}
-                            Storage.write (stStorage st) ["message", sid, aMsgId] updatedMsg
+                            Storage.writeCached (stDirCache st) (stStorage st) ["message", sid, aMsgId] updatedMsg
                             completeMessage st sid aMsgId uMsgId providerId modelId agentName t
 
     return aMsg
@@ -1265,7 +1265,7 @@ sessionMessagePartDeleteHandler st sid msgId partId = do
                 Nothing -> throwError err404
                 Just parts -> do
                     let next = msg{msgParts = parts}
-                    liftIO $ Storage.write (stStorage st) key next
+                    liftIO $ Storage.writeCached (stDirCache st) (stStorage st) key next
                     liftIO $ Bus.publish (stBus st) "message.part.removed" (object ["sessionID" .= sid, "messageID" .= msgId, "partID" .= partId])
                     return True
 
@@ -1290,7 +1290,7 @@ sessionMessagePartUpdateHandler st sid msgId partId input = do
                 Nothing -> throwError err404
                 Just parts -> do
                     let next = msg{msgParts = parts}
-                    liftIO $ Storage.write (stStorage st) key next
+                    liftIO $ Storage.writeCached (stDirCache st) (stStorage st) key next
                     let mpart = Parts.findPart partId parts
                     case mpart of
                         Nothing -> throwError err404
@@ -1330,7 +1330,7 @@ sessionPromptAsyncHandler st sid input = liftIO $ do
     reqId <- RequestStore.generateId
     let job = PromptAsync.PromptAsyncJob reqId sid input
     let payload = PromptAsync.queuedPayload sid reqId input
-    Storage.write (stStorage st) (PromptAsync.promptAsyncKey sid reqId) payload
+    Storage.writeCached (stDirCache st) (stStorage st) (PromptAsync.promptAsyncKey sid reqId) payload
     appendPromptAsyncIndex (stStorage st) sid reqId
     atomically $ writeTQueue (stPromptAsyncQueue st) job
     Bus.publish (stBus st) "prompt.async.queued" payload
@@ -1352,13 +1352,13 @@ processPromptAsync st job = do
     let sid = PromptAsync.pajSessionId job
     let reqId = PromptAsync.pajRequestId job
     let started = PromptAsync.startedPayload sid reqId
-    Storage.write (stStorage st) (PromptAsync.promptAsyncKey sid reqId) started
+    Storage.writeCached (stDirCache st) (stStorage st) (PromptAsync.promptAsyncKey sid reqId) started
     Bus.publish (stBus st) "prompt.async.started" started
     result <-
         (Just <$> createMessageIO st sid (PromptAsync.pajInput job))
             `catch` \(err :: SomeException) -> do
                 let payload = PromptAsync.failedPayload sid reqId (T.pack (show err))
-                Storage.write (stStorage st) (PromptAsync.promptAsyncKey sid reqId) payload
+                Storage.writeCached (stDirCache st) (stStorage st) (PromptAsync.promptAsyncKey sid reqId) payload
                 Bus.publish (stBus st) "prompt.async.failed" payload
                 pure Nothing
     case result of
@@ -1366,7 +1366,7 @@ processPromptAsync st job = do
         Just msg -> do
             let mid = messageInfoId (msgInfo msg)
             let payload = PromptAsync.completedPayload sid reqId mid
-            Storage.write (stStorage st) (PromptAsync.promptAsyncKey sid reqId) payload
+            Storage.writeCached (stDirCache st) (stStorage st) (PromptAsync.promptAsyncKey sid reqId) payload
             Bus.publish (stBus st) "prompt.async.completed" payload
 
 appendPromptAsyncIndex :: Storage.StorageConfig -> Text -> Text -> IO ()
@@ -1493,7 +1493,7 @@ completeMessage st sid msgId parentMsgId providerId modelId agentName startTime 
                         AssistantInfo ami{amiTime = MessageTime startTime (Just endTime), amiFinish = Just "end_turn"}
                     other -> other
             let updatedMsg = storedMsg{msgInfo = updatedInfo}
-            Storage.write (stStorage st) msgKey updatedMsg
+            Storage.writeCached (stDirCache st) (stStorage st) msgKey updatedMsg
         Nothing -> Log.logMsg lg Katip.WarningS $ "Could not find message to mark complete: " <> msgId
 
     -- Publish completed message info
@@ -1593,7 +1593,7 @@ lspHandler st = liftIO $ do
 vcsHandler :: AppState -> Handler VcsInfo
 vcsHandler st = liftIO $ do
     let root = unpack (stDirectory st)
-    branchName <- VcsStatus.loadBranch root
+    branchName <- VcsStatus.loadBranch (stExeCache st) root
     return $ VcsInfo branchName
 
 permissionHandler :: AppState -> Maybe Text -> Handler [Value]
@@ -1652,7 +1652,7 @@ findSymbolHandler st mQuery mDir = liftIO $ do
 fileStatusHandler :: AppState -> Maybe Text -> Maybe Text -> Handler [Value]
 fileStatusHandler st mDir mPath = liftIO $ do
     let base = maybe (unpack (stDirectory st)) unpack mDir
-    statuses <- VcsStatus.loadStatus base
+    statuses <- VcsStatus.loadStatus (stExeCache st) base
     case mPath of
         Nothing -> return $ map Data.Aeson.toJSON statuses
         Just path -> do
@@ -1748,7 +1748,7 @@ skillHandler st mDir = liftIO $ do
 formatterHandler :: AppState -> Maybe Text -> Handler [Formatter.FormatterStatus]
 formatterHandler st mDir = liftIO $ do
     let dir = maybe (unpack (stDirectory st)) unpack mDir
-    Formatter.statusFor (stDhallCache st) dir
+    Formatter.statusFor (stDhallCache st) (stExeCache st) dir
 
 experimentalToolIdsHandler :: Handler [Text]
 experimentalToolIdsHandler = return $ map ToolT.tdName Tool.allTools

@@ -3,7 +3,6 @@
 
 module Integration.ApiCompliance where
 
-import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson

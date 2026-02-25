@@ -7,6 +7,7 @@ module State (
     initialStateNoProxy,
     initialStateNoProxyWithHome,
     initialStateNoProxyWithCache,
+    initialStateNoProxyWithCaches,
 
     -- * Agent tracking
     registerAgent,
@@ -24,6 +25,7 @@ import Data.Text (Text)
 import Bus.Bus qualified as Bus
 import Config.Dhall qualified as Dhall
 import Data.Text qualified as Text
+import Formatter.Status qualified as Formatter
 import Katip qualified
 import Log qualified
 import Prompt.Async (PromptAsyncJob)
@@ -49,6 +51,8 @@ data AppState = AppState
     , stActiveAgents :: TVar (Map Text ThreadId) -- Active agent threads by session ID
     , stIdGen :: Identifier.IdGenState -- Monotonic ID generator state
     , stDhallCache :: Dhall.DhallCache -- Cached Dhall config loader
+    , stExeCache :: Formatter.ExeCache -- Cached executable lookups
+    , stDirCache :: Storage.DirCache -- Cached directory existence checks
     }
 
 -- | Initialize a new state with optional proxy and home directory override
@@ -60,12 +64,19 @@ mkAppState proxy homeDir storageDir projectID directory logger = do
 -- | Initialize a new state with optional proxy, home directory override, and shared DhallCache
 mkAppStateWithCache :: Maybe Proxy.ProxyServer -> Dhall.DhallCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
 mkAppStateWithCache proxy dhallCache homeDir storageDir projectID directory logger = do
+    exeCache <- Formatter.newExeCache
+    mkAppStateWithCaches proxy dhallCache exeCache homeDir storageDir projectID directory logger
+
+-- | Initialize a new state with optional proxy, home directory override, and shared caches
+mkAppStateWithCaches :: Maybe Proxy.ProxyServer -> Dhall.DhallCache -> Formatter.ExeCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
+mkAppStateWithCaches proxy dhallCache exeCache homeDir storageDir projectID directory logger = do
     bus <- Bus.newBus
     eventChan <- newBroadcastTChanIO
     ptyManager <- Pty.newManager (Text.unpack directory)
     promptQueue <- newTQueueIO
     activeAgents <- newTVarIO Map.empty
     idGen <- Identifier.newIdGenState
+    dirCache <- Storage.newDirCache
 
     -- Subscribe bus to also write to event channel for SSE
     _ <- Bus.subscribeAll bus $ \event -> do
@@ -88,6 +99,8 @@ mkAppStateWithCache proxy dhallCache homeDir storageDir projectID directory logg
             , stActiveAgents = activeAgents
             , stIdGen = idGen
             , stDhallCache = dhallCache
+            , stExeCache = exeCache
+            , stDirCache = dirCache
             }
 
 -- | Initialize a new state with MITM proxy
@@ -111,6 +124,10 @@ initialStateNoProxyWithHome = mkAppState Nothing
 -- | Initialize state without proxy, with shared DhallCache (for tests)
 initialStateNoProxyWithCache :: Dhall.DhallCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
 initialStateNoProxyWithCache = mkAppStateWithCache Nothing
+
+-- | Initialize state without proxy, with shared DhallCache and ExeCache (for tests)
+initialStateNoProxyWithCaches :: Dhall.DhallCache -> Formatter.ExeCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
+initialStateNoProxyWithCaches = mkAppStateWithCaches Nothing
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Agent Thread Tracking

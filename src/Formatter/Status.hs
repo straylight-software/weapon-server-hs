@@ -7,22 +7,26 @@ module Formatter.Status (
     statusForConfig,
     baseFormatters,
     formattersFor,
+
+    -- * Executable cache (re-exported from Util.ExeCache)
+    ExeCache,
+    newExeCache,
 )
 where
 
 import Config.Config qualified as Config
 import Config.Types qualified as CT
 import Data.Aeson (ToJSON (..), object, (.=))
-
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import System.Directory (findExecutable)
+import Util.ExeCache (ExeCache, findExecutableCached, newExeCache)
 
 data FormatterInfo = FormatterInfo
     { fiName :: Text
     , fiExtensions :: [Text]
-    , fiEnabled :: FilePath -> IO Bool
+    , fiExeName :: String
+    -- ^ Executable name to check
     }
 
 data FormatterStatus = FormatterStatus
@@ -40,18 +44,18 @@ instance ToJSON FormatterStatus where
             , "enabled" .= fsEnabled status
             ]
 
--- | Get formatter status (requires DhallCache)
-statusFor :: Config.DhallCache -> FilePath -> IO [FormatterStatus]
-statusFor cache dir = do
-    cfg <- Config.load cache dir
-    statusForConfig dir cfg
+-- | Get formatter status (requires DhallCache and ExeCache)
+statusFor :: Config.DhallCache -> ExeCache -> FilePath -> IO [FormatterStatus]
+statusFor dhallCache exeCache dir = do
+    cfg <- Config.load dhallCache dir
+    statusForConfig exeCache dir cfg
 
-statusForConfig :: FilePath -> CT.Config -> IO [FormatterStatus]
-statusForConfig dir cfg = mapM (toStatus dir) (formattersFor cfg)
+statusForConfig :: ExeCache -> FilePath -> CT.Config -> IO [FormatterStatus]
+statusForConfig exeCache _dir cfg = mapM (toStatus exeCache) (formattersFor cfg)
 
-toStatus :: FilePath -> FormatterInfo -> IO FormatterStatus
-toStatus dir info = do
-    enabled <- fiEnabled info dir
+toStatus :: ExeCache -> FormatterInfo -> IO FormatterStatus
+toStatus exeCache info = do
+    enabled <- isJust <$> findExecutableCached exeCache (fiExeName info)
     pure $
         FormatterStatus
             { fsName = fiName info
@@ -74,24 +78,21 @@ baseFormatters =
     [ FormatterInfo
         { fiName = "prettier"
         , fiExtensions = [".js", ".ts", ".jsx", ".tsx", ".json", ".css", ".html", ".md"]
-        , fiEnabled = checkExe "prettier"
+        , fiExeName = "prettier"
         }
     , FormatterInfo
         { fiName = "black"
         , fiExtensions = [".py"]
-        , fiEnabled = checkExe "black"
+        , fiExeName = "black"
         }
     , FormatterInfo
         { fiName = "gofmt"
         , fiExtensions = [".go"]
-        , fiEnabled = checkExe "gofmt"
+        , fiExeName = "gofmt"
         }
     , FormatterInfo
         { fiName = "rustfmt"
         , fiExtensions = [".rs"]
-        , fiEnabled = checkExe "rustfmt"
+        , fiExeName = "rustfmt"
         }
     ]
-
-checkExe :: String -> FilePath -> IO Bool
-checkExe name _dir = isJust <$> findExecutable name

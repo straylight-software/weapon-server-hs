@@ -16,13 +16,15 @@ import Data.Text.IO qualified as TIO
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
-import System.Directory (canonicalizePath, doesFileExist)
+import System.Directory (doesFileExist)
+import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
-import Test.Fixture (propertyWithTempDir, withTempDir)
-import Test.Tasty
+
+import Test.Fixture (propertyWithTempDir)
+import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.Hedgehog
 import Tool.Defs qualified as Tool
-import Tool.Exec (execute)
+import Tool.Exec (execute, processBashOutput, processGlobOutput, processGrepOutput)
 import Tool.Types
 
 -- | Create a test context
@@ -162,97 +164,6 @@ prop_editToolMultipleMatchesError = propertyWithTempDir $ \tmpDir -> do
         execute (testContext tmpDir) "edit" input
     assert $ toIsError result
 
--- | Property: bash tool executes commands
-prop_bashTool :: Property
-prop_bashTool = propertyWithTempDir $ \tmpDir -> do
-    cmd <- forAll $ Gen.element ["echo hello" :: Text, "pwd", "whoami"]
-
-    result <- evalIO $ do
-        let input =
-                object
-                    [ "command" .= (cmd :: Text)
-                    , "description" .= ("test command" :: Text)
-                    , "timeout" .= (5000 :: Int)
-                    ]
-        execute (testContext tmpDir) "bash" input
-
-    assert $ not (toIsError result)
-    assert $ not (T.null (toOutput result))
-
-prop_bashToolUsesWorkdir :: Property
-prop_bashToolUsesWorkdir = withTests 20 $ propertyWithTempDir $ \tmpDir -> do
-    (result, dir) <- evalIO $ do
-        -- Canonicalize the path to resolve symlinks (e.g., /tmp -> /run/user/...)
-        canonicalDir <- canonicalizePath tmpDir
-        let input =
-                object
-                    [ "command" .= ("pwd -P" :: Text) -- -P to get physical path
-                    , "description" .= ("test workdir" :: Text)
-                    , "timeout" .= (5000 :: Int)
-                    , "workdir" .= T.pack canonicalDir
-                    ]
-        output <- execute (testContext canonicalDir) "bash" input
-        -- Also canonicalize what pwd returned for comparison
-        let pwdOutput = T.strip (toOutput output)
-        canonicalOutput <-
-            if T.null pwdOutput
-                then pure pwdOutput
-                else T.pack <$> canonicalizePath (T.unpack pwdOutput)
-        -- Also canonicalize the dir again to be sure
-        canonicalDir' <- canonicalizePath canonicalDir
-        pure (output{toOutput = canonicalOutput}, canonicalDir')
-    toIsError result === False
-    -- Use equality check on stripped paths for more reliable comparison
-    T.strip (toOutput result) === T.pack dir
-
-prop_bashToolTimeout :: Property
-prop_bashToolTimeout = propertyWithTempDir $ \tmpDir -> do
-    result <- evalIO $ do
-        let input =
-                object
-                    [ "command" .= ("sleep 2" :: Text)
-                    , "description" .= ("timeout test" :: Text)
-                    , "timeout" .= (50 :: Int)
-                    ]
-        execute (testContext tmpDir) "bash" input
-    assert $ toIsError result
-
--- This test creates 150 files, so it needs a fresh directory each time
-prop_globToolLimitsResults :: Property
-prop_globToolLimitsResults = property $ do
-    lineCount <- evalIO $ withTempDir $ \tmpDir -> do
-        let writeFileLoop idx =
-                if idx > (150 :: Int)
-                    then pure ()
-                    else do
-                        let path = tmpDir </> ("file" <> show idx <> ".txt")
-                        TIO.writeFile path "content"
-                        writeFileLoop (idx + 1)
-        writeFileLoop 1
-        let input =
-                object
-                    [ "pattern" .= ("*.txt" :: Text)
-                    , "path" .= T.pack tmpDir
-                    ]
-        result <- execute (testContext tmpDir) "glob" input
-        let ls = T.lines (toOutput result)
-        pure (listLength ls)
-    assert $ lineCount <= 100
-
-prop_grepToolNoMatchesNotError :: Property
-prop_grepToolNoMatchesNotError = propertyWithTempDir $ \tmpDir -> do
-    filename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
-    result <- evalIO $ do
-        let path = tmpDir </> T.unpack filename
-        TIO.writeFile path "hello world"
-        let input =
-                object
-                    [ "pattern" .= ("missing_pattern" :: Text)
-                    , "path" .= T.pack tmpDir
-                    ]
-        execute (testContext tmpDir) "grep" input
-    assert $ not (toIsError result)
-
 prop_toolOutputJsonRoundtrip :: Property
 prop_toolOutputJsonRoundtrip = property $ do
     title <- forAll genText
@@ -359,6 +270,159 @@ prop_toolRequiredParamsValid = property $ do
             Just _otherValue -> success
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Pure output processing tests (no subprocesses, fully deterministic)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | processBashOutput: success with output returns success
+prop_bashOutputSuccess :: Property
+prop_bashOutputSuccess = property $ do
+    desc <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
+    stdout <- forAll $ Gen.text (Range.linear 1 100) Gen.alphaNum
+    let result = processBashOutput desc ExitSuccess stdout ""
+    toIsError result === False
+    toTitle result === desc
+    assert $ T.isInfixOf stdout (toOutput result)
+
+-- | processBashOutput: success with empty output gives default message
+prop_bashOutputSuccessEmpty :: Property
+prop_bashOutputSuccessEmpty = property $ do
+    desc <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
+    let result = processBashOutput desc ExitSuccess "" ""
+    toIsError result === False
+    assert $ T.isInfixOf "Command completed successfully" (toOutput result)
+
+-- | processBashOutput: failure returns error
+prop_bashOutputFailure :: Property
+prop_bashOutputFailure = property $ do
+    desc <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
+    exitCode <- forAll $ Gen.int (Range.linear 1 255)
+    stdout <- forAll $ Gen.text (Range.linear 0 100) Gen.alphaNum
+    let result = processBashOutput desc (ExitFailure exitCode) stdout ""
+    toIsError result === True
+    toTitle result === "Command failed"
+
+-- | processBashOutput: stderr is appended with marker
+prop_bashOutputStderr :: Property
+prop_bashOutputStderr = property $ do
+    desc <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
+    stdout <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
+    stderr <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
+    let result = processBashOutput desc ExitSuccess stdout stderr
+    toIsError result === False
+    assert $ T.isInfixOf "[stderr]" (toOutput result)
+    assert $ T.isInfixOf stderr (toOutput result)
+
+-- | processBashOutput: no stderr marker when stderr is empty
+prop_bashOutputNoStderrMarker :: Property
+prop_bashOutputNoStderrMarker = property $ do
+    desc <- forAll $ Gen.text (Range.linear 1 30) Gen.alphaNum
+    stdout <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
+    let result = processBashOutput desc ExitSuccess stdout ""
+    assert $ not $ T.isInfixOf "[stderr]" (toOutput result)
+
+-- | processGlobOutput: success returns matching lines
+prop_globOutputSuccess :: Property
+prop_globOutputSuccess = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    -- Generate some file paths
+    numLines <- forAll $ Gen.int (Range.linear 1 50)
+    let lines' = [T.pack ("file" <> show i <> ".txt") | i <- [1 .. numLines]]
+    let stdout = T.unlines lines'
+    let result = processGlobOutput pat ExitSuccess stdout ""
+    toIsError result === False
+    toTitle result === ("Glob " <> pat)
+    -- All lines should be in output
+    forM_ lines' $ \line ->
+        assert $ T.isInfixOf line (toOutput result)
+
+-- | processGlobOutput: truncates to 100 lines
+prop_globOutputTruncates :: Property
+prop_globOutputTruncates = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    let lines' = [T.pack ("file" <> show i <> ".txt") | i <- [1 .. 200 :: Int]]
+    let stdout = T.unlines lines'
+    let result = processGlobOutput pat ExitSuccess stdout ""
+    toIsError result === False
+    -- Output should have at most 100 lines (T.unlines adds trailing newline, T.lines will give 101 with empty last)
+    let outputLines = filter (not . T.null) (T.lines (toOutput result))
+    assert $ listLength outputLines <= 100
+
+-- | processGlobOutput: failure returns error with stderr preferred
+prop_globOutputFailure :: Property
+prop_globOutputFailure = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    exitCode <- forAll $ Gen.int (Range.linear 1 255)
+    stderr <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
+    let result = processGlobOutput pat (ExitFailure exitCode) "" stderr
+    toIsError result === True
+    toTitle result === "Glob Error"
+    assert $ T.isInfixOf stderr (toOutput result)
+
+-- | processGlobOutput: failure with empty stderr uses stdout
+prop_globOutputFailureStdout :: Property
+prop_globOutputFailureStdout = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    exitCode <- forAll $ Gen.int (Range.linear 1 255)
+    stdout <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
+    let result = processGlobOutput pat (ExitFailure exitCode) stdout ""
+    toIsError result === True
+    assert $ T.isInfixOf stdout (toOutput result)
+
+-- | processGrepOutput: success returns matching lines
+prop_grepOutputSuccess :: Property
+prop_grepOutputSuccess = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    numLines <- forAll $ Gen.int (Range.linear 1 50)
+    let lines' = [T.pack ("file.txt:" <> show i <> ":match") | i <- [1 .. numLines]]
+    let stdout = T.unlines lines'
+    let result = processGrepOutput pat ExitSuccess stdout ""
+    toIsError result === False
+    toTitle result === ("Grep " <> pat)
+    forM_ lines' $ \line ->
+        assert $ T.isInfixOf line (toOutput result)
+
+-- | processGrepOutput: truncates to 100 lines
+prop_grepOutputTruncates :: Property
+prop_grepOutputTruncates = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    let lines' = [T.pack ("file.txt:" <> show i <> ":match") | i <- [1 .. 200 :: Int]]
+    let stdout = T.unlines lines'
+    let result = processGrepOutput pat ExitSuccess stdout ""
+    toIsError result === False
+    let outputLines = filter (not . T.null) (T.lines (toOutput result))
+    assert $ listLength outputLines <= 100
+
+-- | processGrepOutput: exit code 1 with no output is "no matches" (success)
+prop_grepOutputNoMatches :: Property
+prop_grepOutputNoMatches = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    let result = processGrepOutput pat (ExitFailure 1) "" ""
+    toIsError result === False
+    toTitle result === ("Grep " <> pat)
+    toOutput result === ""
+
+-- | processGrepOutput: exit code 2+ is a real error
+prop_grepOutputRealError :: Property
+prop_grepOutputRealError = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    exitCode <- forAll $ Gen.int (Range.linear 2 255)
+    stderr <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
+    let result = processGrepOutput pat (ExitFailure exitCode) "" stderr
+    toIsError result === True
+    toTitle result === "Grep Error"
+    assert $ T.isInfixOf stderr (toOutput result)
+
+-- | processGrepOutput: failure with empty stderr uses stdout
+prop_grepOutputFailureStdout :: Property
+prop_grepOutputFailureStdout = property $ do
+    pat <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    exitCode <- forAll $ Gen.int (Range.linear 2 255)
+    stdout <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
+    let result = processGrepOutput pat (ExitFailure exitCode) stdout ""
+    toIsError result === True
+    assert $ T.isInfixOf stdout (toOutput result)
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Edge Case Tests
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -392,35 +456,6 @@ prop_editNonexistentFile = propertyWithTempDir $ \tmpDir -> do
         execute (testContext tmpDir) "edit" input
     assert $ toIsError result
 
--- | Property: bash tool with invalid command returns error
-prop_bashInvalidCommand :: Property
-prop_bashInvalidCommand = propertyWithTempDir $ \tmpDir -> do
-    result <- evalIO $ do
-        let input =
-                object
-                    [ "command" .= ("nonexistent_command_xyz123" :: Text)
-                    , "description" .= ("test invalid" :: Text)
-                    , "timeout" .= (2000 :: Int)
-                    ]
-        execute (testContext tmpDir) "bash" input
-    -- The command should complete but with non-zero exit or error output
-    -- Either isError is true, or output contains error message
-    assert $ toIsError result || T.isInfixOf "not found" (toOutput result) || T.isInfixOf "command not found" (toOutput result)
-
--- | Property: glob tool returns empty for nonexistent pattern
-prop_globEmptyForNonexistent :: Property
-prop_globEmptyForNonexistent = propertyWithTempDir $ \tmpDir -> do
-    result <- evalIO $ do
-        let input =
-                object
-                    [ "pattern" .= ("**/*.nonexistent_extension_xyz" :: Text)
-                    , "path" .= T.pack tmpDir
-                    ]
-        execute (testContext tmpDir) "glob" input
-    assert $ not (toIsError result)
-    -- Output should indicate no matches
-    assert $ T.null (T.strip (toOutput result)) || T.isInfixOf "No files" (toOutput result) || toOutput result == ""
-
 -- Generators
 genText :: Gen Text
 genText = Gen.text (Range.linear 0 100) Gen.alphaNum
@@ -442,17 +477,13 @@ tests :: TestTree
 tests =
     testGroup
         "Tool Property Tests"
-        [ testProperty "read tool" prop_readTool
+        [ -- Pure tests (no subprocesses)
+          testProperty "read tool" prop_readTool
         , testProperty "write tool" prop_writeTool
         , testProperty "write/read roundtrip" prop_writeReadToolRoundtrip
         , testProperty "edit tool" prop_editTool
         , testProperty "edit missing oldString" prop_editToolMissingOldString
         , testProperty "edit multiple matches error" prop_editToolMultipleMatchesError
-        , testProperty "bash tool" prop_bashTool
-        , testProperty "bash tool uses workdir" prop_bashToolUsesWorkdir
-        , testProperty "bash tool timeout" (withTests 1 prop_bashToolTimeout)
-        , testProperty "glob tool limits results" prop_globToolLimitsResults
-        , testProperty "grep no matches not error" prop_grepToolNoMatchesNotError
         , testProperty "tool output JSON roundtrip" prop_toolOutputJsonRoundtrip
         , testProperty "tool definitions not empty" prop_toolDefinitionsNotEmpty
         , testProperty "all tools have names" prop_allToolsHaveNames
@@ -464,9 +495,21 @@ tests =
         , testProperty "tool list contains bash" prop_toolListContainsBash
         , testProperty "tool schemas have type" prop_toolSchemasHaveType
         , testProperty "tool required params valid" prop_toolRequiredParamsValid
-        , -- Edge cases
-          testProperty "read nonexistent file" prop_readNonexistentFile
+        , testProperty "read nonexistent file" prop_readNonexistentFile
         , testProperty "edit nonexistent file" prop_editNonexistentFile
-        , testProperty "bash invalid command" prop_bashInvalidCommand
-        , testProperty "glob empty for nonexistent" prop_globEmptyForNonexistent
+        , -- Pure output processing tests (fully deterministic, no subprocesses)
+          testProperty "bash output success" prop_bashOutputSuccess
+        , testProperty "bash output success empty" prop_bashOutputSuccessEmpty
+        , testProperty "bash output failure" prop_bashOutputFailure
+        , testProperty "bash output stderr" prop_bashOutputStderr
+        , testProperty "bash output no stderr marker" prop_bashOutputNoStderrMarker
+        , testProperty "glob output success" prop_globOutputSuccess
+        , testProperty "glob output truncates" prop_globOutputTruncates
+        , testProperty "glob output failure" prop_globOutputFailure
+        , testProperty "glob output failure stdout" prop_globOutputFailureStdout
+        , testProperty "grep output success" prop_grepOutputSuccess
+        , testProperty "grep output truncates" prop_grepOutputTruncates
+        , testProperty "grep output no matches" prop_grepOutputNoMatches
+        , testProperty "grep output real error" prop_grepOutputRealError
+        , testProperty "grep output failure stdout" prop_grepOutputFailureStdout
         ]

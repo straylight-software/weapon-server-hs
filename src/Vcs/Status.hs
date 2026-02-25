@@ -12,6 +12,7 @@ import Data.Aeson (ToJSON (..), object, (.=))
 import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
+import Util.ExeCache (ExeCache)
 import Util.Git (runGit, withGit)
 
 data FileStatus = FileStatus
@@ -52,15 +53,15 @@ parsePorcelain input =
         | "M" `T.isInfixOf` code = "modified"
         | otherwise = "unknown"
 
-loadStatus :: FilePath -> IO [FileStatus]
-loadStatus root = withGit [] $ do
-    mout <- runGit root ["status", "--porcelain"]
+loadStatus :: ExeCache -> FilePath -> IO [FileStatus]
+loadStatus exeCache root = withGit exeCache [] $ do
+    mout <- runGit exeCache root ["status", "--porcelain"]
     pure $ maybe [] parsePorcelain mout
 
-loadBranch :: FilePath -> IO (Maybe Text)
-loadBranch root = withGit Nothing $ do
-    symbolicRef <- runGit root ["symbolic-ref", "--short", "HEAD"]
-    revParse <- runGit root ["rev-parse", "--abbrev-ref", "HEAD"]
+loadBranch :: ExeCache -> FilePath -> IO (Maybe Text)
+loadBranch exeCache root = withGit exeCache Nothing $ do
+    symbolicRef <- runGit exeCache root ["symbolic-ref", "--short", "HEAD"]
+    revParse <- runGit exeCache root ["rev-parse", "--abbrev-ref", "HEAD"]
     let result = (symbolicRef <|> revParse) >>= parseBranchName
     pure result
   where

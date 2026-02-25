@@ -2,6 +2,7 @@
 module Main where
 
 import Config.Dhall qualified as Dhall
+import Formatter.Status qualified as Formatter
 import Integration.HaskemathesisTest qualified as HaskemathesisTest
 import Property.AgentLogicProps qualified as AgentLogicProps
 import Property.AgentTypesProps qualified as AgentTypesProps
@@ -44,7 +45,6 @@ import Property.StorageKeyProps qualified as StorageKeyProps
 import Property.StorageProps qualified as StorageProps
 import Property.TodoProps qualified as TodoProps
 import Property.ToolProps qualified as ToolProps
-import Property.ToolStreamingProps qualified as ToolStreamingProps
 import Property.ToolTypesProps qualified as ToolTypesProps
 import Property.TuiProps qualified as TuiProps
 import Property.VcsStatusProps qualified as VcsStatusProps
@@ -52,6 +52,7 @@ import System.Posix.Signals (Handler (Ignore), installHandler, sigHUP, sigTERM)
 import Test.Tasty
 import Test.Tasty.Hspec
 import Unit.ApiSpec qualified as ApiSpec
+import Unit.ToolStreamingSpec qualified as ToolStreamingSpec
 
 main :: IO ()
 main = do
@@ -61,11 +62,13 @@ main = do
     _ <- installHandler sigTERM Ignore Nothing
     _ <- installHandler sigHUP Ignore Nothing
 
-    -- Create shared DhallCache once for all tests that need it
-    -- This avoids re-parsing Dhall config files (~75% speedup)
+    -- Create shared caches once for all tests that need them
+    -- This avoids re-parsing Dhall config files and re-searching PATH (~75% speedup)
     dhallCache <- Dhall.newDhallCache
+    exeCache <- Formatter.newExeCache
 
     apiTests <- testSpec "API Unit Tests" (ApiSpec.spec dhallCache)
+    toolStreamingTests <- testSpec "Tool Streaming Unit Tests" ToolStreamingSpec.spec
     haskemathesisTests <- HaskemathesisTest.tests dhallCache
     defaultMain $
         testGroup
@@ -78,10 +81,10 @@ main = do
                 , ConfigProps.tests
                 , DiffProps.tests
                 , EventProps.tests
-                , FormatterProps.tests dhallCache
+                , FormatterProps.tests dhallCache exeCache
                 , FindParseProps.tests
                 , ExperimentalProps.tests
-                , HandlerProps.tests dhallCache
+                , HandlerProps.tests dhallCache exeCache
                 , HealthProps.tests
                 , IdentifierProps.tests
                 , PathProps.tests
@@ -89,7 +92,6 @@ main = do
                 , SessionStatusProps.tests
                 , SkillProps.tests dhallCache
                 , ToolProps.tests
-                , ToolStreamingProps.tests
                 , MessageProps.tests
                 , MessagePartProps.tests
                 , OAuthProps.tests
@@ -119,5 +121,6 @@ main = do
                 , ProxyTypesProps.tests
                 ]
             , apiTests
+            , toolStreamingTests
             , haskemathesisTests
             ]

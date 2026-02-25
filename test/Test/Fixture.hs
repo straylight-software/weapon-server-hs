@@ -2,8 +2,8 @@
 
 {- | Shared test fixtures for reducing temp directory churn
 
-Instead of creating a temp directory per property iteration (100-1000x per test),
-we create one per property and clean files between iterations.
+Each property test gets a unique subdirectory under a shared root.
+The root persists across iterations; subdirs are created cheaply per iteration.
 -}
 module Test.Fixture (
     -- * Temp directory helpers
@@ -33,11 +33,9 @@ import System.Directory (
 import System.FilePath ((</>))
 import System.IO.Temp (createTempDirectory)
 
-{- | The base temp directory - use /dev/shm on Linux for in-memory speed
-Falls back to /tmp if /dev/shm is not available
--}
+-- | The base temp directory for test fixtures
 tmpBase :: FilePath
-tmpBase = "/dev/shm"
+tmpBase = "/tmp"
 
 {- | Create a temporary directory for testing (single use)
 This is for tests that need a fresh directory each time
@@ -84,14 +82,13 @@ withFixture setup teardown prop = property $ do
     evalIO (teardown fixture)
     pure result
 
-{- | Convenience: property with a temp directory created once
-Files created during each iteration persist, so tests should either:
-1. Use unique filenames per iteration (via forAll generators)
-2. Clean up after themselves
-3. Not care about leftover files
+{- | Property with a fresh temp directory per iteration.
+Each Hedgehog iteration gets its own isolated temp directory that is
+cleaned up after the iteration completes.
 -}
 propertyWithTempDir :: PropertyWithFixture FilePath -> Property
-propertyWithTempDir =
-    withFixture
-        (createTempDirectory tmpBase "prop")
-        removeDirectoryRecursive
+propertyWithTempDir prop = property $ do
+    tmpDir <- evalIO $ createTempDirectory tmpBase "prop"
+    result <- prop tmpDir
+    evalIO $ removeDirectoryRecursive tmpDir
+    pure result

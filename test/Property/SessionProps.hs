@@ -4,7 +4,6 @@
 module Property.SessionProps where
 
 import Bus.Bus qualified as Bus
-
 import Control.Monad (replicateM, replicateM_)
 import Data.List qualified as List
 import Data.Ord (Down (..))
@@ -15,48 +14,35 @@ import Hedgehog.Range qualified as Range
 import Session.Session qualified as Session
 import Session.Types qualified as ST
 import Storage.Storage qualified as Storage
-import System.Directory (removeDirectoryRecursive)
-import System.IO.Temp (createTempDirectory)
+import Test.Fixture (propertyWithTempDir)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Util.Identifier qualified as Identifier
 import Util.StorageKeys (sessionKey)
 
--- | Create a test session context
-withTestContext :: (Session.SessionContext -> IO a) -> IO a
-withTestContext action = do
-    tmpDir <- createTempDirectory "/tmp" "session-test"
+-- | Create a session context from a temp directory
+mkContext :: FilePath -> IO Session.SessionContext
+mkContext tmpDir = do
     Storage.withStorage tmpDir $ \storage -> do
         bus <- Bus.newBus
         idGen <- Identifier.newIdGenState
-        let ctx =
-                Session.SessionContext
-                    { Session.scStorage = storage
-                    , Session.scBus = bus
-                    , Session.scProjectID = "test_project"
-                    , Session.scDirectory = T.pack tmpDir
-                    , Session.scVersion = "0.1.0"
-                    , Session.scIdGen = idGen
-                    }
-        result <- action ctx
-        removeDirectoryRecursive tmpDir
-        pure result
+        pure
+            Session.SessionContext
+                { Session.scStorage = storage
+                , Session.scBus = bus
+                , Session.scProjectID = "test_project"
+                , Session.scDirectory = T.pack tmpDir
+                , Session.scVersion = "0.1.0"
+                , Session.scIdGen = idGen
+                }
 
 -- | Property: create then get returns the session
 prop_createGet :: Property
-prop_createGet = property $ do
+prop_createGet = propertyWithTempDir $ \tmpDir -> do
     title <- forAll $ Gen.maybe $ Gen.text (Range.linear 1 50) Gen.alphaNum
-
-    session <- evalIO $ withTestContext $ \ctx -> do
-        let input =
-                ST.CreateSessionInput
-                    { ST.csiTitle = title
-                    , ST.csiParentID = Nothing
-                    }
-        Session.create ctx input
-
-    -- Verify session was created with correct properties
-    -- When title is Nothing, a default title is generated
+    session <- evalIO $ do
+        ctx <- mkContext tmpDir
+        Session.create ctx ST.CreateSessionInput{ST.csiTitle = title, ST.csiParentID = Nothing}
     case title of
         Just t -> ST.sessionTitle session === t
         Nothing -> assert $ T.isPrefixOf "New session - " (ST.sessionTitle session)
@@ -65,235 +51,172 @@ prop_createGet = property $ do
 
 -- | Property: get non-existent session returns Nothing
 prop_getNonExistent :: Property
-prop_getNonExistent = property $ do
+prop_getNonExistent = propertyWithTempDir $ \tmpDir -> do
     sid <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
-
-    result <- evalIO $ withTestContext $ \ctx ->
+    result <- evalIO $ do
+        ctx <- mkContext tmpDir
         Session.get ctx sid
-
     result === Nothing
 
 -- | Property: delete removes the session
 prop_deleteRemoves :: Property
-prop_deleteRemoves = property $ do
+prop_deleteRemoves = propertyWithTempDir $ \tmpDir -> do
     title <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
-
-    (created, afterDelete) <- evalIO $ withTestContext $ \ctx -> do
-        let input =
-                ST.CreateSessionInput
-                    { ST.csiTitle = Just title
-                    , ST.csiParentID = Nothing
-                    }
-        session <- Session.create ctx input
-        let sid = ST.sessionId session
-        _ <- Session.delete ctx sid
-        afterGet <- Session.get ctx sid
+    (created, afterDelete) <- evalIO $ do
+        ctx <- mkContext tmpDir
+        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just title, ST.csiParentID = Nothing}
+        _ <- Session.delete ctx (ST.sessionId session)
+        afterGet <- Session.get ctx (ST.sessionId session)
         pure (session, afterGet)
-
-    -- Session should exist after creation
     assert $ T.isPrefixOf "ses_" (ST.sessionId created)
-    -- Session should not exist after deletion
     afterDelete === Nothing
 
 -- | Property: list returns created sessions
 prop_listReturnsCreated :: Property
-prop_listReturnsCreated = property $ do
+prop_listReturnsCreated = propertyWithTempDir $ \tmpDir -> do
     count <- forAll $ Gen.int (Range.linear 1 5)
-
-    sessions <- evalIO $ withTestContext $ \ctx -> do
-        -- Create multiple sessions
-        replicateM_ count $ do
-            let input =
-                    ST.CreateSessionInput
-                        { ST.csiTitle = Just "test"
-                        , ST.csiParentID = Nothing
-                        }
-            Session.create ctx input
-        -- List all sessions
+    sessions <- evalIO $ do
+        ctx <- mkContext tmpDir
+        replicateM_ count $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
         Session.list ctx Nothing Nothing Nothing Nothing Nothing
-
-    -- Should find all created sessions
     listLength sessions === count
 
+-- | Property: list contains the created session ID
 prop_listContainsCreatedId :: Property
-prop_listContainsCreatedId = property $ do
-    (created, sessions) <- evalIO $ withTestContext $ \ctx -> do
-        session <-
-            Session.create
-                ctx
-                ST.CreateSessionInput
-                    { ST.csiTitle = Just "test"
-                    , ST.csiParentID = Nothing
-                    }
+prop_listContainsCreatedId = propertyWithTempDir $ \tmpDir -> do
+    (created, sessions) <- evalIO $ do
+        ctx <- mkContext tmpDir
+        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
         allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
         pure (session, allSessions)
-    assert $ any (\s -> ST.sessionId s == ST.sessionId created) sessions
+    let createdId = ST.sessionId created
+    annotate $ "Created ID: " ++ T.unpack createdId
+    annotate $ "Listed count: " ++ show (listLength sessions)
+    assert $ any (\s -> ST.sessionId s == createdId) sessions
 
+-- | Property: update summary/share/revert
 prop_updateSummaryShareRevert :: Property
-prop_updateSummaryShareRevert = property $ do
+prop_updateSummaryShareRevert = propertyWithTempDir $ \tmpDir -> do
     msgId <- forAll $ Gen.text (Range.linear 3 20) Gen.alphaNum
     url <- forAll $ Gen.text (Range.linear 3 20) Gen.alphaNum
-    (summary, share, revert) <- evalIO $ withTestContext $ \ctx -> do
-        session <-
-            Session.create
-                ctx
-                ST.CreateSessionInput
-                    { ST.csiTitle = Just "test"
-                    , ST.csiParentID = Nothing
-                    }
+    (summary, share, revert) <- evalIO $ do
+        ctx <- mkContext tmpDir
+        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
         let sid = ST.sessionId session
-        let summary = ST.SessionSummary 1 2 (Just 3)
-        let share = ST.SessionShare url
-        let revert = ST.SessionRevert msgId Nothing Nothing Nothing
-        _ <-
-            Session.update
-                ctx
-                sid
-                ( \s ->
-                    s
-                        { ST.sessionSummary = Just summary
-                        , ST.sessionShare = Just share
-                        , ST.sessionRevert = Just revert
-                        }
-                )
+        let s = ST.SessionSummary 1 2 (Just 3)
+        let sh = ST.SessionShare url
+        let r = ST.SessionRevert msgId Nothing Nothing Nothing
+        _ <- Session.update ctx sid (\sess -> sess{ST.sessionSummary = Just s, ST.sessionShare = Just sh, ST.sessionRevert = Just r})
         updated <- Session.get ctx sid
         case updated of
             Nothing -> fail "session not found"
-            Just s -> pure (ST.sessionSummary s, ST.sessionShare s, ST.sessionRevert s)
+            Just sess -> pure (ST.sessionSummary sess, ST.sessionShare sess, ST.sessionRevert sess)
     summary === Just (ST.SessionSummary 1 2 (Just 3))
     share === Just (ST.SessionShare url)
     revert === Just (ST.SessionRevert msgId Nothing Nothing Nothing)
 
 -- | Property: list with search filters by title (case-insensitive)
 prop_listSearchFilter :: Property
-prop_listSearchFilter = property $ do
-    (matching, nonMatching) <- evalIO $ withTestContext $ \ctx -> do
-        -- Create sessions with different titles
+prop_listSearchFilter = propertyWithTempDir $ \tmpDir -> do
+    (matching, nonMatching) <- evalIO $ do
+        ctx <- mkContext tmpDir
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Alpha Project", ST.csiParentID = Nothing}
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Beta Project", ST.csiParentID = Nothing}
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Gamma Task", ST.csiParentID = Nothing}
-        -- Search for "project" (case-insensitive)
-        matching <- Session.list ctx Nothing Nothing Nothing Nothing (Just "project")
-        nonMatching <- Session.list ctx Nothing Nothing Nothing Nothing (Just "delta")
-        pure (matching, nonMatching)
-    -- Should find 2 sessions matching "project"
+        m <- Session.list ctx Nothing Nothing Nothing Nothing (Just "project")
+        nm <- Session.list ctx Nothing Nothing Nothing Nothing (Just "delta")
+        pure (m, nm)
     listLength matching === 2
-    -- Should find 0 sessions matching "delta"
     listLength nonMatching === 0
 
 -- | Property: list with limit restricts results
 prop_listLimitFilter :: Property
-prop_listLimitFilter = property $ do
+prop_listLimitFilter = propertyWithTempDir $ \tmpDir -> do
     limitVal <- forAll $ Gen.int (Range.linear 1 3)
-    sessions <- evalIO $ withTestContext $ \ctx -> do
-        -- Create 5 sessions
+    sessions <- evalIO $ do
+        ctx <- mkContext tmpDir
         replicateM_ 5 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
-        -- List with limit
         Session.list ctx Nothing Nothing (Just limitVal) Nothing Nothing
-    -- Should return at most limitVal sessions
     assert $ listLength sessions <= limitVal
 
 -- | Property: list returns sessions ordered by updated timestamp (descending)
 prop_listSortedByUpdated :: Property
-prop_listSortedByUpdated = property $ do
+prop_listSortedByUpdated = propertyWithTempDir $ \tmpDir -> do
     shuffled <- forAll $ Gen.shuffle [10.0, 20.0, 30.0]
     let times = take 3 shuffled
-    listed <- evalIO $ withTestContext $ \ctx -> do
+    listed <- evalIO $ do
+        ctx <- mkContext tmpDir
         sessions <- replicateM 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
         let store = Session.scStorage ctx
         let projectId = Session.scProjectID ctx
-        let updatedSessions =
-                zipWith
-                    (\s t -> s{ST.sessionTime = ST.SessionTime t t Nothing Nothing})
-                    sessions
-                    times
-        mapM_
-            ( \s ->
-                Storage.write store (sessionKey projectId (ST.sessionId s)) s
-            )
-            updatedSessions
+        let updatedSessions = zipWith (\s t -> s{ST.sessionTime = ST.SessionTime t t Nothing Nothing}) sessions times
+        mapM_ (\s -> Storage.write store (sessionKey projectId (ST.sessionId s)) s) updatedSessions
         Session.list ctx Nothing Nothing Nothing Nothing Nothing
     let listedTimes = map (ST.stUpdated . ST.sessionTime) listed
     listedTimes === List.sortOn Down times
 
--- ═══════════════════════════════════════════════════════════════════════════
--- Edge Case Tests
--- ═══════════════════════════════════════════════════════════════════════════
-
 -- | Property: update on nonexistent session returns Nothing
 prop_updateNonexistent :: Property
-prop_updateNonexistent = property $ do
+prop_updateNonexistent = propertyWithTempDir $ \tmpDir -> do
     sid <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
-    result <- evalIO $ withTestContext $ \ctx ->
+    result <- evalIO $ do
+        ctx <- mkContext tmpDir
         Session.update ctx sid (\s -> s{ST.sessionTitle = "updated"})
     result === Nothing
 
 -- | Property: delete on nonexistent session returns False
 prop_deleteNonexistent :: Property
-prop_deleteNonexistent = property $ do
+prop_deleteNonexistent = propertyWithTempDir $ \tmpDir -> do
     sid <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
-    result <- evalIO $ withTestContext $ \ctx ->
+    result <- evalIO $ do
+        ctx <- mkContext tmpDir
         Session.delete ctx sid
     result === False
 
 -- | Property: list with roots=True filters out child sessions
 prop_listRootsFilter :: Property
-prop_listRootsFilter = property $ do
-    (rootCount, allCount) <- evalIO $ withTestContext $ \ctx -> do
-        -- Create a parent session
+prop_listRootsFilter = propertyWithTempDir $ \tmpDir -> do
+    (rootCount, allCount) <- evalIO $ do
+        ctx <- mkContext tmpDir
         parent <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "parent", ST.csiParentID = Nothing}
-        -- Create some root sessions
         replicateM_ 2 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "root", ST.csiParentID = Nothing}
-        -- Create a child session
         _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "child", ST.csiParentID = Just (ST.sessionId parent)}
-        -- List roots only
         roots <- Session.list ctx Nothing (Just True) Nothing Nothing Nothing
-        -- List all
         allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
         pure (listLength roots, listLength allSessions)
-    -- Should have 3 roots (parent + 2 roots) and 4 total (+ 1 child)
     rootCount === 3
     allCount === 4
 
+-- | Property: list with directory filter only returns sessions matching directory
+prop_listDirectoryFilter :: Property
+prop_listDirectoryFilter = propertyWithTempDir $ \tmpDir -> do
+    (matchCount, nonMatchCount, allCount) <- evalIO $ do
+        ctx <- mkContext tmpDir
+        replicateM_ 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        let dir = Session.scDirectory ctx
+        matching <- Session.list ctx (Just dir) Nothing Nothing Nothing Nothing
+        nonMatching <- Session.list ctx (Just "/nonexistent/path") Nothing Nothing Nothing Nothing
+        allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
+        pure (listLength matching, listLength nonMatching, listLength allSessions)
+    matchCount === 3
+    nonMatchCount === 0
+    allCount === 3
+
 -- | Property: touch updates the session timestamp
 prop_touchUpdatesTimestamp :: Property
-prop_touchUpdatesTimestamp = property $ do
-    (timeBefore, timeAfter) <- evalIO $ withTestContext $ \ctx -> do
+prop_touchUpdatesTimestamp = propertyWithTempDir $ \tmpDir -> do
+    (timeBefore, timeAfter) <- evalIO $ do
+        ctx <- mkContext tmpDir
         session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
         let sid = ST.sessionId session
-        let timeBefore = ST.stUpdated (ST.sessionTime session)
-        -- Small delay to ensure timestamp changes
+        let tb = ST.stUpdated (ST.sessionTime session)
         _ <- Session.touch ctx sid
         updated <- Session.get ctx sid
         case updated of
             Nothing -> fail "session not found"
-            Just s -> pure (timeBefore, ST.stUpdated (ST.sessionTime s))
-    -- Time should have been updated (or at least not decreased)
+            Just s -> pure (tb, ST.stUpdated (ST.sessionTime s))
     assert $ timeAfter >= timeBefore
 
--- | Property: list with directory filter only returns sessions matching directory
-prop_listDirectoryFilter :: Property
-prop_listDirectoryFilter = property $ do
-    (matchCount, nonMatchCount, allCount) <- evalIO $ withTestContext $ \ctx -> do
-        -- Create sessions (they will have the context's directory)
-        replicateM_ 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
-        -- Get the directory from context
-        let dir = Session.scDirectory ctx
-        -- List with matching directory
-        matching <- Session.list ctx (Just dir) Nothing Nothing Nothing Nothing
-        -- List with non-matching directory
-        nonMatching <- Session.list ctx (Just "/nonexistent/path") Nothing Nothing Nothing Nothing
-        -- List all (no directory filter)
-        allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
-        pure (listLength matching, listLength nonMatching, listLength allSessions)
-    -- Matching directory should return all sessions
-    matchCount === 3
-    -- Non-matching directory should return no sessions
-    nonMatchCount === 0
-    -- All sessions should be returned when no filter
-    allCount === 3
-
--- Generators
 -- Test tree
 tests :: TestTree
 tests =
@@ -308,8 +231,7 @@ tests =
         , testProperty "list search filter" prop_listSearchFilter
         , testProperty "list limit filter" prop_listLimitFilter
         , testProperty "list sorted by updated" prop_listSortedByUpdated
-        , -- Edge cases
-          testProperty "update nonexistent returns Nothing" prop_updateNonexistent
+        , testProperty "update nonexistent returns Nothing" prop_updateNonexistent
         , testProperty "delete nonexistent returns False" prop_deleteNonexistent
         , testProperty "list with roots filter" prop_listRootsFilter
         , testProperty "list with directory filter" prop_listDirectoryFilter

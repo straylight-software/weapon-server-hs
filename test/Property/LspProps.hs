@@ -46,6 +46,6 @@ tests :: TestTree
 tests =
     testGroup
         "LSP Property Tests"
-        [ testProperty "set/get diagnostics" (withTests 1000 prop_setGetDiagnostics)
-        , testProperty "file fallback" (withTests 1000 prop_getDiagnosticsFileFallback)
+        [ testProperty "set/get diagnostics" prop_setGetDiagnostics
+        , testProperty "file fallback" prop_getDiagnosticsFileFallback
         ]

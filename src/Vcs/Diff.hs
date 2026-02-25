@@ -16,8 +16,8 @@ import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Session.Types qualified as ST
-import System.Directory (findExecutable)
 import Text.Read (readMaybe)
+import Util.ExeCache (ExeCache, findExecutableCached)
 import Util.Git (runGit)
 
 -- | Parse text as Int, defaulting to 0 for non-numeric values
@@ -49,14 +49,14 @@ parseNumstat input =
         (addTxt : delTxt : _) -> (readInt addTxt, readInt delTxt)
         _otherFields -> (0, 0)
 
-loadDiff :: FilePath -> IO (Maybe (Text, ST.SessionSummary))
-loadDiff root = do
-    hasGit <- isJust <$> findExecutable "git"
+loadDiff :: ExeCache -> FilePath -> IO (Maybe (Text, ST.SessionSummary))
+loadDiff exeCache root = do
+    hasGit <- isJust <$> findExecutableCached exeCache "git"
     if not hasGit
         then throwIO GitNotFound
         else do
-            mDiff <- runGit root ["diff", "--no-color"]
-            mNum <- runGit root ["diff", "--numstat"]
+            mDiff <- runGit exeCache root ["diff", "--no-color"]
+            mNum <- runGit exeCache root ["diff", "--numstat"]
             case (mDiff, mNum) of
                 (Just diffOut, Just numOut) -> pure $ Just (diffOut, parseNumstat numOut)
                 _otherOutputs -> pure Nothing
@@ -88,13 +88,13 @@ sumInts :: [Int] -> Int
 sumInts = List.foldl' (+) 0
 
 -- | Load file-level diffs for the session
-loadFileDiffs :: FilePath -> IO [FileDiffInternal]
-loadFileDiffs root = do
-    hasGit <- isJust <$> findExecutable "git"
+loadFileDiffs :: ExeCache -> FilePath -> IO [FileDiffInternal]
+loadFileDiffs exeCache root = do
+    hasGit <- isJust <$> findExecutableCached exeCache "git"
     if not hasGit
         then throwIO GitNotFound
         else do
-            mNum <- runGit root ["diff", "--numstat"]
+            mNum <- runGit exeCache root ["diff", "--numstat"]
             case mNum of
                 Just numOut -> pure $ parseNumstatFiles numOut
                 Nothing -> pure []

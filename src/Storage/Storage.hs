@@ -7,6 +7,7 @@ module Storage.Storage (
     read,
     readMaybe,
     write,
+    writeCached,
     writeAtomic,
     update,
     remove,
@@ -15,13 +16,20 @@ module Storage.Storage (
     StorageError (..),
     withStorage,
     StorageConfig (..),
+
+    -- * Directory cache for performance
+    DirCache,
+    newDirCache,
 ) where
 
 import Control.Exception (Exception, catch, throwIO)
 import Control.Monad (unless)
-import Data.Aeson (FromJSON, ToJSON, eitherDecodeFileStrict, encode)
+import Data.Aeson (FromJSON, ToJSON, eitherDecodeFileStrict, encode, encodeFile)
 import Data.ByteString.Lazy qualified as BL
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List qualified as List
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import System.Directory
@@ -31,6 +39,21 @@ import System.IO.Error (isDoesNotExistError)
 import System.Posix.Temp (mkstemp)
 import Util.FileSystem (listDirectoryRecursive)
 import Prelude hiding (read)
+
+-- | Cache for directories we've already created (avoids redundant mkdir/stat calls)
+newtype DirCache = DirCache (IORef (Set FilePath))
+
+-- | Create a new empty directory cache
+newDirCache :: IO DirCache
+newDirCache = DirCache <$> newIORef Set.empty
+
+-- | Create directory if needed, using cache to avoid redundant operations
+createDirCached :: DirCache -> FilePath -> IO ()
+createDirCached (DirCache ref) dir = do
+    known <- readIORef ref
+    unless (Set.member dir known) $ do
+        createDirectoryIfMissing True dir
+        atomicModifyIORef' ref $ \s -> (Set.insert dir s, ())
 
 -- | Storage configuration
 newtype StorageConfig = StorageConfig
@@ -84,16 +107,29 @@ readMaybe cfg key =
         `catch` \(StorageDecodeError _path _err) -> pure Nothing
 
 {- | Write a JSON value to storage
-Uses direct write for performance. For crash-safe atomic writes,
-use writeAtomic instead.
+Uses encodeFile for direct encoding to file (avoids intermediate lazy ByteString).
+For crash-safe atomic writes, use writeAtomic instead.
+
+This version creates directories on every call. For better performance
+when doing many writes, use writeCached with a DirCache.
 -}
 write :: (ToJSON a) => StorageConfig -> [Text] -> a -> IO ()
 write cfg key content = do
     let target = keyPath cfg key
         dir = takeDirectory target
-        encoded = encode content
     createDirectoryIfMissing True dir
-    BL.writeFile target encoded
+    encodeFile target content
+
+{- | Write a JSON value to storage with directory caching
+Avoids redundant createDirectoryIfMissing calls when writing to the same
+or nearby directories repeatedly. Uses encodeFile for efficiency.
+-}
+writeCached :: (ToJSON a) => DirCache -> StorageConfig -> [Text] -> a -> IO ()
+writeCached dirCache cfg key content = do
+    let target = keyPath cfg key
+        dir = takeDirectory target
+    createDirCached dirCache dir
+    encodeFile target content
 
 {- | Write a JSON value to storage using atomic write (temp file + rename)
 This ensures the file is never partially written, but has more overhead.
