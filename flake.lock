@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "falsify": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1772028823,
+        "narHash": "sha256-ldDV3bwLOyKqFdtHs8es+OdfA9vCsaKWURP8bei1L9k=",
+        "owner": "straylight-software",
+        "repo": "falsify",
+        "rev": "47c81bde2cfb198f5b1e946bc782cdf4e456b5da",
+        "type": "github"
+      },
+      "original": {
+        "owner": "straylight-software",
+        "ref": "more-runners",
+        "repo": "falsify",
+        "type": "github"
+      }
+    },
     "flake-parts": {
       "inputs": {
         "nixpkgs-lib": "nixpkgs-lib"
@@ -53,17 +70,18 @@
     },
     "haskemathesis": {
       "inputs": {
+        "falsify": "falsify",
         "flake-parts": "flake-parts_2",
         "haskell-flake": "haskell-flake",
         "nixpkgs": "nixpkgs",
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1771959907,
-        "narHash": "sha256-nDr5H8AElO4jioRUhKjXR5G5R/aqf9S737Ya0Cdsfrw=",
+        "lastModified": 1772031703,
+        "narHash": "sha256-8Es4zFfKNo0+OrT+VIpqOJOjyI0x95XbpYhhuTz6hWo=",
         "ref": "refs/heads/master",
-        "rev": "872baa9d16e65e151c8a72fbd436fd241680ed12",
-        "revCount": 48,
+        "rev": "3a3d0fe8b6424f8319e327869258e66dad6206e1",
+        "revCount": 51,
         "type": "git",
         "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       },

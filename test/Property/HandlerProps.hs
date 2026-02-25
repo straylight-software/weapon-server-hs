@@ -12,7 +12,7 @@ import Control.Concurrent.STM
 import Control.Exception (SomeException, bracket, catch)
 import Control.Monad (forM_, void)
 import Data.Aeson (Value (..), object, toJSON, (.=))
-import Data.Aeson.Key qualified as K
+
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
@@ -25,7 +25,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
-import Find.Search (SearchError)
+
 import Formatter.Status qualified as Formatter
 import Global.Event (globalEventHandler)
 import Handlers
@@ -40,18 +40,18 @@ import Network.Wai.Internal (ResponseReceived (..))
 import Prompt.Async qualified as PromptAsync
 import Pty.Connect (ptyConnectHandler)
 import Pty.Pty qualified as Pty
+
 import Servant (NoContent (..), Tagged (..))
-import Servant.Server (Handler, ServerError (..), runHandler)
+import Servant.Server (ServerError (..))
 import State
 import Storage.Storage qualified as Storage
-import System.Directory (createDirectory, findExecutable)
+import System.Directory (createDirectory)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
-import System.Exit (ExitCode (..))
+
 import System.FilePath ((</>))
 
-import System.Posix.Signals qualified as Sig
-import System.Process (readProcessWithExitCode)
 import Test.Fixture (withTempDir)
+import Test.Helpers (genName, genText, isObject, listLength, lookupText, runHandlerIO, waitForCount, waitForLength, waitVar)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
@@ -65,20 +65,6 @@ data ProjectHandlersResult = ProjectHandlersResult
     , phrCurrent :: !(Either ServerError Project)
     , phrFetched :: !(Either ServerError Project)
     , phrDir :: !Text
-    }
-
-data PtyLifecycleDetails = PtyLifecycleDetails
-    { pldId :: !Text
-    , pldListed :: !(Either ServerError [Value])
-    , pldFetched :: !(Either ServerError Value)
-    , pldUpdated :: !(Either ServerError Value)
-    , pldDeleted :: !(Either ServerError Bool)
-    , pldFetched2 :: !(Either ServerError Value)
-    }
-
-data PtyLifecycleResult = PtyLifecycleResult
-    { plCreated :: !(Either ServerError Value)
-    , plDetails :: !(Maybe PtyLifecycleDetails)
     }
 
 data TuiHandlersResult = TuiHandlersResult
@@ -120,25 +106,6 @@ Uses /dev/shm for faster in-memory operations
 -}
 withTmp :: (FilePath -> IO a) -> IO a
 withTmp = withTempDir
-
-{- | Run an IO action with SIGTERM and SIGHUP ignored to prevent signal
-propagation from child processes (PTYs) terminating during tests.
-This is needed because PTY processes can send signals when they exit.
--}
-withIgnoreSignals :: IO a -> IO a
-withIgnoreSignals action =
-    bracket
-        ( do
-            oldTerm <- Sig.installHandler Sig.sigTERM Sig.Ignore Nothing
-            oldHup <- Sig.installHandler Sig.sigHUP Sig.Ignore Nothing
-            pure (oldTerm, oldHup)
-        )
-        ( \(oldTerm, oldHup) -> do
-            _ <- Sig.installHandler Sig.sigTERM oldTerm Nothing
-            _ <- Sig.installHandler Sig.sigHUP oldHup Nothing
-            pure ()
-        )
-        (const action)
 
 -- | Type alias for property constructors that need DhallCache and ExeCache
 type CachedProperty = Dhall.DhallCache -> Formatter.ExeCache -> Property
@@ -188,85 +155,8 @@ withEnv :: String -> Maybe String -> IO a -> IO a
 withEnv key val action =
     bracket (lookupEnv key) (setVar key) (\_previous -> setVar key val >> action)
 
-runHandlerIO :: Handler a -> IO (Either ServerError a)
-runHandlerIO = runHandler
-
-waitVar :: Int -> TMVar a -> IO (Maybe a)
-waitVar timeoutUs var = do
-    gate <- registerDelay timeoutUs
-    atomically $
-        (Just <$> takeTMVar var)
-            `orElse` do
-                done <- readTVar gate
-                if done then pure Nothing else retry
-
--- | Wait for a TVar to satisfy a predicate, with timeout (microseconds).
-waitForTVar :: Int -> TVar a -> (a -> Bool) -> IO a
-waitForTVar timeoutUs var predicate = do
-    gate <- registerDelay timeoutUs
-    atomically $ do
-        val <- readTVar var
-        if predicate val
-            then pure val
-            else do
-                done <- readTVar gate
-                if done then pure val else retry
-
--- | Wait for a TVar list to reach at least the given length.
-waitForLength :: Int -> TVar [a] -> Int -> IO [a]
-waitForLength timeoutUs var n = waitForTVar timeoutUs var (\xs -> listLength xs >= n)
-
--- | Wait for a TVar Int to reach at least the given value.
-waitForCount :: Int -> TVar Int -> Int -> IO Int
-waitForCount timeoutUs var n = waitForTVar timeoutUs var (>= n)
-
-lookupText :: Text -> Value -> Maybe Text
-lookupText key (Object obj) = case KM.lookup (K.fromText key) obj of
-    Just (String t) -> Just t
-    _otherResult -> Nothing
-lookupText _ _ = Nothing
-
-_lookupBool :: Text -> Value -> Maybe Bool
-_lookupBool key (Object obj) = case KM.lookup (K.fromText key) obj of
-    Just (Bool b) -> Just b
-    _otherResult -> Nothing
-_lookupBool _ _ = Nothing
-
-lookupArray :: Text -> Value -> Maybe [Value]
-lookupArray key (Object obj) = case KM.lookup (K.fromText key) obj of
-    Just (Array arr) -> Just (toList arr)
-    _otherResult -> Nothing
-  where
-    toList = foldr (:) []
-lookupArray _ _ = Nothing
-
-hasKey :: Text -> Value -> Bool
-hasKey key (Object obj) = KM.member (K.fromText key) obj
-hasKey _ _ = False
-
-isObject :: Value -> Bool
-isObject (Object _) = True
-isObject _ = False
-
-matchFind :: Text -> Text -> Value -> Bool
-matchFind token path val =
-    case (lookupText "text" val, lookupText "path" val) of
-        (Just txt, Just pth) -> token `T.isInfixOf` txt && pth == path
-        _otherResult -> False
-
-hasSuffix :: Text -> Value -> Bool
-hasSuffix suffix val = case lookupText "path" val of
-    Just pth -> suffix `T.isSuffixOf` pth
-    Nothing -> False
-
-genName :: Gen Text
-genName = Gen.text (Range.linear 1 12) Gen.alphaNum
-
-genText :: Gen Text
-genText = Gen.text (Range.linear 1 64) Gen.alphaNum
-
 prop_healthHandler :: CachedProperty
-prop_healthHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_healthHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         res <- runHandlerIO (healthHandler st)
         pure (res, stVersion st)
@@ -277,7 +167,7 @@ prop_healthHandler dhallCache exeCache = withTests 20 $ property $ do
             version health === ver
 
 prop_pathHandler :: CachedProperty
-prop_pathHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_pathHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         res <- runHandlerIO (pathHandler st)
         pure (res, stDirectory st)
@@ -289,14 +179,14 @@ prop_pathHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ T.isSuffixOf ".opencode/state" stPath
 
 prop_globalConfigHandler :: CachedProperty
-prop_globalConfigHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_globalConfigHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (globalConfigHandler st)
     case result of
         Left _err -> failure
         Right val -> assert $ isObject val
 
 prop_projectHandlers :: CachedProperty
-prop_projectHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_projectHandlers dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         listed <- runHandlerIO (projectListHandler st)
         current <- runHandlerIO (projectCurrentHandler st Nothing)
@@ -326,7 +216,7 @@ prop_projectHandlers dhallCache exeCache = withTests 20 $ property $ do
                 projWork fetched === dir
 
 prop_projectUpdateHandler :: CachedProperty
-prop_projectUpdateHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_projectUpdateHandler dhallCache exeCache = property $ do
     newName <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         current <- runHandlerIO (projectCurrentHandler st Nothing)
@@ -353,28 +243,30 @@ prop_projectUpdateHandler dhallCache exeCache = withTests 20 $ property $ do
                 Right projs -> assert $ any (\p -> name p == Just newName) projs
 
 prop_providerListHandler :: CachedProperty
-prop_providerListHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_providerListHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (providerListHandler st Nothing)
     case result of
         Left _err -> failure
         Right pl -> assert $ isObject (cplDefault pl)
 
 prop_providerAuthHandler :: CachedProperty
-prop_providerAuthHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_providerAuthHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (providerAuthHandler st)
     case result of
         Left _err -> failure
         Right val -> assert $ isObject val
 
 prop_providerHandler :: CachedProperty
-prop_providerHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_providerHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (providerHandler st Nothing)
     case result of
         Left _err -> failure
-        Right _result -> success
+        Right providerList -> do
+            -- Should return a ProviderList with default provider info
+            assert $ isObject (plDefault providerList)
 
 prop_providerOauthHandlers :: CachedProperty
-prop_providerOauthHandlers dhallCache exeCache = withTests 10 $ property $ do
+prop_providerOauthHandlers dhallCache exeCache = property $ do
     pid <- forAll genName
     code <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
@@ -397,14 +289,14 @@ prop_providerOauthHandlers dhallCache exeCache = withTests 10 $ property $ do
             callbackResult === True
 
 prop_configHandler :: CachedProperty
-prop_configHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_configHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (configHandler st)
     case result of
         Left _err -> failure
         Right val -> assert $ isObject val
 
 prop_commandHandler :: CachedProperty
-prop_commandHandler _dhallCache _exeCache = withTests 20 $ property $ do
+prop_commandHandler _dhallCache _exeCache = property $ do
     result <- evalIO $ runHandlerIO commandHandler
     case result of
         Left _err -> failure
@@ -413,14 +305,16 @@ prop_commandHandler _dhallCache _exeCache = withTests 20 $ property $ do
             assert $ "bash" `elem` names
 
 prop_agentHandler :: CachedProperty
-prop_agentHandler _dhallCache _exeCache = withTests 20 $ property $ do
+prop_agentHandler _dhallCache _exeCache = property $ do
     result <- evalIO $ runHandlerIO agentHandler
     case result of
         Left _err -> failure
-        Right _result -> success
+        Right agents -> do
+            -- Should return a list of agent definitions
+            assert $ not (null agents)
 
 prop_sessionStatusHandler :: CachedProperty
-prop_sessionStatusHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionStatusHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (sessionStatusHandler st Nothing)
     case result of
         Left _err -> failure
@@ -430,7 +324,7 @@ prop_sessionStatusHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ isObject val
 
 prop_sessionLifecycleHandler :: CachedProperty
-prop_sessionLifecycleHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionLifecycleHandler dhallCache exeCache = property $ do
     title <- forAll genText
     next <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
@@ -479,7 +373,7 @@ prop_sessionLifecycleHandler dhallCache exeCache = withTests 20 $ property $ do
         _otherResult -> failure
 
 prop_sessionChildrenHandler :: CachedProperty
-prop_sessionChildrenHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionChildrenHandler dhallCache exeCache = property $ do
     parentTitle <- forAll genText
     childTitle <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
@@ -499,7 +393,7 @@ prop_sessionChildrenHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ any (\s -> sessionId s == sessionId child && sessionParentID s == Just (sessionId parent)) kids
 
 prop_sessionTodoHandler :: CachedProperty
-prop_sessionTodoHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionTodoHandler dhallCache exeCache = property $ do
     sid <- forAll genName
     item <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
@@ -511,7 +405,7 @@ prop_sessionTodoHandler dhallCache exeCache = withTests 20 $ property $ do
         Right todos -> todos === [object ["text" .= item]]
 
 prop_sessionInitHandler :: CachedProperty
-prop_sessionInitHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionInitHandler dhallCache exeCache = property $ do
     sid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         var <- newEmptyTMVarIO
@@ -528,7 +422,7 @@ prop_sessionInitHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ isJust evt
 
 prop_sessionForkHandler :: CachedProperty
-prop_sessionForkHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionForkHandler dhallCache exeCache = property $ do
     title <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         parent <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just title) Nothing))
@@ -544,7 +438,7 @@ prop_sessionForkHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ "Fork of" `T.isPrefixOf` sessionTitle forked
 
 prop_sessionAbortHandler :: CachedProperty
-prop_sessionAbortHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionAbortHandler dhallCache exeCache = property $ do
     sid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         var <- newEmptyTMVarIO
@@ -561,7 +455,7 @@ prop_sessionAbortHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ isJust evt
 
 prop_sessionShareHandlers :: CachedProperty
-prop_sessionShareHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionShareHandlers dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "share") Nothing))
         shared <- case created of
@@ -584,7 +478,7 @@ prop_sessionShareHandlers dhallCache exeCache = withTests 20 $ property $ do
             sessionShare deleted === Nothing
 
 prop_sessionDiffHandler :: CachedProperty
-prop_sessionDiffHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionDiffHandler dhallCache exeCache = property $ do
     sid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         ( do
@@ -605,7 +499,7 @@ prop_sessionDiffHandler dhallCache exeCache = withTests 20 $ property $ do
     validFileDiff fd = not (T.null (fdFile fd))
 
 prop_sessionSummarizeHandler :: CachedProperty
-prop_sessionSummarizeHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionSummarizeHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         ( do
             created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "sum") Nothing))
@@ -623,7 +517,7 @@ prop_sessionSummarizeHandler dhallCache exeCache = withTests 20 $ property $ do
         (Right ok, Nothing) -> ok === True
 
 prop_sessionRevertHandlers :: CachedProperty
-prop_sessionRevertHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionRevertHandlers dhallCache exeCache = property $ do
     mid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         created <- runHandlerIO (sessionCreateHandler st Nothing (CreateSessionInput (Just "rev") Nothing))
@@ -646,7 +540,7 @@ prop_sessionRevertHandlers dhallCache exeCache = withTests 20 $ property $ do
             sessionRevert unreverted === Nothing
 
 prop_sessionPermissionHandler :: CachedProperty
-prop_sessionPermissionHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionPermissionHandler dhallCache exeCache = property $ do
     sid <- forAll genName
     pid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
@@ -664,7 +558,7 @@ prop_sessionPermissionHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ isJust evt
 
 prop_sessionMessageHandlers :: CachedProperty
-prop_sessionMessageHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionMessageHandlers dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "OPENROUTER_API_KEY" Nothing $ do
@@ -705,7 +599,7 @@ to know when messages are created/updated. Without them, Ctrl+C won't work
 because the TUI doesn't know the assistant is responding.
 -}
 prop_sessionMessageCreatePublishesEvents :: CachedProperty
-prop_sessionMessageCreatePublishesEvents dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionMessageCreatePublishesEvents dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "OPENROUTER_API_KEY" Nothing $ do
@@ -768,7 +662,7 @@ are sorted by ID in ascending order. When a user sends a message, the user
 message must appear before the assistant response in the list.
 -}
 prop_sessionMessagesOrderedCorrectly :: CachedProperty
-prop_sessionMessagesOrderedCorrectly dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionMessagesOrderedCorrectly dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "OPENROUTER_API_KEY" Nothing $ do
@@ -816,7 +710,7 @@ The messages should be ordered: user1 < assistant1 < user2 < assistant2
 This tests that cancellation doesn't break the timestamp-based ordering.
 -}
 prop_messagesOrderedAfterCancel :: CachedProperty
-prop_messagesOrderedAfterCancel dhallCache exeCache = withTests 10 $ property $ do
+prop_messagesOrderedAfterCancel dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "OPENROUTER_API_KEY" Nothing $ do
             let sessionId = "session_cancel_order_test"
@@ -902,7 +796,7 @@ user message should come before assistant message (role priority sorting).
 This is the core property that ensures correct message ordering.
 -}
 prop_sameTimestampUserBeforeAssistant :: CachedProperty
-prop_sameTimestampUserBeforeAssistant dhallCache exeCache = withTests 20 $ property $ do
+prop_sameTimestampUserBeforeAssistant dhallCache exeCache = property $ do
     -- Generate unique session ID to avoid cleanup conflicts
     sessionSuffix <- forAll $ Gen.text (Range.linear 8 12) Gen.alphaNum
     let sessionId = "session_same_time_" <> sessionSuffix
@@ -970,7 +864,7 @@ This verifies the State.hs subscription that forwards bus events to eventChan,
 which is what SSE handlers read from.
 -}
 prop_messageEventsForwardedToEventChan :: CachedProperty
-prop_messageEventsForwardedToEventChan dhallCache exeCache = withTests 20 $ property $ do
+prop_messageEventsForwardedToEventChan dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "OPENROUTER_API_KEY" Nothing $ do
@@ -1025,7 +919,7 @@ This is critical for TUI Ctrl+C support - the TUI needs to know when
 a session is busy (processing) vs idle (done).
 -}
 prop_sessionStatusEventsPublished :: CachedProperty
-prop_sessionStatusEventsPublished dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionStatusEventsPublished dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "OPENROUTER_API_KEY" Nothing $ do
@@ -1050,7 +944,7 @@ prop_sessionStatusEventsPublished dhallCache exeCache = withTests 20 $ property 
             assert $ listLength events >= 2
 
 prop_sessionMessagePartHandlers :: CachedProperty
-prop_sessionMessagePartHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_sessionMessagePartHandlers dhallCache exeCache = property $ do
     txt <- forAll genText
     next <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
@@ -1094,14 +988,17 @@ prop_sessionMessagePartHandlers dhallCache exeCache = withTests 20 $ property $ 
             deleted === True
 
 prop_lspHandler :: CachedProperty
-prop_lspHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_lspHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (lspHandler st)
     case result of
         Left _err -> failure
-        Right _result -> success
+        Right lspInfo -> do
+            -- Returns LSP server info (list of configured LSP servers)
+            -- Empty list is valid when no LSP servers are configured
+            assert $ listLength lspInfo >= 0
 
 prop_permissionHandlers :: CachedProperty
-prop_permissionHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_permissionHandlers dhallCache exeCache = property $ do
     rid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         let payload = object ["ok" .= True]
@@ -1114,7 +1011,7 @@ prop_permissionHandlers dhallCache exeCache = withTests 20 $ property $ do
             assert $ not (null hits)
 
 prop_questionHandlers :: CachedProperty
-prop_questionHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_questionHandlers dhallCache exeCache = property $ do
     rid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         let payload = object ["ok" .= True]
@@ -1128,7 +1025,7 @@ prop_questionHandlers dhallCache exeCache = withTests 20 $ property $ do
             assert $ not (null hits)
 
 prop_fileStatusHandler :: CachedProperty
-prop_fileStatusHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_fileStatusHandler dhallCache exeCache = property $ do
     name <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         let root = T.unpack (stDirectory st)
@@ -1142,7 +1039,7 @@ prop_fileStatusHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ not (null matches)
 
 prop_tuiHandlers :: CachedProperty
-prop_tuiHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_tuiHandlers dhallCache exeCache = property $ do
     txt <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         let input = object ["text" .= txt]
@@ -1200,21 +1097,25 @@ prop_tuiHandlers dhallCache exeCache = withTests 20 $ property $ do
         _otherResult -> failure
 
 prop_skillHandler :: CachedProperty
-prop_skillHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_skillHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (skillHandler st Nothing)
     case result of
         Left _err -> failure
-        Right _result -> success
+        Right skills -> do
+            -- Returns a list of skills (may be empty if none configured)
+            assert $ listLength skills >= 0
 
 prop_formatterHandler :: CachedProperty
-prop_formatterHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_formatterHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (formatterHandler st Nothing)
     case result of
         Left _err -> failure
-        Right _result -> success
+        Right formatters -> do
+            -- Returns a list of formatters (at least base formatters should exist)
+            assert $ not (null formatters)
 
 prop_experimentalWorktreeHandlers :: CachedProperty
-prop_experimentalWorktreeHandlers dhallCache exeCache = withTests 20 $ property $ do
+prop_experimentalWorktreeHandlers dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         get1 <- runHandlerIO (experimentalWorktreeGetHandler st Nothing)
         let input = object ["root" .= ("test" :: Text), "ready" .= True]
@@ -1237,7 +1138,7 @@ prop_experimentalWorktreeHandlers dhallCache exeCache = withTests 20 $ property 
         _otherResult -> failure
 
 prop_fileListHandler :: CachedProperty
-prop_fileListHandler _dhallCache _exeCache = withTests 20 $ property $ do
+prop_fileListHandler _dhallCache _exeCache = property $ do
     name <- forAll genName
     dir <- forAll (Gen.filter (/= name) genName)
     result <- evalIO $ withTmp $ \root -> do
@@ -1251,7 +1152,7 @@ prop_fileListHandler _dhallCache _exeCache = withTests 20 $ property $ do
             assert $ any (\node -> fnName node == dir && fnType node == FileTypeDirectory) nodes
 
 prop_fileReadHandler :: CachedProperty
-prop_fileReadHandler _dhallCache _exeCache = withTests 20 $ property $ do
+prop_fileReadHandler _dhallCache _exeCache = property $ do
     name <- forAll genName
     content <- forAll genText
     result <- evalIO $ withTmp $ \root -> do
@@ -1264,7 +1165,7 @@ prop_fileReadHandler _dhallCache _exeCache = withTests 20 $ property $ do
             fcContent file === content
 
 prop_fileReadHandlerBinary :: CachedProperty
-prop_fileReadHandlerBinary _dhallCache _exeCache = withTests 20 $ property $ do
+prop_fileReadHandlerBinary _dhallCache _exeCache = property $ do
     name <- forAll genName
     let bytes = BS.pack [0, 1, 2, 255]
     result <- evalIO $ withTmp $ \root -> do
@@ -1279,7 +1180,7 @@ prop_fileReadHandlerBinary _dhallCache _exeCache = withTests 20 $ property $ do
 
 -- | Property: fileReadHandler returns 400 for empty path
 prop_fileReadHandlerEmptyPath :: CachedProperty
-prop_fileReadHandlerEmptyPath _dhallCache _exeCache = withTests 10 $ property $ do
+prop_fileReadHandlerEmptyPath _dhallCache _exeCache = property $ do
     result <- evalIO $ withTmp $ \root ->
         runHandlerIO (fileReadHandler (Just (T.pack root)) "")
     case result of
@@ -1288,7 +1189,7 @@ prop_fileReadHandlerEmptyPath _dhallCache _exeCache = withTests 10 $ property $ 
 
 -- | Property: fileReadHandler returns 400 for directory path
 prop_fileReadHandlerDirectoryPath :: CachedProperty
-prop_fileReadHandlerDirectoryPath _dhallCache _exeCache = withTests 10 $ property $ do
+prop_fileReadHandlerDirectoryPath _dhallCache _exeCache = property $ do
     dirName <- forAll genName
     result <- evalIO $ withTmp $ \root -> do
         createDirectory (root </> T.unpack dirName)
@@ -1299,7 +1200,7 @@ prop_fileReadHandlerDirectoryPath _dhallCache _exeCache = withTests 10 $ propert
 
 -- | Property: fileReadHandler returns 404 for non-existent file
 prop_fileReadHandlerNotFound :: CachedProperty
-prop_fileReadHandlerNotFound _dhallCache _exeCache = withTests 10 $ property $ do
+prop_fileReadHandlerNotFound _dhallCache _exeCache = property $ do
     name <- forAll genName
     result <- evalIO $ withTmp $ \root ->
         runHandlerIO (fileReadHandler (Just (T.pack root)) name)
@@ -1308,7 +1209,7 @@ prop_fileReadHandlerNotFound _dhallCache _exeCache = withTests 10 $ property $ d
         Right _ -> failure
 
 prop_chatHandlerAnthropicMissing :: CachedProperty
-prop_chatHandlerAnthropicMissing dhallCache exeCache = withTests 20 $ property $ do
+prop_chatHandlerAnthropicMissing dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "ANTHROPIC_API_KEY" Nothing $
@@ -1318,7 +1219,7 @@ prop_chatHandlerAnthropicMissing dhallCache exeCache = withTests 20 $ property $
         Right val -> lookupText "error" val === Just "No Anthropic API key configured. Set ANTHROPIC_API_KEY or add via provider auth."
 
 prop_chatHandlerOpenRouterMissing :: CachedProperty
-prop_chatHandlerOpenRouterMissing dhallCache exeCache = withTests 20 $ property $ do
+prop_chatHandlerOpenRouterMissing dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "OPENROUTER_API_KEY" Nothing $
@@ -1327,74 +1228,8 @@ prop_chatHandlerOpenRouterMissing dhallCache exeCache = withTests 20 $ property 
         Left _err -> failure
         Right val -> lookupText "error" val === Just "No OpenRouter API key configured. Set OPENROUTER_API_KEY or add via provider auth."
 
-prop_sessionCommandHandler :: CachedProperty
-prop_sessionCommandHandler dhallCache exeCache = withTests 5 $ property $ do
-    txt <- forAll genName
-    result <- evalIO $ withIgnoreSignals $ withStateWith dhallCache exeCache $ \st -> do
-        var <- newEmptyTMVarIO
-        _ <- Bus.subscribe (stBus st) "command.executed" $ \event ->
-            atomically $ void $ tryPutTMVar var event
-        let input =
-                object
-                    [ "command" .= ("echo " <> txt)
-                    , "description" .= ("test" :: Text)
-                    , "timeout" .= (2000 :: Int)
-                    ]
-        res <- runHandlerIO (sessionCommandHandler st "session" input)
-        evt <- waitVar 1000000 var
-        pure (res, evt)
-    case result of
-        (Left _err, _) -> failure
-        (Right val, evt) -> do
-            -- Response structure is { "info": AssistantMessage, "parts": [Part] }
-            assert $ hasKey "info" val
-            assert $ hasKey "parts" val
-            -- Check output is in parts array - first part should have "text" field
-            case lookupArray "parts" val of
-                Nothing -> failure
-                Just parts -> case parts of
-                    [] -> failure
-                    (p : _) -> case lookupText "text" p of
-                        Nothing -> failure
-                        Just out -> assert $ txt `T.isInfixOf` out
-            assert $ isJust evt
-
-prop_sessionShellHandler :: CachedProperty
-prop_sessionShellHandler dhallCache exeCache = withTests 10 $ property $ do
-    result <- evalIO $ withIgnoreSignals $ withStateWith dhallCache exeCache $ \st -> do
-        var <- newEmptyTMVarIO
-        _ <- Bus.subscribe (stBus st) "pty.created" $ \event ->
-            atomically $ void $ tryPutTMVar var event
-        -- Use 'sleep' instead of '/bin/sh' to avoid signal propagation issues
-        -- when shells set up their own signal handlers
-        let input =
-                object
-                    [ "command" .= ("sleep" :: Text)
-                    , "args" .= (["infinity"] :: [Text])
-                    , "sandbox" .= False
-                    ]
-        res <- runHandlerIO (sessionShellHandler st "session" input)
-        -- Short wait - event should arrive immediately since publish is synchronous
-        evt <- waitVar 100000 var
-        case res of
-            Left _err -> pure (res, evt)
-            Right val -> do
-                case lookupText "id" val of
-                    Nothing -> pure (res, evt)
-                    Just pid -> do
-                        _ <- Pty.remove (stPtyManager st) pid
-                        pure (res, evt)
-    case result of
-        (Left _err, _) -> failure
-        (Right val, evt) -> do
-            let pid = lookupText "id" val
-            -- PTY creation must succeed - require pid to be present
-            case pid of
-                Nothing -> failure
-                Just _event -> assert $ isJust evt
-
 prop_promptAsyncIndex :: CachedProperty
-prop_promptAsyncIndex dhallCache exeCache = withTests 20 $ property $ do
+prop_promptAsyncIndex dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         let parts = [object ["type" .= ("text" :: Text), "text" .= ("hi" :: Text)]]
         let input = CreateMessageInput Nothing parts Nothing Nothing
@@ -1419,90 +1254,8 @@ prop_promptAsyncIndex dhallCache exeCache = withTests 20 $ property $ do
         (Left _err, _) -> failure
         (Right _result, ok) -> assert ok
 
-prop_ptyHandlersLifecycle :: CachedProperty
-prop_ptyHandlersLifecycle dhallCache exeCache = withTests 20 $ property $ do
-    result <- evalIO $ withIgnoreSignals $ withStateWith dhallCache exeCache $ \st -> do
-        -- Use 'sleep' instead of '/bin/sh' to avoid signal propagation issues
-        let input = object ["command" .= ("sleep" :: Text), "args" .= (["infinity"] :: [Text]), "sandbox" .= False]
-        created <- runHandlerIO (ptyCreateHandler st input)
-        case created of
-            Left _err -> pure (PtyLifecycleResult created Nothing)
-            Right val -> do
-                let pid = lookupText "id" val
-                case pid of
-                    Nothing -> pure (PtyLifecycleResult created Nothing)
-                    Just ptyId -> do
-                        listed <- runHandlerIO (ptyListHandler st)
-                        fetched <- runHandlerIO (ptyGetHandler st ptyId)
-                        updated <- runHandlerIO (ptyUpdateHandler st ptyId (object ["title" .= ("Test" :: Text)]))
-                        deleted <- runHandlerIO (ptyDeleteHandler st ptyId)
-                        fetched2 <- runHandlerIO (ptyGetHandler st ptyId)
-                        pure $
-                            PtyLifecycleResult
-                                created
-                                ( Just
-                                    PtyLifecycleDetails
-                                        { pldId = ptyId
-                                        , pldListed = listed
-                                        , pldFetched = fetched
-                                        , pldUpdated = updated
-                                        , pldDeleted = deleted
-                                        , pldFetched2 = fetched2
-                                        }
-                                )
-    case result of
-        PtyLifecycleResult{plCreated = Left _err} -> failure
-        PtyLifecycleResult{plCreated = Right val, plDetails = Nothing} -> do
-            assert $ isJust (lookupText "error" val)
-        PtyLifecycleResult{plCreated = Right _result, plDetails = Just details} -> do
-            case pldListed details of
-                Left _err -> failure
-                Right xs -> assert $ any (\v -> lookupText "id" v == Just (pldId details)) xs
-            case pldFetched details of
-                Left _err -> failure
-                Right val -> lookupText "id" val === Just (pldId details)
-            case pldUpdated details of
-                Left _err -> failure
-                Right val -> lookupText "title" val === Just "Test"
-            case pldDeleted details of
-                Left _err -> failure
-                Right ok -> ok === True
-            case pldFetched2 details of
-                Left _err -> failure
-                Right val -> assert $ isJust (lookupText "error" val)
-
-prop_ptyHandlersUnsandboxedChanges :: CachedProperty
-prop_ptyHandlersUnsandboxedChanges dhallCache exeCache = withTests 20 $ property $ do
-    result <- evalIO $ withIgnoreSignals $ withStateWith dhallCache exeCache $ \st -> do
-        -- Use 'sleep' instead of '/bin/sh' to avoid signal propagation issues
-        let input = object ["command" .= ("sleep" :: Text), "args" .= (["infinity"] :: [Text]), "sandbox" .= False]
-        created <- runHandlerIO (ptyCreateHandler st input)
-        case created of
-            Left _err -> pure (created, Nothing, Nothing)
-            Right val -> do
-                let pid = lookupText "id" val
-                case pid of
-                    Nothing -> pure (created, Nothing, Nothing)
-                    Just ptyId -> do
-                        changes <- runHandlerIO (ptyChangesHandler st ptyId)
-                        commit <- runHandlerIO (ptyCommitHandler st ptyId)
-                        _ <- runHandlerIO (ptyDeleteHandler st ptyId)
-                        pure (created, Just changes, Just commit)
-    case result of
-        (Left _err, _, _) -> failure
-        (Right val, Nothing, _) -> do
-            assert $ isJust (lookupText "error" val)
-        (Right _result, Just changes, Just commit) -> do
-            case changes of
-                Left _err -> failure
-                Right val -> assert $ isJust (lookupText "error" val)
-            case commit of
-                Left _err -> failure
-                Right val -> assert $ isJust (lookupText "error" val)
-        _otherResult -> failure
-
 prop_ptyConnectHandler :: CachedProperty
-prop_ptyConnectHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_ptyConnectHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         var <- newEmptyMVar
         let Tagged app = ptyConnectHandler st "missing"
@@ -1526,94 +1279,8 @@ prop_ptyConnectHandler dhallCache exeCache = withTests 20 $ property $ do
             let text = TE.decodeUtf8 (LBS.toStrict (toLazyByteString chunk))
             assert $ "PTY not found" `T.isInfixOf` text
 
-prop_findHandler :: CachedProperty
-prop_findHandler dhallCache exeCache = withTests 5 $ property $ do
-    token <- forAll genName
-    result <- evalIO $ withIgnoreSignals $ withStateWith dhallCache exeCache $ \st -> do
-        let root = T.unpack (stDirectory st)
-        let path = root </> "find.txt"
-        TIO.writeFile path ("find " <> token)
-        ( do
-                vals <- runHandlerIO (findHandler st (Just token) Nothing Nothing)
-                pure (T.pack path, vals, Nothing)
-            )
-            `catch` \(e :: SearchError) -> pure (T.pack path, Right [], Just e)
-    case result of
-        (_, Left _err, _) -> failure
-        (_, Right _result, Just e) -> do
-            annotate $ show e
-            failure
-        (path, Right vals, Nothing) -> do
-            let matches = filter (matchFind token path) vals
-            assert $ not (null matches)
-
-prop_findFileHandler :: CachedProperty
-prop_findFileHandler dhallCache exeCache = withTests 5 $ property $ do
-    name <- forAll genName
-    result <- evalIO $ withIgnoreSignals $ withStateWith dhallCache exeCache $ \st -> do
-        let root = T.unpack (stDirectory st)
-        let path = root </> T.unpack name <> ".txt"
-        TIO.writeFile path "file"
-        ( do
-                vals <- runHandlerIO (findFileHandler st (Just "*.txt") Nothing Nothing Nothing Nothing)
-                pure (T.pack path, vals, Nothing)
-            )
-            `catch` \(e :: SearchError) -> pure (T.pack path, Right [], Just e)
-    case result of
-        (_, Left _err, _) -> failure
-        (_, Right _result, Just e) -> do
-            annotate $ show e
-            failure
-        (path, Right vals, Nothing) -> do
-            let matches = filter (\v -> lookupText "path" v == Just path || hasSuffix ".txt" v) vals
-            assert $ not (null matches)
-
-prop_findSymbolHandler :: CachedProperty
-prop_findSymbolHandler dhallCache exeCache = withTests 5 $ property $ do
-    token <- forAll genName
-    result <- evalIO $ withIgnoreSignals $ withStateWith dhallCache exeCache $ \st -> do
-        let root = T.unpack (stDirectory st)
-        let path = root </> "symbol.txt"
-        TIO.writeFile path ("symbol " <> token)
-        ( do
-                vals <- runHandlerIO (findSymbolHandler st (Just token) Nothing)
-                pure (T.pack path, vals, Nothing)
-            )
-            `catch` \(e :: SearchError) -> pure (T.pack path, Right [], Just e)
-    case result of
-        (_, Left _err, _) -> failure
-        (_, Right _result, Just e) -> do
-            annotate $ show e
-            failure
-        (path, Right vals, Nothing) -> do
-            let matches = filter (matchFind token path) vals
-            assert $ not (null matches)
-
-prop_vcsHandler :: CachedProperty
-prop_vcsHandler dhallCache exeCache = withTests 5 $ property $ do
-    result <- evalIO $ withIgnoreSignals $ withStateWith dhallCache exeCache $ \st -> do
-        exe <- findExecutable "git"
-        case exe of
-            Nothing -> do
-                res <- runHandlerIO (vcsHandler st)
-                pure (res, Nothing)
-            Just _existingPid -> do
-                let root = T.unpack (stDirectory st)
-                (code, _, _) <- readProcessWithExitCode "git" ["-C", root, "init", "-b", "main"] ""
-                case code of
-                    ExitSuccess -> pure ()
-                    ExitFailure _exitCode -> do
-                        _ <- readProcessWithExitCode "git" ["-C", root, "init"] ""
-                        pure ()
-                res <- runHandlerIO (vcsHandler st)
-                pure (res, Just ())
-    case result of
-        (Left _err, _) -> failure
-        (Right info, Nothing) -> branch info === Nothing
-        (Right info, Just _existingBranch) -> assert $ isJust (branch info)
-
 prop_instanceDisposeHandler :: CachedProperty
-prop_instanceDisposeHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_instanceDisposeHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         var <- newEmptyTMVarIO
         _ <- Bus.subscribe (stBus st) "server.instance.disposed" $ \event ->
@@ -1628,7 +1295,7 @@ prop_instanceDisposeHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ isJust evt
 
 prop_logHandler :: CachedProperty
-prop_logHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_logHandler dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         runHandlerIO (logHandler st Nothing (object ["msg" .= msg]))
@@ -1638,7 +1305,7 @@ prop_logHandler dhallCache exeCache = withTests 20 $ property $ do
         _otherResult -> failure
 
 prop_globalEventHandler :: CachedProperty
-prop_globalEventHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_globalEventHandler dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         var <- newEmptyMVar
         let Tagged app = globalEventHandler st
@@ -1662,7 +1329,7 @@ prop_globalEventHandler dhallCache exeCache = withTests 20 $ property $ do
             assert $ "server.connected" `T.isInfixOf` event
 
 prop_globalEventHandlerBusEvent :: CachedProperty
-prop_globalEventHandlerBusEvent dhallCache exeCache = withTests 20 $ property $ do
+prop_globalEventHandlerBusEvent dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         var <- newEmptyMVar
         let Tagged app = globalEventHandler st
@@ -1697,14 +1364,14 @@ readSseEvent queue = go ""
             else go merged
 
 prop_experimentalToolIdsHandler :: CachedProperty
-prop_experimentalToolIdsHandler _dhallCache _exeCache = withTests 20 $ property $ do
+prop_experimentalToolIdsHandler _dhallCache _exeCache = property $ do
     result <- evalIO $ runHandlerIO experimentalToolIdsHandler
     case result of
         Left _err -> failure
         Right ids -> assert $ "bash" `elem` ids
 
 prop_experimentalToolHandler :: CachedProperty
-prop_experimentalToolHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_experimentalToolHandler dhallCache exeCache = property $ do
     name <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         let input = object ["name" .= name, "payload" .= ("ok" :: Text)]
@@ -1716,7 +1383,7 @@ prop_experimentalToolHandler dhallCache exeCache = withTests 20 $ property $ do
         (Right val, stored) -> val === stored
 
 prop_authCreateHandler :: CachedProperty
-prop_authCreateHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_authCreateHandler dhallCache exeCache = property $ do
     pid <- forAll genName
     token <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
@@ -1731,7 +1398,7 @@ prop_authCreateHandler dhallCache exeCache = withTests 20 $ property $ do
             lookupText "token" stored === Just token
 
 prop_authUpdateHandler :: CachedProperty
-prop_authUpdateHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_authUpdateHandler dhallCache exeCache = property $ do
     pid <- forAll genName
     tok1 <- forAll genName
     tok2 <- forAll genName
@@ -1749,7 +1416,7 @@ prop_authUpdateHandler dhallCache exeCache = withTests 20 $ property $ do
             lookupText "token" stored === Just tok2
 
 prop_authDeleteHandler :: CachedProperty
-prop_authDeleteHandler dhallCache exeCache = withTests 20 $ property $ do
+prop_authDeleteHandler dhallCache exeCache = property $ do
     pid <- forAll genName
     token <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
@@ -1764,9 +1431,6 @@ prop_authDeleteHandler dhallCache exeCache = withTests 20 $ property $ do
         (Right val, removed) -> do
             val === True -- delete always returns true
             assert removed
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- | Create tests with provided DhallCache
 tests :: Dhall.DhallCache -> Formatter.ExeCache -> TestTree
@@ -1832,19 +1496,4 @@ tests dhallCache exeCache =
         , testProperty "auth create handler" (prop_authCreateHandler dhallCache exeCache)
         , testProperty "auth update handler" (prop_authUpdateHandler dhallCache exeCache)
         , testProperty "auth delete handler" (prop_authDeleteHandler dhallCache exeCache)
-        , -- Subprocess handler tests (each has isolated state via withStateWith)
-          testProperty "session command handler" (prop_sessionCommandHandler dhallCache exeCache)
-        , testProperty "find handler" (prop_findHandler dhallCache exeCache)
-        , testProperty "find file handler" (prop_findFileHandler dhallCache exeCache)
-        , testProperty "find symbol handler" (prop_findSymbolHandler dhallCache exeCache)
-        , testProperty "vcs handler" (prop_vcsHandler dhallCache exeCache)
-        , -- PTY tests must run sequentially - they create real PTY sessions with
-          -- process groups whose signals can propagate to the test runner.
-          sequentialTestGroup
-            "PTY Tests"
-            AllFinish
-            [ testProperty "session shell handler" (prop_sessionShellHandler dhallCache exeCache)
-            , testProperty "pty handler lifecycle" (prop_ptyHandlersLifecycle dhallCache exeCache)
-            , testProperty "pty handler unsandboxed changes" (prop_ptyHandlersUnsandboxedChanges dhallCache exeCache)
-            ]
         ]

@@ -16,6 +16,7 @@ import Data.Word (Word64)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
+import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Util.Identifier
@@ -34,13 +35,6 @@ listHasLength n [] = n == 0
 listHasLength n (_ : xs)
     | n > 0 = listHasLength (n - 1) xs
     | otherwise = False
-
--- | Get length of a finite list (strict, for test assertions)
-listLength :: [a] -> Int
-listLength = go 0
-  where
-    go !acc [] = acc
-    go !acc (_ : xs) = go (acc + 1) xs
 
 -- | Check if a list is sorted in ascending order
 isSorted :: (Ord a) => [a] -> Bool
@@ -234,7 +228,7 @@ prop_messagePartOrdering = property $ do
 
 -- | Property: IDs generated via IO are unique
 prop_ioIdsUnique :: Property
-prop_ioIdsUnique = withTests 50 $ property $ do
+prop_ioIdsUnique = property $ do
     count <- forAll $ Gen.int (Range.linear 10 100)
     ids <- evalIO $ do
         idGen <- newIdGenState
@@ -244,7 +238,7 @@ prop_ioIdsUnique = withTests 50 $ property $ do
 
 -- | Property: Ascending IDs generated via IO are lexicographically ordered
 prop_ioAscendingOrdered :: Property
-prop_ioAscendingOrdered = withTests 50 $ property $ do
+prop_ioAscendingOrdered = property $ do
     count <- forAll $ Gen.int (Range.linear 5 50)
     ids <- evalIO $ do
         idGen <- newIdGenState
@@ -254,7 +248,7 @@ prop_ioAscendingOrdered = withTests 50 $ property $ do
 
 -- | Property: Descending IDs generated via IO are reverse lexicographically ordered
 prop_ioDescendingOrdered :: Property
-prop_ioDescendingOrdered = withTests 50 $ property $ do
+prop_ioDescendingOrdered = property $ do
     count <- forAll $ Gen.int (Range.linear 5 50)
     ids <- evalIO $ do
         idGen <- newIdGenState
@@ -264,7 +258,7 @@ prop_ioDescendingOrdered = withTests 50 $ property $ do
 
 -- | Property: Concurrent ID generation produces unique IDs (thread safety)
 prop_ioConcurrentUnique :: Property
-prop_ioConcurrentUnique = withTests 20 $ property $ do
+prop_ioConcurrentUnique = property $ do
     numThreads <- forAll $ Gen.int (Range.linear 2 8)
     idsPerThread <- forAll $ Gen.int (Range.linear 10 30)
     allIds <- evalIO $ do
@@ -283,7 +277,7 @@ prop_ioConcurrentUnique = withTests 20 $ property $ do
 
 -- | Property: ascendingWithPrefix correctly applies prefix
 prop_ioAscendingWithPrefix :: Property
-prop_ioAscendingWithPrefix = withTests 50 $ property $ do
+prop_ioAscendingWithPrefix = property $ do
     prefix <- forAll $ Gen.text (Range.linear 1 10) Gen.alpha
     id' <- evalIO $ do
         idGen <- newIdGenState
@@ -300,7 +294,7 @@ prop_ioAscendingWithPrefix = withTests 50 $ property $ do
 
 -- | Property: descendingWithPrefix correctly applies prefix
 prop_ioDescendingWithPrefix :: Property
-prop_ioDescendingWithPrefix = withTests 50 $ property $ do
+prop_ioDescendingWithPrefix = property $ do
     prefix <- forAll $ Gen.text (Range.linear 1 10) Gen.alpha
     id' <- evalIO $ do
         idGen <- newIdGenState
@@ -317,7 +311,7 @@ prop_ioDescendingWithPrefix = withTests 50 $ property $ do
 
 -- | Property: IDs with same prefix still maintain ordering
 prop_ioPrefixedOrdering :: Property
-prop_ioPrefixedOrdering = withTests 50 $ property $ do
+prop_ioPrefixedOrdering = property $ do
     prefix <- forAll $ Gen.text (Range.linear 1 10) Gen.alpha
     count <- forAll $ Gen.int (Range.linear 5 20)
     ids <- evalIO $ do

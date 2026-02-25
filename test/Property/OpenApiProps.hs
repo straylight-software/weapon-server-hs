@@ -9,13 +9,13 @@ import ApiCompatibilitySpec (Endpoint (..), haskellEndpoints)
 import Data.Aeson
 import Data.ByteString.Lazy qualified as BSL
 import Data.HashMap.Strict qualified as HM
-import Data.List qualified as List
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import System.Directory (doesFileExist)
+import Test.Helpers (listLength)
 
 -- | OpenAPI Schema representation
 data OpenAPISpec = OpenAPISpec
@@ -186,9 +186,6 @@ prop_uniqueMethodPaths :: Property
 prop_uniqueMethodPaths = property $ do
     let entries = map (\ep -> (method ep, path ep)) haskellEndpoints
     listLength entries === Set.size (Set.fromList entries)
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- | Run all property tests
 runPropertyTests :: IO Bool

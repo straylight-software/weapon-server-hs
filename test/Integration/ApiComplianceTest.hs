@@ -7,7 +7,6 @@ module Integration.ApiComplianceTest where
 import ApiCompatibilitySpec (Endpoint (..), haskellEndpoints)
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
-import Data.List qualified as List
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Hedgehog
@@ -15,6 +14,7 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
+import Test.Helpers (listLength)
 import Test.Hspec
 
 -- | Server configuration
@@ -195,9 +195,6 @@ spec = do
                         then return ()
                         else expectationFailure $ show (total - passed) ++ " endpoints differ"
                 else pendingWith "Both servers must be running for comparison"
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- | Main entry point for standalone execution
 main :: IO ()

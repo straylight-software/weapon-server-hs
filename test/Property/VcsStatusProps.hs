@@ -2,12 +2,12 @@
 
 module Property.VcsStatusProps where
 
-import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
+import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Vcs.Status qualified as VcsStatus
@@ -72,9 +72,6 @@ genPath = do
     name <- Gen.text (Range.linear 1 12) Gen.alphaNum
     ext <- Gen.text (Range.linear 1 3) Gen.alphaNum
     pure (name <> "." <> ext)
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =

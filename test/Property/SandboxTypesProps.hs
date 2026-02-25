@@ -11,6 +11,7 @@ import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Sandbox.Types
+import Test.Helpers (genNonEmptyText)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
@@ -19,7 +20,7 @@ import Test.Tasty.Hedgehog
 -- ============================================================================
 
 genText :: Gen Text
-genText = Gen.text (Range.linear 0 100) Gen.alphaNum
+genText = genNonEmptyText
 
 genFilePath :: Gen FilePath
 genFilePath = do
@@ -123,31 +124,40 @@ prop_sandboxConfigRoundtrip = property $ do
         Nothing -> failure
         Just config' -> config === config'
 
--- | Property: defaultLimits has sensible values
+{- | Contract test: defaultLimits has security-critical values
+These specific values are part of the sandbox security contract.
+Changes to these values require explicit review.
+-}
 prop_defaultLimitsValues :: Property
 prop_defaultLimitsValues = property $ do
-    -- Memory limit is 2GB
+    -- Memory limit is 2GB (prevents memory-based DoS)
     rlMemoryMax defaultLimits === Just (2 * 1024 * 1024 * 1024)
-    -- No CPU limit
+    -- No CPU limit (processes can use available CPU)
     rlCpuMax defaultLimits === Nothing
-    -- CPU period is 100ms
+    -- CPU period is 100ms (standard cgroup2 period)
     rlCpuPeriod defaultLimits === 100000
-    -- 1000 processes max
+    -- 1000 processes max (prevents fork bombs)
     rlPidsMax defaultLimits === Just 1000
-    -- No new privs
+    -- No new privs (prevents privilege escalation)
     rlNoNewPrivs defaultLimits === True
 
--- | Property: pureCoeffects has no network
+{- | Contract test: pureCoeffects has no network access
+Pure computations must not have network capability.
+-}
 prop_pureCoeffectsNoNetwork :: Property
 prop_pureCoeffectsNoNetwork = property $ do
     cfNetwork pureCoeffects === False
 
--- | Property: pureCoeffects has no auth
+{- | Contract test: pureCoeffects has no auth capability
+Pure computations must not have authentication tokens.
+-}
 prop_pureCoeffectsNoAuth :: Property
 prop_pureCoeffectsNoAuth = property $ do
     cfAuth pureCoeffects === []
 
--- | Property: pureCoeffects has no filesystem
+{- | Contract test: pureCoeffects has no filesystem access
+Pure computations must not have filesystem mounts.
+-}
 prop_pureCoeffectsNoFilesystem :: Property
 prop_pureCoeffectsNoFilesystem = property $ do
     cfFilesystem pureCoeffects === []
@@ -173,7 +183,9 @@ prop_defaultConfigWorkdir = property $ do
     let config = defaultConfig workdir
     scWorkdir config === workdir
 
--- | Property: defaultConfig has 512MB tmpfs
+{- | Contract test: defaultConfig has 512MB tmpfs
+This limits temporary file space to prevent disk-filling attacks.
+-}
 prop_defaultConfigTmpfsSize :: Property
 prop_defaultConfigTmpfsSize = property $ do
     workdir <- forAll genFilePath

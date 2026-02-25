@@ -2,7 +2,6 @@
 
 module Property.ProjectDiscoveryProps where
 
-import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Hedgehog
@@ -12,6 +11,7 @@ import Project.Discovery qualified as Discovery
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import System.IO.Temp (createTempDirectory)
+import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
@@ -30,9 +30,6 @@ prop_discoverProjects = property $ do
 
 genText :: Gen Text
 genText = Gen.text (Range.linear 3 10) Gen.alphaNum
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =

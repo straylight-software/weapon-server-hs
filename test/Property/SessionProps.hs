@@ -15,6 +15,7 @@ import Session.Session qualified as Session
 import Session.Types qualified as ST
 import Storage.Storage qualified as Storage
 import Test.Fixture (propertyWithTempDir)
+import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Util.Identifier qualified as Identifier
@@ -237,6 +238,3 @@ tests =
         , testProperty "list with directory filter" prop_listDirectoryFilter
         , testProperty "touch updates timestamp" prop_touchUpdatesTimestamp
         ]
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0

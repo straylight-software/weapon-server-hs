@@ -5,7 +5,6 @@ module Property.SkillProps where
 import Config.Dhall qualified as Dhall
 import Data.Aeson (encode, object, (.=))
 import Data.ByteString.Lazy qualified as BSL
-import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -16,6 +15,7 @@ import Skill.Skill (SkillIndex (..), SkillInfo (..), listSkills, parseSkill, par
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import System.IO.Temp (createTempDirectory)
+import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
@@ -112,9 +112,6 @@ genText = Gen.text (Range.linear 0 200) Gen.alphaNum
 
 genNonEmptyText :: Gen Text
 genNonEmptyText = Gen.text (Range.linear 1 50) Gen.alphaNum
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: Dhall.DhallCache -> TestTree
 tests cache =

@@ -3,8 +3,8 @@ module Main where
 
 import Config.Dhall qualified as Dhall
 import Formatter.Status qualified as Formatter
+import Integration.HandlerSubprocessSpec qualified as HandlerSubprocessSpec
 import Integration.HaskemathesisTest qualified as HaskemathesisTest
-import Property.AgentLogicProps qualified as AgentLogicProps
 import Property.AgentTypesProps qualified as AgentTypesProps
 import Property.ApiFileProps qualified as ApiFileProps
 import Property.ApiTypesProps qualified as ApiTypesProps
@@ -51,6 +51,7 @@ import Property.VcsStatusProps qualified as VcsStatusProps
 import System.Posix.Signals (Handler (Ignore), installHandler, sigHUP, sigTERM)
 import Test.Tasty
 import Test.Tasty.Hspec
+import Unit.AgentSpec qualified as AgentSpec
 import Unit.ApiSpec qualified as ApiSpec
 import Unit.ToolStreamingSpec qualified as ToolStreamingSpec
 
@@ -67,7 +68,9 @@ main = do
     dhallCache <- Dhall.newDhallCache
     exeCache <- Formatter.newExeCache
 
+    agentTests <- testSpec "Agent Unit Tests" AgentSpec.spec
     apiTests <- testSpec "API Unit Tests" (ApiSpec.spec dhallCache)
+    handlerSubprocessTests <- testSpec "Handler Subprocess Integration Tests" (HandlerSubprocessSpec.spec dhallCache exeCache)
     toolStreamingTests <- testSpec "Tool Streaming Unit Tests" ToolStreamingSpec.spec
     haskemathesisTests <- HaskemathesisTest.tests dhallCache
     defaultMain $
@@ -107,7 +110,6 @@ main = do
                 , VcsStatusProps.tests
                 , TuiProps.tests
                 , SandboxProps.tests
-                , AgentLogicProps.tests
                 , AgentTypesProps.tests
                 , MiddlewareProps.tests
                 , PtyTypesProps.tests
@@ -120,7 +122,9 @@ main = do
                 , ApiTypesProps.tests
                 , ProxyTypesProps.tests
                 ]
+            , agentTests
             , apiTests
             , toolStreamingTests
+            , handlerSubprocessTests
             , haskemathesisTests
             ]

@@ -281,8 +281,8 @@ test-suite weapon-server-test
   other-modules:
     ApiCompatibilitySpec
     Integration.ApiComplianceTest
+    Integration.HandlerSubprocessSpec
     Integration.HaskemathesisTest
-    Property.AgentLogicProps
     Property.AgentTypesProps
     Property.ApiFileProps
     Property.ApiTypesProps
@@ -328,6 +328,8 @@ test-suite weapon-server-test
     Property.TuiProps
     Property.VcsStatusProps
     Test.Fixture
+    Test.Helpers
+    Unit.AgentSpec
     Unit.ApiSpec
     Unit.ToolStreamingSpec
 

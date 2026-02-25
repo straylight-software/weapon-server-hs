@@ -3,7 +3,6 @@
 module Property.RequestProps where
 
 import Data.Aeson (Value (..), object, (.=))
-import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -15,6 +14,7 @@ import Storage.Storage qualified as Storage
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
 import Test.Fixture (propertyWithTempDir)
+import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
@@ -147,9 +147,6 @@ genValue :: Gen Value
 genValue = do
     text <- genText
     pure $ object ["id" .= text]
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 tests :: TestTree
 tests =

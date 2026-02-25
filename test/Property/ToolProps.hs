@@ -8,7 +8,6 @@ import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
 import Data.Foldable (toList)
-import Data.List qualified as List
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -21,6 +20,7 @@ import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 
 import Test.Fixture (propertyWithTempDir)
+import Test.Helpers (listLength)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.Hedgehog
 import Tool.Defs qualified as Tool
@@ -207,9 +207,6 @@ prop_toolNamesUnique = property $ do
     let names = map tdName tools
     let uniqueCount = Set.size (Set.fromList names)
     listLength names === uniqueCount
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 -- | Property: tool list returns consistent results
 prop_toolListConsistent :: Property

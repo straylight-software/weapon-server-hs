@@ -16,7 +16,7 @@ import Test.Tasty.Hedgehog
 
 -- | Property: merging twice with same config is idempotent
 prop_mergeIdempotent :: Property
-prop_mergeIdempotent = withTests 50 $ property $ do
+prop_mergeIdempotent = property $ do
     base <- forAll genConfig
     override <- forAll genConfig
     let merged1 = mergeConfig base override
@@ -25,7 +25,7 @@ prop_mergeIdempotent = withTests 50 $ property $ do
 
 -- | Property: config JSON round-trip preserves values
 prop_configJsonRoundtrip :: Property
-prop_configJsonRoundtrip = withTests 50 $ property $ do
+prop_configJsonRoundtrip = property $ do
     cfg <- forAll genConfig
     let json = encode cfg
     case decode json of
@@ -33,7 +33,7 @@ prop_configJsonRoundtrip = withTests 50 $ property $ do
         Just cfg' -> cfg === cfg'
 
 prop_formatterDisabledJson :: Property
-prop_formatterDisabledJson = withTests 50 $ property $ do
+prop_formatterDisabledJson = property $ do
     let cfg = defaultConfig{cfgFormatter = Just FormatterDisabled}
     let json = encode cfg
     case decode json of
@@ -42,7 +42,7 @@ prop_formatterDisabledJson = withTests 50 $ property $ do
 
 -- | Property: config merge is associative
 prop_configMergeAssociative :: Property
-prop_configMergeAssociative = withTests 30 $ property $ do
+prop_configMergeAssociative = property $ do
     cfg1 <- forAll genConfig
     cfg2 <- forAll genConfig
     cfg3 <- forAll genConfig
@@ -52,7 +52,7 @@ prop_configMergeAssociative = withTests 30 $ property $ do
 
 -- | Property: config update is idempotent (updating twice same as once)
 prop_configUpdateIdempotent :: Property
-prop_configUpdateIdempotent = withTests 30 $ property $ do
+prop_configUpdateIdempotent = property $ do
     base <- forAll genConfig
     update <- forAll genConfig
     let once = mergeConfig base update
@@ -61,7 +61,7 @@ prop_configUpdateIdempotent = withTests 30 $ property $ do
 
 -- | Property: mergeConfig with Right values overrides Left values
 prop_mergeRightOverridesLeft :: Property
-prop_mergeRightOverridesLeft = withTests 50 $ property $ do
+prop_mergeRightOverridesLeft = property $ do
     theme1 <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
     theme2 <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
     let cfg1 = defaultConfig{cfgTheme = Just theme1}
@@ -71,7 +71,7 @@ prop_mergeRightOverridesLeft = withTests 50 $ property $ do
 
 -- | Property: mergeConfig preserves provider settings from override
 prop_mergePreservesProviders :: Property
-prop_mergePreservesProviders = withTests 50 $ property $ do
+prop_mergePreservesProviders = property $ do
     disabled <- forAll Gen.bool
     let providerCfg =
             ProviderConfig
@@ -94,7 +94,7 @@ prop_mergePreservesProviders = withTests 50 $ property $ do
 
 -- | Property: keybinds merge preserves defaults
 prop_keybindsMergePreservesDefaults :: Property
-prop_keybindsMergePreservesDefaults = withTests 50 $ property $ do
+prop_keybindsMergePreservesDefaults = property $ do
     let cfg1 = defaultConfig
     let cfg2 = defaultConfig{cfgKeybinds = defaultKeybinds{kbLeader = Just "ctrl+space"}}
     let merged = mergeConfig cfg1 cfg2
@@ -105,7 +105,7 @@ prop_keybindsMergePreservesDefaults = withTests 50 $ property $ do
 
 -- | Property: default config has all keybinds populated
 prop_defaultConfigHasKeybinds :: Property
-prop_defaultConfigHasKeybinds = withTests 1 $ property $ do
+prop_defaultConfigHasKeybinds = property $ do
     -- Critical: app_exit must be present for Ctrl+C to work
     kbAppExit (cfgKeybinds defaultConfig) === Just "ctrl+c,ctrl+d,<leader>q"
     kbLeader (cfgKeybinds defaultConfig) === Just "ctrl+x"

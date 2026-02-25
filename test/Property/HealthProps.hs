@@ -4,19 +4,21 @@ module Property.HealthProps where
 
 import Api (Health (..))
 import Data.Aeson (decode, encode)
-import Data.Text (Text)
+
 import Health.Build qualified as HealthBuild
 import Hedgehog
-import Hedgehog.Gen qualified as Gen
-import Hedgehog.Range qualified as Range
+import Test.Helpers (genText)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
+-- | Property: buildHealth always returns healthy=True and echoes the version
 prop_buildHealth :: Property
 prop_buildHealth = property $ do
     version <- forAll genText
     let Health healthy ver = HealthBuild.buildHealth version
+    -- Server is always healthy when running
     healthy === True
+    -- Version is echoed back
     ver === version
 
 prop_healthJsonRoundtrip :: Property
@@ -26,9 +28,6 @@ prop_healthJsonRoundtrip = property $ do
     case decode (encode health) of
         Nothing -> failure
         Just health' -> health' === health
-
-genText :: Gen Text
-genText = Gen.text (Range.linear 1 20) Gen.alphaNum
 
 tests :: TestTree
 tests =

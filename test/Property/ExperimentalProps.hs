@@ -24,7 +24,7 @@ withStore action = do
     pure result
 
 prop_worktreeSetGet :: Property
-prop_worktreeSetGet = withTests 50 $ property $ do
+prop_worktreeSetGet = property $ do
     root <- forAll genText
     value <- forAll genValue
     result <- evalIO $ withStore $ \store -> do
@@ -33,7 +33,7 @@ prop_worktreeSetGet = withTests 50 $ property $ do
     result === value
 
 prop_worktreeReset :: Property
-prop_worktreeReset = withTests 50 $ property $ do
+prop_worktreeReset = property $ do
     root <- forAll genText
     result <- evalIO $ withStore $ \store -> Worktree.resetInfo store root
     case result of
@@ -43,18 +43,20 @@ prop_worktreeReset = withTests 50 $ property $ do
             Nothing -> failure
         _otherValue -> failure
 
--- | Property: worktree remove succeeds on empty store
+{- | Property: worktree remove on empty store does not crash
+This is a smoke test - the operation should complete without exceptions
+-}
 prop_worktreeRemoveEmpty :: Property
-prop_worktreeRemoveEmpty = withTests 50 $ property $ do
+prop_worktreeRemoveEmpty = property $ do
     root <- forAll genText
-    result <- evalIO $ withStore $ \store -> Worktree.remove store root Nothing
-    case result of
-        Right () -> success
-        Left _err -> success -- Both outcomes are valid for empty store
+    _result <- evalIO $ withStore $ \store -> Worktree.remove store root Nothing
+    -- If we get here without exception, the test passes
+    -- Both Right () and Left err are valid outcomes for empty store
+    success
 
 -- | Property: worktree remove after set succeeds
 prop_worktreeRemoveAfterSet :: Property
-prop_worktreeRemoveAfterSet = withTests 50 $ property $ do
+prop_worktreeRemoveAfterSet = property $ do
     root <- forAll genText
     value <- forAll genValue
     result <- evalIO $ withStore $ \store -> do
@@ -64,22 +66,21 @@ prop_worktreeRemoveAfterSet = withTests 50 $ property $ do
         Right () -> success
         Left _err -> failure
 
--- | Property: worktree get after remove returns default
+{- | Property: worktree get after remove returns an object
+After remove, getInfo should still return a valid JSON object
+-}
 prop_worktreeGetAfterRemove :: Property
-prop_worktreeGetAfterRemove = withTests 50 $ property $ do
+prop_worktreeGetAfterRemove = property $ do
     root <- forAll genText
     value <- forAll genValue
     result <- evalIO $ withStore $ \store -> do
         _ <- Worktree.setInfo store value
         _ <- Worktree.remove store root Nothing
         Worktree.getInfo store root
-    -- After remove, getInfo should return default value
+    -- After remove, getInfo should return a valid object (default or empty)
     case result of
-        Object obj -> case KM.lookup (K.fromText "ready") obj of
-            Just (Bool True) -> success
-            Just _otherValue -> success -- Either outcome acceptable
-            Nothing -> success
-        _otherValue -> success
+        Object _obj -> success
+        _notObject -> failure
 
 genText :: Gen Text
 genText = Gen.text (Range.linear 1 20) Gen.alphaNum
@@ -91,7 +92,7 @@ genValue = do
 
 -- | Property: worktree set is idempotent
 prop_worktreeSetIdempotent :: Property
-prop_worktreeSetIdempotent = withTests 30 $ property $ do
+prop_worktreeSetIdempotent = property $ do
     root <- forAll genText
     value <- forAll genValue
     result <- evalIO $ withStore $ \store -> do
@@ -102,7 +103,7 @@ prop_worktreeSetIdempotent = withTests 30 $ property $ do
 
 -- | Property: worktree reset after set returns new value
 prop_worktreeResetAfterSet :: Property
-prop_worktreeResetAfterSet = withTests 30 $ property $ do
+prop_worktreeResetAfterSet = property $ do
     root <- forAll genText
     value <- forAll genValue
     result <- evalIO $ withStore $ \store -> do
@@ -117,7 +118,7 @@ prop_worktreeResetAfterSet = withTests 30 $ property $ do
 
 -- | Property: worktree get with different roots returns same value
 prop_worktreeGetDifferentRoots :: Property
-prop_worktreeGetDifferentRoots = withTests 30 $ property $ do
+prop_worktreeGetDifferentRoots = property $ do
     root1 <- forAll genText
     root2 <- forAll genText
     value <- forAll genValue
@@ -128,22 +129,21 @@ prop_worktreeGetDifferentRoots = withTests 30 $ property $ do
         pure (r1, r2)
     result1 === result2
 
--- | Property: worktree remove is idempotent
+-- | Property: worktree remove is idempotent (doesn't crash on second call)
 prop_worktreeRemoveIdempotent :: Property
-prop_worktreeRemoveIdempotent = withTests 30 $ property $ do
+prop_worktreeRemoveIdempotent = property $ do
     root <- forAll genText
     value <- forAll genValue
-    result <- evalIO $ withStore $ \store -> do
+    _result <- evalIO $ withStore $ \store -> do
         _ <- Worktree.setInfo store value
         _ <- Worktree.remove store root Nothing
         Worktree.remove store root Nothing
-    case result of
-        Right () -> success
-        Left _err -> success
+    -- If we reach here, both remove calls completed without exception
+    success
 
 -- | Property: worktree set preserves all fields
 prop_worktreeSetPreservesFields :: Property
-prop_worktreeSetPreservesFields = withTests 30 $ property $ do
+prop_worktreeSetPreservesFields = property $ do
     root <- forAll genText
     text <- forAll genText
     let value = object ["root" .= text, "ready" .= True, "extra" .= ("field" :: Text)]
@@ -158,7 +158,7 @@ prop_worktreeSetPreservesFields = withTests 30 $ property $ do
 
 -- | Property: worktree operations are independent per store
 prop_worktreeIndependentStores :: Property
-prop_worktreeIndependentStores = withTests 20 $ property $ do
+prop_worktreeIndependentStores = property $ do
     root <- forAll genText
     value1 <- forAll genValue
     value2 <- forAll genValue

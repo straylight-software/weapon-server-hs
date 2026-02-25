@@ -9,6 +9,7 @@ import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Session.Types qualified as ST
+import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Vcs.Diff qualified as Diff
@@ -101,9 +102,6 @@ genFileEntry = do
     dels <- Gen.int (Range.linear 0 1000)
     fname <- genFileName
     pure (adds, dels, fname)
-
-listLength :: [a] -> Int
-listLength = List.foldl' (\acc _ -> acc + 1) 0
 
 sumInts :: [Int] -> Int
 sumInts = List.foldl' (+) 0
