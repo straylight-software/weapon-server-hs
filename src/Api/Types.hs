@@ -478,7 +478,7 @@ type QuestionRejectAPI = "question" :> Capture "requestID" Text :> "reject" :> Q
 type FindAPI = "find" :> QueryParam "query" Text :> QueryParam "pattern" Text :> QueryParam "directory" Text :> Get '[JSON] [Value]
 
 -- | @GET /find/file@ - Search for files with advanced options.
-type FindFileAPI = "find" :> "file" :> QueryParam "pattern" Text :> QueryParam "directory" Text :> QueryParam "dirs" Bool :> QueryParam "type" Text :> QueryParam "limit" Int :> Get '[JSON] [Value]
+type FindFileAPI = "find" :> "file" :> QueryParam "query" Text :> QueryParam "directory" Text :> QueryParam "dirs" Bool :> QueryParam "type" Text :> QueryParam "limit" Int :> Get '[JSON] [Value]
 
 -- | @GET /find/symbol@ - Search for symbols in the codebase.
 type FindSymbolAPI = "find" :> "symbol" :> QueryParam "query" Text :> QueryParam "directory" Text :> Get '[JSON] [Value]

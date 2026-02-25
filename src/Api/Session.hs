@@ -352,7 +352,7 @@ type SessionTodoAPI =
 
 -- | @POST /session/:sessionID/init@ - Initialize a session.
 type SessionInitAPI =
-    "session" :> Capture "sessionID" Text :> "init" :> Post '[JSON] Bool
+    "session" :> Capture "sessionID" Text :> "init" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
 
 {- | @POST /session/:sessionID/fork@ - Fork a session.
 
@@ -391,6 +391,7 @@ type SessionDiffAPI =
     "session"
         :> Capture "sessionID" Text
         :> "diff"
+        :> QueryParam "directory" Text
         :> QueryParam "messageID" Text
         :> Get '[JSON] [FileDiff]
 

@@ -33,7 +33,7 @@ import Haskemathesis.OpenApi.Resolve (resolveOperations)
 import Haskemathesis.OpenApi.Types (ResolvedOperation (..))
 import Katip (Severity (ErrorS))
 import Log qualified
-import Middleware (supplyEmptyBody)
+import Middleware (rejectEmptyPathSegments, supplyEmptyBody)
 import Network.Wai (Application)
 import Servant (serveWithContext)
 import Server.ErrorFormatters (errorFormattersContext)
@@ -107,7 +107,7 @@ createTestApp dhallCache counter = do
     -- Pre-seed sessions with known IDs
     preSeedSessions state
 
-    let app = supplyEmptyBody $ serveWithContext api errorFormattersContext (server state)
+    let app = rejectEmptyPathSegments $ supplyEmptyBody $ serveWithContext api errorFormattersContext (server state)
     pure (app, state)
 
 -- | Pre-seed sessions with known IDs for testing

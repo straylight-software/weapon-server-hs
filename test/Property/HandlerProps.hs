@@ -411,7 +411,7 @@ prop_sessionInitHandler dhallCache exeCache = property $ do
         var <- newEmptyTMVarIO
         _ <- Bus.subscribe (stBus st) "session.initialized" $ \event ->
             atomically $ void $ tryPutTMVar var event
-        res <- runHandlerIO (sessionInitHandler st sid)
+        res <- runHandlerIO (sessionInitHandler st sid Nothing (object []))
         evt <- waitVar 1000000 var
         pure (res, evt)
     case result of
@@ -482,7 +482,7 @@ prop_sessionDiffHandler dhallCache exeCache = property $ do
     sid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         ( do
-            res <- runHandlerIO (sessionDiffHandler st sid Nothing)
+            res <- runHandlerIO (sessionDiffHandler st sid Nothing Nothing)
             pure (res, Nothing :: Maybe VcsError)
         )
             `catch` \(e :: VcsError) -> pure (Right [], Just e)

@@ -62,6 +62,7 @@ library
     Api.Session
     Api.Tui
     Api.Types
+    Api.Validation
     Bus.Bus
     Bus.Event
     Config.Config

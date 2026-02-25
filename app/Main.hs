@@ -31,7 +31,7 @@ import Global.Event ()
 import Handlers
 import Katip qualified
 import Log qualified
-import Middleware (requestLogger, supplyEmptyBody)
+import Middleware (rejectEmptyPathSegments, requestLogger, supplyEmptyBody)
 import Network.HTTP.Types (methodOptions, status200)
 import Network.Wai (Middleware, mapResponseHeaders, requestMethod, responseLBS)
 import Network.Wai.Handler.WebSockets (websocketsOr)
@@ -149,7 +149,7 @@ main = Log.withLoggerLevel "weapon" defaultLogLevel $ \logger -> do
     Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
     Log.logMsg serverLogger Katip.InfoS "listening on port 4096"
 
-    let servantApp = requestLogger logger $ enableCors $ supplyEmptyBody $ serve api (server appState)
+    let servantApp = requestLogger logger $ rejectEmptyPathSegments $ enableCors $ supplyEmptyBody $ serve api (server appState)
         websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
 
     -- Use limited cores to avoid hitting io_uring fd limits on high-core machines
