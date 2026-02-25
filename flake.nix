@@ -63,6 +63,7 @@
           packages = {
             default = server;
             inherit (hsPkgs) weapon-server;
+            docs = hsPkgs.weapon-server.doc;
           };
 
           checks.weapon-server = server;
@@ -76,7 +77,8 @@
                 ghcid
                 haskell-language-server
                 haskellPackages.stan
-                liburing # io_uring bindings
+                liburing
+                mdbook
               ]);
           };
         };

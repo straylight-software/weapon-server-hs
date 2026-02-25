@@ -1,0 +1,13 @@
+[book]
+title = "Weapon Server"
+authors = ["Luke Bailey"]
+language = "en"
+src = "src"
+description = "Documentation for the Weapon Server Haskell backend"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/straylight-software/weapon-server-hs"
+edit-url-template = "https://github.com/straylight-software/weapon-server-hs/edit/main/docs/{path}"

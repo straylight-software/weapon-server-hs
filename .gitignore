@@ -1,7 +1,7 @@
 dist-newstyle
 .direnv
 .opencode-test
-result
+result*
 .hie
 *.prof
 .weapon

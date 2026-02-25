@@ -1,0 +1,32 @@
+name: Deploy documentation
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+jobs:
+  build-config:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+      - name: Build Docs
+        run: nix build .#docs --accept-flake-config -L
+      - name: Prep Docs Dir
+        run: |
+          mkdir ./docs-gen
+          cp -R result-doc/share/doc/*/html/. ./docs-gen
+      - name: Pages deploy
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: docs-gen
+          clean-exclude: pr-preview/
+          force: false
