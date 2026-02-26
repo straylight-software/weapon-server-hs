@@ -1,13 +1,26 @@
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+      inputs.nixpkgs-lib.follows = "nixpkgs";
+    };
 
-    haskemathesis.url = "git+ssh://git@github.com/straylight-software/haskemathesis.git";
-    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    haskemathesis = {
+      url = "git+ssh://git@github.com/straylight-software/haskemathesis.git";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-parts.follows = "flake-parts";
+      inputs.treefmt-nix.follows = "treefmt-nix";
+    };
 
     weapon = {
       url = "git+ssh://git@github.com/straylight-software/weapon.git";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
