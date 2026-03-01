@@ -24,7 +24,7 @@ import Haskemathesis.Config (TestConfig (..), defaultStatefulChecks, defaultTest
 import Haskemathesis.Coverage.HPC (hpcAvailable)
 import Haskemathesis.Execute.Types (ApiRequest (..), ExecutorWithTimeout)
 import Haskemathesis.Execute.Wai (executeWaiWithTimeout)
-import Haskemathesis.Execute.WaiCoverage (CoverageResult (..), executeWaiWithCoverage)
+import Haskemathesis.Execute.WaiCoverage (CoverageResult (..), CoverageTracker, executeWaiTracked, newCoverageTracker)
 import Haskemathesis.Integration.Tasty (testTreeForExecutorFactoryIO, testTreeForExecutorFactoryNegativeIO)
 import Haskemathesis.OpenApi.Loader (loadOpenApiFile)
 import Haskemathesis.OpenApi.Types (ResolvedOperation (..))
@@ -176,11 +176,15 @@ createExecutor app timeout req = do
 Uses HPC to track code coverage during test execution. This enables
 coverage-guided fuzzing where inputs that discover new code paths are
 prioritized.
+
+Note: The coverage executor ignores the timeout parameter since executeWaiTracked
+doesn't support timeouts. For coverage-guided fuzzing, we rely on the test
+framework's timeout mechanisms instead.
 -}
-createCoverageExecutor :: Application -> ExecutorWithTimeout
-createCoverageExecutor app timeout req = do
+createCoverageExecutor :: CoverageTracker -> Application -> ExecutorWithTimeout
+createCoverageExecutor tracker app _timeout req = do
     let req' = rewriteSessionId req
-    result <- executeWaiWithCoverage app timeout req'
+    result <- executeWaiTracked tracker app req'
     pure (crResponse result)
 
 -- | Test configuration with all features enabled (except response time checks)
@@ -219,6 +223,9 @@ tests dhallCache = do
             when hasCoverage $
                 hPutStrLn stderr "Coverage-guided fuzzing enabled (HPC available)"
 
+            -- Create coverage tracker once, reuse for all operations
+            tracker <- newCoverageTracker
+
             -- Factory creates isolated executor per operation
             -- Each operation gets its own storage directory to prevent file lock conflicts
             let mkExecutor :: ResolvedOperation -> IO ExecutorWithTimeout
@@ -226,7 +233,7 @@ tests dhallCache = do
                     (app, _state) <- createTestApp dhallCache counter
                     pure $
                         if hasCoverage
-                            then createCoverageExecutor app
+                            then createCoverageExecutor tracker app
                             else createExecutor app
 
             -- Use the factory IO variants that create isolated executors per operation

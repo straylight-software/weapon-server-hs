@@ -12,6 +12,7 @@
   directory,
   filepath,
   haskemathesis ? null, # Optional: only needed for tests
+  haskemathesis-tasty ? null, # Optional: only needed for tests
   hedgehog ? null,
   hspec ? null,
   hspec-core ? null,
@@ -139,6 +140,7 @@ mkDerivation {
     directory
     filepath
     haskemathesis
+    haskemathesis-tasty
     hedgehog
     hspec
     hspec-core

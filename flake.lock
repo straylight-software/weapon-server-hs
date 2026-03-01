@@ -67,27 +67,26 @@
         ]
       },
       "locked": {
-        "lastModified": 1772392276,
-        "narHash": "sha256-AHhkspXsWSakQmtRgG6/OO9G5U75c+Cjb6Wmn+ybdiw=",
-        "ref": "executor-io-api",
-        "rev": "0685d29c009b4642127a4a4d4152f6cb9b58a485",
-        "revCount": 67,
+        "lastModified": 1772407484,
+        "narHash": "sha256-Etz8jl3BZNW7kxJ6m806ciCwr3O//TKrD6tKaeqaElw=",
+        "ref": "refs/heads/master",
+        "rev": "853fb5434765e110666fc55bfccab22476420697",
+        "revCount": 77,
         "type": "git",
         "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       },
       "original": {
-        "ref": "executor-io-api",
         "type": "git",
         "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       }
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1771923393,
-        "narHash": "sha256-Fy0+UXELv9hOE8WjYhJt8fMDLYTU2Dqn3cX4BwoGBos=",
+        "lastModified": 1772173633,
+        "narHash": "sha256-MOH58F4AIbCkh6qlQcwMycyk5SWvsqnS/TCfnqDlpj4=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "ea7f1f06811ce7fcc81d6c6fd4213150c23edcf2",
+        "rev": "c0f3d81a7ddbc2b1332be0d8481a672b4f6004d6",
         "type": "github"
       },
       "original": {

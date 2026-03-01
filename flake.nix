@@ -12,7 +12,7 @@
     };
 
     haskemathesis = {
-      url = "git+ssh://git@github.com/straylight-software/haskemathesis.git?ref=executor-io-api";
+      url = "git+ssh://git@github.com/straylight-software/haskemathesis.git";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-parts.follows = "flake-parts";
       inputs.treefmt-nix.follows = "treefmt-nix";
@@ -51,11 +51,42 @@
           ...
         }:
         let
+          # Get pre-built haskemathesis packages from the flake
+          # These are built with the same nixpkgs (via inputs.nixpkgs.follows)
+          haskemathesisPkgs = inputs'.haskemathesis.packages;
+
+          # Falsify fork source from haskemathesis inputs
+          falsifySrc = inputs.haskemathesis.inputs.falsify.outPath + "/lib";
+
+          # Enable profiling for a package
+          withProfiling =
+            pkg:
+            pkgs.haskell.lib.enableExecutableProfiling (pkgs.haskell.lib.enableLibraryProfiling pkg);
+
           hsPkgs = pkgs.haskellPackages.override {
-            overrides = self: _super: {
-              haskemathesis = pkgs.haskell.lib.enableLibraryProfiling inputs'.haskemathesis.packages.default;
-              weapon-server = self.callPackage ./default.nix { };
-            };
+            overrides = self: super:
+              let
+                # Rebuild a haskemathesis package with profiling using our haskellPackages
+                # We call the cabal2nix expression and override src via overrideCabal
+                rebuildWithProfiling =
+                  origPkg:
+                  withProfiling (
+                    pkgs.haskell.lib.overrideCabal (self.callPackage origPkg.passthru.cabal2nixDeriver { }) (
+                      old: {
+                        src = origPkg.src;
+                      }
+                    )
+                  );
+              in
+              {
+                # Falsify fork with profiling (required by haskemathesis)
+                falsify = withProfiling (self.callCabal2nix "falsify" falsifySrc { });
+                # Rebuild haskemathesis packages with our haskellPackages and profiling
+                haskemathesis-core = rebuildWithProfiling haskemathesisPkgs.haskemathesis-core;
+                haskemathesis = rebuildWithProfiling haskemathesisPkgs.haskemathesis;
+                haskemathesis-tasty = rebuildWithProfiling haskemathesisPkgs.haskemathesis-tasty;
+                weapon-server = self.callPackage ./default.nix { };
+              };
           };
 
           runtimePkgs = with pkgs; [
