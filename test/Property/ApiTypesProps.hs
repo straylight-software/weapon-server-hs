@@ -46,15 +46,24 @@ genPathInfo =
         <*> genFilePath
         <*> genFilePath
 
+genProjectTime :: Gen ProjectTime
+genProjectTime =
+    ProjectTime
+        <$> Gen.double (Range.linearFrac 0 2000000000)
+        <*> Gen.double (Range.linearFrac 0 2000000000)
+        <*> Gen.maybe (Gen.double (Range.linearFrac 0 2000000000))
+
 genProject :: Gen Project
 genProject =
     Project
         <$> genNonEmptyText
         <*> genFilePath
         <*> Gen.maybe genText
+        <*> genProjectTime
+        <*> Gen.list (Range.linear 0 3) genFilePath
 
 genVcsInfo :: Gen VcsInfo
-genVcsInfo = VcsInfo <$> Gen.maybe genNonEmptyText
+genVcsInfo = VcsInfo <$> genNonEmptyText
 
 genChatInput :: Gen ChatInput
 genChatInput =
@@ -148,13 +157,13 @@ prop_healthyEncoding = property $ do
         Nothing -> failure
         Just (h' :: Health) -> healthy h' === True
 
--- | Property: VcsInfo with no branch parses correctly
+-- | Property: VcsInfo with no branch fails to parse (branch is required)
 prop_vcsInfoNoBranch :: Property
 prop_vcsInfoNoBranch = property $ do
     let json = encode $ object []
     case decode json of
-        Nothing -> failure
-        Just (v :: VcsInfo) -> branch v === Nothing
+        Nothing -> success -- Expected: empty object should fail to parse
+        Just (_ :: VcsInfo) -> failure -- Should not parse without branch
 
 -- | Property: ChatInput message is preserved
 prop_chatInputMessagePreserved :: Property

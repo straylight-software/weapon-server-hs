@@ -35,6 +35,7 @@ module Project.Discovery (
 import Api (Project (..))
 import Control.Monad (filterM)
 import Data.List (nubBy)
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import Project.Build qualified as ProjectBuild
 import System.Directory (doesFileExist, listDirectory)
 import System.FilePath ((</>))
@@ -63,15 +64,16 @@ Given a directory structure:
 @
 
 >>> discoverProjects "/workspace"
-[Project "proj_workspace" "/workspace" (Just "workspace"),
- Project "proj_projectA" "/workspace/projectA" (Just "projectA"),
- Project "proj_projectB" "/workspace/projectB" (Just "projectB")]
+[Project "proj_workspace" "/workspace" (Just "workspace") (ProjectTime now now Nothing) [],
+ Project "proj_projectA" "/workspace/projectA" (Just "projectA") (ProjectTime now now Nothing) [],
+ Project "proj_projectB" "/workspace/projectB" (Just "projectB") (ProjectTime now now Nothing) []]
 -}
 discoverProjects :: FilePath -> IO [Project]
 discoverProjects root = do
+    now <- realToFrac <$> getPOSIXTime
     entries <- listDirectory root
     subdirsWithConfig <- filterSubdirsWithConfig root entries
-    pure $ buildProjectList root subdirsWithConfig
+    pure $ buildProjectList now root subdirsWithConfig
 
 {- | Filter subdirectories that contain a @weapon.dhall@ configuration file.
 
@@ -90,17 +92,17 @@ them. The root directory is always included as the first project.
 
 ==== __Examples__
 
->>> buildProjectList "/workspace" ["projectA", "projectB"]
-[Project "proj_workspace" "/workspace" (Just "workspace"),
- Project "proj_projectA" "/workspace/projectA" (Just "projectA"),
- Project "proj_projectB" "/workspace/projectB" (Just "projectB")]
+>>> buildProjectList 1709312000 "/workspace" ["projectA", "projectB"]
+[Project "proj_workspace" "/workspace" (Just "workspace") (ProjectTime 1709312000 1709312000 Nothing) [],
+ Project "proj_projectA" "/workspace/projectA" (Just "projectA") (ProjectTime 1709312000 1709312000 Nothing) [],
+ Project "proj_projectB" "/workspace/projectB" (Just "projectB") (ProjectTime 1709312000 1709312000 Nothing) []]
 -}
-buildProjectList :: FilePath -> [FilePath] -> [Project]
-buildProjectList root subdirs =
+buildProjectList :: Double -> FilePath -> [FilePath] -> [Project]
+buildProjectList now root subdirs =
     deduplicateProjects $ rootProject : subProjects
   where
-    rootProject = ProjectBuild.projectFromDir root
-    subProjects = map (ProjectBuild.projectFromDir . (root </>)) subdirs
+    rootProject = ProjectBuild.projectFromDir now root
+    subProjects = map (ProjectBuild.projectFromDir now . (root </>)) subdirs
 
 {- | Remove duplicate projects by worktree path, keeping the first occurrence.
 

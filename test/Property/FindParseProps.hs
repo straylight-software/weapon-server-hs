@@ -14,7 +14,7 @@ functionality in the Find modules. Tests cover:
 -}
 module Property.FindParseProps where
 
-import Data.Aeson (object, (.=))
+import Data.Aeson (ToJSON (toJSON), object, (.=))
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -209,11 +209,11 @@ prop_fdResultsToJsonStructure = property $ do
     let results = Search.fdResultsToJson paths
     listLength results === listLength paths
 
--- | Property: fdResultsToJson preserves paths.
+-- | Property: fdResultsToJson preserves paths as JSON strings.
 prop_fdResultsToJsonPreservesPaths :: Property
 prop_fdResultsToJsonPreservesPaths = property $ do
     path <- forAll genPath
-    let expected = [object ["path" .= path]]
+    let expected = [toJSON path]
     Search.fdResultsToJson [path] === expected
 
 -- | Property: applyResultLimit with Nothing returns all results.

@@ -40,6 +40,7 @@ module Api.Types (
 
     -- ** Project Management
     Project (..),
+    ProjectTime (..),
 
     -- ** Provider Management
     ProviderList (..),
@@ -86,6 +87,7 @@ module Api.Types (
     -- ** Permissions and Questions
     PermissionAPI,
     PermissionReplyAPI,
+    PermissionReplyInput (..),
     QuestionAPI,
     QuestionReplyAPI,
     QuestionRejectAPI,
@@ -127,6 +129,7 @@ import Data.Aeson (
 import Data.Text (Text)
 import Formatter.Status (FormatterStatus)
 import GHC.Generics (Generic)
+import Json.Strict (withStrictObject)
 import Servant (
     Capture,
     Delete,
@@ -219,7 +222,13 @@ Projects group sessions and configuration together.
 ==== Example JSON
 
 @
-{ "id": "proj_abc123", "worktree": "/home/user/myproject", "name": "My Project" }
+{
+  "id": "proj_abc123",
+  "worktree": "/home/user/myproject",
+  "name": "My Project",
+  "time": { "created": 1709312000, "updated": 1709312100 },
+  "sandboxes": []
+}
 @
 -}
 data Project = Project
@@ -229,12 +238,37 @@ data Project = Project
     -- ^ Absolute path to the project worktree
     , name :: Maybe Text
     -- ^ Optional human-readable project name
+    , time :: ProjectTime
+    -- ^ Project timestamps
+    , sandboxes :: [Text]
+    -- ^ List of sandbox directory paths
     }
     deriving (Eq, Show, Generic)
 
 instance ToJSON Project
 
 instance FromJSON Project
+
+-- | Project timestamps
+data ProjectTime = ProjectTime
+    { created :: Double
+    -- ^ Unix timestamp when project was created
+    , updated :: Double
+    -- ^ Unix timestamp when project was last updated
+    , initialized :: Maybe Double
+    -- ^ Unix timestamp when project was initialized (optional)
+    }
+    deriving (Eq, Show, Generic)
+
+instance ToJSON ProjectTime where
+    toJSON pt =
+        object $
+            [ "created" .= created pt
+            , "updated" .= updated pt
+            ]
+                ++ maybe [] (\i -> ["initialized" .= i]) (initialized pt)
+
+instance FromJSON ProjectTime
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // provider //
@@ -317,24 +351,17 @@ Returns 'Nothing' for the branch if not in a git repository.
 { "branch": "main" }
 @
 
-Or when not in a git repo:
-
-@
-{}
-@
+Returns 404 if not in a git repository.
 -}
 newtype VcsInfo = VcsInfo
-    { branch :: Maybe Text
-    -- ^ Current git branch name, or 'Nothing' if not in a git repository
+    { branch :: Text
+    -- ^ Current git branch name
     }
     deriving (Eq, Show, Generic)
 
 instance ToJSON VcsInfo
 
-instance FromJSON VcsInfo where
-    parseJSON = withObject "VcsInfo" $ \v ->
-        VcsInfo
-            <$> v .:? "branch"
+instance FromJSON VcsInfo
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // chat //
@@ -439,7 +466,7 @@ type AgentAPI = "agent" :> Get '[JSON] [Value]
 type ConfigAPI = "config" :> Get '[JSON] Value
 
 -- | @GET /command@ - List available commands.
-type CommandAPI = "command" :> Get '[JSON] [Value]
+type CommandAPI = "command" :> QueryParam "directory" Text :> Get '[JSON] [Value]
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Language Server and VCS
@@ -459,7 +486,29 @@ type VcsAPI = "vcs" :> Get '[JSON] VcsInfo
 type PermissionAPI = "permission" :> QueryParam "directory" Text :> Get '[JSON] [Value]
 
 -- | @POST /permission/:requestID/reply@ - Reply to a permission request.
-type PermissionReplyAPI = "permission" :> Capture "requestID" Text :> "reply" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type PermissionReplyAPI = "permission" :> Capture "requestID" Text :> "reply" :> QueryParam "directory" Text :> ReqBody '[JSON] PermissionReplyInput :> Post '[JSON] Bool
+
+-- | Input for permission reply endpoint (strict JSON parsing)
+data PermissionReplyInput = PermissionReplyInput
+    { priReply :: Text
+    -- ^ Reply type: "once", "always", or "reject"
+    , priMessage :: Maybe Text
+    -- ^ Optional message
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON PermissionReplyInput where
+    parseJSON = withStrictObject "PermissionReplyInput" ["reply", "message"] $ \v ->
+        PermissionReplyInput
+            <$> v .: "reply"
+            <*> v .:? "message"
+
+instance ToJSON PermissionReplyInput where
+    toJSON pri =
+        object
+            [ "reply" .= priReply pri
+            , "message" .= priMessage pri
+            ]
 
 -- | @GET /question@ - List pending questions.
 type QuestionAPI = "question" :> QueryParam "directory" Text :> Get '[JSON] [Value]
@@ -474,14 +523,20 @@ type QuestionRejectAPI = "question" :> Capture "requestID" Text :> "reject" :> Q
 -- File Search
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- | @GET /find@ - Search for files by query or pattern.
-type FindAPI = "find" :> QueryParam "query" Text :> QueryParam "pattern" Text :> QueryParam "directory" Text :> Get '[JSON] [Value]
+{- | @GET /find@ - Search for text patterns in project files.
+Note: directory parameter removed - always searches project directory.
+-}
+type FindAPI = "find" :> QueryParam "query" Text :> QueryParam "pattern" Text :> Get '[JSON] [Value]
 
--- | @GET /find/file@ - Search for files with advanced options.
-type FindFileAPI = "find" :> "file" :> QueryParam "query" Text :> QueryParam "directory" Text :> QueryParam "dirs" Bool :> QueryParam "type" Text :> QueryParam "limit" Int :> Get '[JSON] [Value]
+{- | @GET /find/file@ - Search for files with advanced options.
+Note: directory parameter removed - always searches project directory.
+-}
+type FindFileAPI = "find" :> "file" :> QueryParam "query" Text :> QueryParam "dirs" Bool :> QueryParam "type" Text :> QueryParam "limit" Int :> Get '[JSON] [Value]
 
--- | @GET /find/symbol@ - Search for symbols in the codebase.
-type FindSymbolAPI = "find" :> "symbol" :> QueryParam "query" Text :> QueryParam "directory" Text :> Get '[JSON] [Value]
+{- | @GET /find/symbol@ - Search for symbols in the codebase.
+Note: directory parameter removed - always searches project directory.
+-}
+type FindSymbolAPI = "find" :> "symbol" :> QueryParam "query" Text :> Get '[JSON] [Value]
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Events

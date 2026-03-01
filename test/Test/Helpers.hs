@@ -19,6 +19,7 @@ module Test.Helpers (
     lookupArray,
     hasKey,
     isObject,
+    valueToText,
 
     -- * Common generators
     genName,
@@ -115,6 +116,11 @@ hasKey _ _ = False
 isObject :: Value -> Bool
 isObject (Object _) = True
 isObject _ = False
+
+-- | Extract Text from a JSON String value
+valueToText :: Value -> Maybe Text
+valueToText (String t) = Just t
+valueToText _ = Nothing
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Common generators

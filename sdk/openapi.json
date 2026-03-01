@@ -145,6 +145,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "parameters": [
@@ -365,6 +391,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -478,6 +530,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -620,6 +698,42 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -635,10 +749,12 @@
                     "type": "object",
                     "properties": {
                       "rows": {
-                        "type": "number"
+                        "type": "integer",
+                        "minimum": 1
                       },
                       "cols": {
-                        "type": "number"
+                        "type": "integer",
+                        "minimum": 1
                       }
                     },
                     "required": [
@@ -990,6 +1106,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1068,11 +1210,47 @@
             }
           },
           "400": {
-            "description": "Bad request - missing or invalid request body",
+            "description": "Bad request",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1127,6 +1305,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1334,6 +1538,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1598,6 +1828,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1821,9 +2077,36 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -1888,6 +2171,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2213,6 +2522,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -2401,6 +2736,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2735,6 +3096,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -2799,6 +3186,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2959,9 +3372,36 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -3093,9 +3533,36 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -3189,6 +3656,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -3351,6 +3844,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -3436,9 +3955,36 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -3595,6 +4141,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -4083,6 +4655,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -4155,6 +4753,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -4192,13 +4816,6 @@
       "get": {
         "operationId": "find.text",
         "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "in": "query",
             "name": "pattern",
@@ -4306,13 +4923,6 @@
         "parameters": [
           {
             "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
             "name": "query",
             "schema": {
               "type": "string"
@@ -4380,13 +4990,6 @@
       "get": {
         "operationId": "find.symbols",
         "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "in": "query",
             "name": "query",
@@ -4609,6 +5212,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -4877,6 +5506,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -4925,6 +5580,32 @@
               "application/json": {
                 "schema": {
                   "type": "boolean"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -5007,9 +5688,36 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -5084,6 +5792,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -5146,6 +5880,32 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -5180,12 +5940,40 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {"type": "object"}
+              "schema": {
+                "type": "object"
+              }
             }
           }
         },
@@ -5289,6 +6077,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not a git repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -5367,6 +6165,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -8046,7 +8870,7 @@
               "duration": {
                 "description": "Duration in milliseconds",
                 "default": 5000,
-                "type": "number"
+                "type": "integer"
               }
             },
             "required": [
@@ -10251,26 +11075,25 @@
       "BadRequestError": {
         "type": "object",
         "properties": {
-          "data": {},
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {}
-            }
+          "name": {
+            "type": "string",
+            "const": "BadRequestError"
           },
-          "success": {
-            "type": "boolean",
-            "const": false
+          "data": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
           }
         },
         "required": [
-          "data",
-          "errors",
-          "success"
+          "name",
+          "data"
         ]
       },
       "OAuth": {
@@ -10432,134 +11255,49 @@
           "id": {
             "type": "string"
           },
-          "providerID": {
-            "type": "string"
-          },
-          "api": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              },
-              "npm": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "url",
-              "npm"
-            ]
-          },
           "name": {
             "type": "string"
           },
           "family": {
             "type": "string"
           },
-          "capabilities": {
-            "type": "object",
-            "properties": {
-              "temperature": {
-                "type": "boolean"
+          "release_date": {
+            "type": "string"
+          },
+          "attachment": {
+            "type": "boolean"
+          },
+          "reasoning": {
+            "type": "boolean"
+          },
+          "temperature": {
+            "type": "boolean"
+          },
+          "tool_call": {
+            "type": "boolean"
+          },
+          "interleaved": {
+            "anyOf": [
+              {
+                "type": "boolean",
+                "const": true
               },
-              "reasoning": {
-                "type": "boolean"
-              },
-              "attachment": {
-                "type": "boolean"
-              },
-              "toolcall": {
-                "type": "boolean"
-              },
-              "input": {
+              {
                 "type": "object",
                 "properties": {
-                  "text": {
-                    "type": "boolean"
-                  },
-                  "audio": {
-                    "type": "boolean"
-                  },
-                  "image": {
-                    "type": "boolean"
-                  },
-                  "video": {
-                    "type": "boolean"
-                  },
-                  "pdf": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "text",
-                  "audio",
-                  "image",
-                  "video",
-                  "pdf"
-                ]
-              },
-              "output": {
-                "type": "object",
-                "properties": {
-                  "text": {
-                    "type": "boolean"
-                  },
-                  "audio": {
-                    "type": "boolean"
-                  },
-                  "image": {
-                    "type": "boolean"
-                  },
-                  "video": {
-                    "type": "boolean"
-                  },
-                  "pdf": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "text",
-                  "audio",
-                  "image",
-                  "video",
-                  "pdf"
-                ]
-              },
-              "interleaved": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "field": {
-                        "type": "string",
-                        "enum": [
-                          "reasoning_content",
-                          "reasoning_details"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "field"
+                  "field": {
+                    "type": "string",
+                    "enum": [
+                      "reasoning_content",
+                      "reasoning_details"
                     ]
                   }
-                ]
+                },
+                "required": [
+                  "field"
+                ],
+                "additionalProperties": false
               }
-            },
-            "required": [
-              "temperature",
-              "reasoning",
-              "attachment",
-              "toolcall",
-              "input",
-              "output",
-              "interleaved"
             ]
           },
           "cost": {
@@ -10571,22 +11309,13 @@
               "output": {
                 "type": "number"
               },
-              "cache": {
-                "type": "object",
-                "properties": {
-                  "read": {
-                    "type": "number"
-                  },
-                  "write": {
-                    "type": "number"
-                  }
-                },
-                "required": [
-                  "read",
-                  "write"
-                ]
+              "cache_read": {
+                "type": "number"
               },
-              "experimentalOver200K": {
+              "cache_write": {
+                "type": "number"
+              },
+              "context_over_200k": {
                 "type": "object",
                 "properties": {
                   "input": {
@@ -10595,33 +11324,22 @@
                   "output": {
                     "type": "number"
                   },
-                  "cache": {
-                    "type": "object",
-                    "properties": {
-                      "read": {
-                        "type": "number"
-                      },
-                      "write": {
-                        "type": "number"
-                      }
-                    },
-                    "required": [
-                      "read",
-                      "write"
-                    ]
+                  "cache_read": {
+                    "type": "number"
+                  },
+                  "cache_write": {
+                    "type": "number"
                   }
                 },
                 "required": [
                   "input",
-                  "output",
-                  "cache"
+                  "output"
                 ]
               }
             },
             "required": [
               "input",
-              "output",
-              "cache"
+              "output"
             ]
           },
           "limit": {
@@ -10642,13 +11360,50 @@
               "output"
             ]
           },
+          "modalities": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "audio",
+                    "image",
+                    "video",
+                    "pdf"
+                  ]
+                }
+              },
+              "output": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "audio",
+                    "image",
+                    "video",
+                    "pdf"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "input",
+              "output"
+            ]
+          },
+          "experimental": {
+            "type": "boolean"
+          },
           "status": {
             "type": "string",
             "enum": [
               "alpha",
               "beta",
-              "deprecated",
-              "active"
+              "deprecated"
             ]
           },
           "options": {
@@ -10667,8 +11422,16 @@
               "type": "string"
             }
           },
-          "release_date": {
-            "type": "string"
+          "provider": {
+            "type": "object",
+            "properties": {
+              "npm": {
+                "type": "string"
+              },
+              "api": {
+                "type": "string"
+              }
+            }
           },
           "variants": {
             "type": "object",
@@ -10686,16 +11449,14 @@
         },
         "required": [
           "id",
-          "providerID",
-          "api",
           "name",
-          "capabilities",
-          "cost",
+          "release_date",
+          "attachment",
+          "reasoning",
+          "temperature",
+          "tool_call",
           "limit",
-          "status",
-          "options",
-          "headers",
-          "release_date"
+          "options"
         ]
       },
       "Provider": {

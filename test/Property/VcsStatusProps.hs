@@ -9,68 +9,62 @@ property-based testing with Hedgehog.
 -}
 module Property.VcsStatusProps where
 
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
-import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Vcs.Status qualified as VcsStatus
 
-prop_parseStatusMapping :: Property
-prop_parseStatusMapping = property $ do
-    status <- forAll genStatus
+-- ═══════════════════════════════════════════════════════════════════════════
+-- parseNumstat properties
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: parseNumstat parses valid numstat lines correctly
+prop_parseNumstatValid :: Property
+prop_parseNumstatValid = property $ do
+    added <- forAll $ Gen.int (Range.linear 0 1000)
+    removed <- forAll $ Gen.int (Range.linear 0 1000)
     path <- forAll genPath
-    let line = status <> " " <> path
-    let parsed = VcsStatus.parsePorcelain line
-    case parsed of
-        [s] -> do
-            VcsStatus.fsPath s === path
-            VcsStatus.fsStatus s === expected status
-        _otherResults -> failure
-  where
-    expected code
-        | code == "??" = "untracked"
-        | "U" `T.isInfixOf` code = "unmerged"
-        | "A" `T.isInfixOf` code = "added"
-        | "D" `T.isInfixOf` code = "deleted"
-        | "R" `T.isInfixOf` code = "renamed"
-        | "C" `T.isInfixOf` code = "copied"
-        | "M" `T.isInfixOf` code = "modified"
-        | otherwise = "unknown"
+    let line = T.pack (show added) <> "\t" <> T.pack (show removed) <> "\t" <> path
+    let result = VcsStatus.parseNumstat line
+    Map.lookup path result === Just (added, removed)
 
-prop_parseRenamePath :: Property
-prop_parseRenamePath = property $ do
-    oldPath <- forAll genPath
-    newPath <- forAll genPath
-    let line = "R  " <> oldPath <> " -> " <> newPath
-    let parsed = VcsStatus.parsePorcelain line
-    case parsed of
-        [s] -> VcsStatus.fsPath s === newPath
-        _otherResults -> failure
+-- | Property: parseNumstat returns empty for empty input
+prop_parseNumstatEmpty :: Property
+prop_parseNumstatEmpty = property $ do
+    VcsStatus.parseNumstat "" === Map.empty
 
-prop_parseCountMatchesLines :: Property
-prop_parseCountMatchesLines = property $ do
-    count <- forAll $ Gen.int (Range.linear 1 20)
-    let lines' = replicate count "?? file.txt"
-    let input = T.intercalate "\n" lines'
-    let result = VcsStatus.parsePorcelain input
-    listLength result === count
+-- | Property: parseNumstatLine returns Nothing for binary files (- - path)
+prop_parseNumstatLineBinary :: Property
+prop_parseNumstatLineBinary = property $ do
+    path <- forAll genPath
+    let line = "-\t-\t" <> path
+    VcsStatus.parseNumstatLine line === Nothing
 
-prop_statusInAllowedSet :: Property
-prop_statusInAllowedSet = property $ do
-    code <- forAll $ Gen.element ["??", "U ", "A ", "D ", "R ", "C ", "M ", "XY"]
-    let input = code <> " file.txt"
-    let result = VcsStatus.parsePorcelain input
-    let allowed = ["untracked", "unmerged", "added", "deleted", "renamed", "copied", "modified", "unknown"]
-    assert $ all (\status -> VcsStatus.fsStatus status `elem` allowed) result
+-- | Property: parseNumstatLine returns Nothing for malformed lines
+prop_parseNumstatLineMalformed :: Property
+prop_parseNumstatLineMalformed = property $ do
+    -- Missing tabs
+    VcsStatus.parseNumstatLine "10 5 file.txt" === Nothing
+    -- Not enough parts
+    VcsStatus.parseNumstatLine "10\tfile.txt" === Nothing
+    -- Non-numeric values
+    VcsStatus.parseNumstatLine "abc\tdef\tfile.txt" === Nothing
 
-prop_parsePorcelainEmpty :: Property
-prop_parsePorcelainEmpty = property $ do
-    VcsStatus.parsePorcelain "" === []
+-- | Property: parseNumstat handles multiple lines
+prop_parseNumstatMultipleLines :: Property
+prop_parseNumstatMultipleLines = property $ do
+    let input = "10\t5\tfile1.txt\n20\t15\tfile2.txt\n0\t100\tfile3.txt"
+    let result = VcsStatus.parseNumstat input
+    Map.size result === 3
+    Map.lookup "file1.txt" result === Just (10, 5)
+    Map.lookup "file2.txt" result === Just (20, 15)
+    Map.lookup "file3.txt" result === Just (0, 100)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- parseStatusCode properties
@@ -81,49 +75,38 @@ prop_parseStatusCodeIdempotent :: Property
 prop_parseStatusCodeIdempotent = property $ do
     code <- forAll genStatus
     let result = VcsStatus.parseStatusCode code
-    -- Result should be one of the known statuses
-    assert $ result `elem` ["untracked", "unmerged", "added", "deleted", "renamed", "copied", "modified", "unknown"]
+    -- Result should be one of the allowed statuses (OpenAPI schema)
+    assert $ result `elem` ["added", "deleted", "modified"]
 
--- | Property: parseStatusCode returns "untracked" only for "??"
+-- | Property: parseStatusCode returns "added" for "??" (untracked)
 prop_parseStatusCodeUntracked :: Property
 prop_parseStatusCodeUntracked = property $ do
-    VcsStatus.parseStatusCode "??" === "untracked"
+    VcsStatus.parseStatusCode "??" === "added"
 
--- | Property: Any code containing 'M' gives "modified" (unless it's "??" or contains higher-priority chars)
+-- | Property: parseStatusCode returns "added" for "A " codes
+prop_parseStatusCodeAdded :: Property
+prop_parseStatusCodeAdded = property $ do
+    VcsStatus.parseStatusCode "A " === "added"
+    VcsStatus.parseStatusCode " A" === "added"
+    VcsStatus.parseStatusCode "AA" === "added"
+
+-- | Property: parseStatusCode returns "deleted" for "D " codes
+prop_parseStatusCodeDeleted :: Property
+prop_parseStatusCodeDeleted = property $ do
+    VcsStatus.parseStatusCode "D " === "deleted"
+    VcsStatus.parseStatusCode " D" === "deleted"
+
+-- | Property: Any code containing 'M' gives "modified"
 prop_parseStatusCodeModified :: Property
 prop_parseStatusCodeModified = property $ do
-    -- Use codes that only contain 'M' without higher-priority characters
     code <- forAll $ Gen.element ["M ", " M", "MM"]
     VcsStatus.parseStatusCode code === "modified"
 
--- ═══════════════════════════════════════════════════════════════════════════
--- extractFinalPath properties
--- ═══════════════════════════════════════════════════════════════════════════
-
--- | Property: extractFinalPath preserves paths without arrows
-prop_extractFinalPathNoArrow :: Property
-prop_extractFinalPathNoArrow = property $ do
-    path <- forAll genPath
-    -- Ensure no arrow in path
-    assert $ not (" -> " `T.isInfixOf` path)
-    VcsStatus.extractFinalPath path === path
-
--- | Property: extractFinalPath extracts the right side of arrow
-prop_extractFinalPathWithArrow :: Property
-prop_extractFinalPathWithArrow = property $ do
-    oldPath <- forAll genPath
-    newPath <- forAll genPath
-    let combined = oldPath <> " -> " <> newPath
-    VcsStatus.extractFinalPath combined === newPath
-
--- | Property: extractFinalPath handles multiple arrows (takes last segment)
-prop_extractFinalPathMultipleArrows :: Property
-prop_extractFinalPathMultipleArrows = property $ do
-    path1 <- forAll genPath
-    path2 <- forAll genPath
-    path3 <- forAll genPath
-    let combined = path1 <> " -> " <> path2 <> " -> " <> path3
-    VcsStatus.extractFinalPath combined === path3
+-- | Property: Unknown codes default to "modified"
+prop_parseStatusCodeUnknown :: Property
+prop_parseStatusCodeUnknown = property $ do
+    VcsStatus.parseStatusCode "XY" === "modified"
+    VcsStatus.parseStatusCode "  " === "modified"
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- parseBranchName properties
@@ -167,20 +150,6 @@ prop_parseBranchNameWhitespaceOnly = property $ do
     assert $ isNothing (VcsStatus.parseBranchName whitespace)
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- parseLine properties
--- ═══════════════════════════════════════════════════════════════════════════
-
--- | Property: parseLine correctly splits code and path
-prop_parseLineStructure :: Property
-prop_parseLineStructure = property $ do
-    code <- forAll genStatus
-    path <- forAll genPath
-    let line = code <> " " <> path
-    let result = VcsStatus.parseLine line
-    VcsStatus.fsPath result === path
-    VcsStatus.fsStatus result === VcsStatus.parseStatusCode code
-
--- ═══════════════════════════════════════════════════════════════════════════
 -- Generators
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -212,24 +181,21 @@ tests =
     testGroup
         "VCS Status Property Tests"
         [ testGroup
-            "parsePorcelain"
-            [ testProperty "parse status mapping" prop_parseStatusMapping
-            , testProperty "parse rename path" prop_parseRenamePath
-            , testProperty "parse count matches lines" prop_parseCountMatchesLines
-            , testProperty "status in allowed set" prop_statusInAllowedSet
-            , testProperty "parse empty" prop_parsePorcelainEmpty
+            "parseNumstat"
+            [ testProperty "parses valid numstat lines" prop_parseNumstatValid
+            , testProperty "returns empty for empty input" prop_parseNumstatEmpty
+            , testProperty "returns Nothing for binary files" prop_parseNumstatLineBinary
+            , testProperty "returns Nothing for malformed lines" prop_parseNumstatLineMalformed
+            , testProperty "handles multiple lines" prop_parseNumstatMultipleLines
             ]
         , testGroup
             "parseStatusCode"
             [ testProperty "idempotent known codes" prop_parseStatusCodeIdempotent
-            , testProperty "untracked for ??" prop_parseStatusCodeUntracked
+            , testProperty "added for ??" prop_parseStatusCodeUntracked
+            , testProperty "added for A codes" prop_parseStatusCodeAdded
+            , testProperty "deleted for D codes" prop_parseStatusCodeDeleted
             , testProperty "modified for M codes" prop_parseStatusCodeModified
-            ]
-        , testGroup
-            "extractFinalPath"
-            [ testProperty "preserves paths without arrow" prop_extractFinalPathNoArrow
-            , testProperty "extracts right side of arrow" prop_extractFinalPathWithArrow
-            , testProperty "handles multiple arrows" prop_extractFinalPathMultipleArrows
+            , testProperty "unknown defaults to modified" prop_parseStatusCodeUnknown
             ]
         , testGroup
             "parseBranchName"
@@ -238,9 +204,5 @@ tests =
             , testProperty "valid names return Just" prop_parseBranchNameValid
             , testProperty "strips whitespace" prop_parseBranchNameStrips
             , testProperty "whitespace-only returns Nothing" prop_parseBranchNameWhitespaceOnly
-            ]
-        , testGroup
-            "parseLine"
-            [ testProperty "correctly splits code and path" prop_parseLineStructure
             ]
         ]

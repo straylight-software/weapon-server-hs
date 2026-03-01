@@ -32,9 +32,25 @@ import Global.Event ()
 import Handlers
 import Katip qualified
 import Log qualified
-import Middleware (rejectEmptyPathSegments, requestLogger, supplyEmptyBody)
+import Middleware (
+    addAllowHeader,
+    limitJsonDepth,
+    rejectDoubleEncodedPaths,
+    rejectDuplicateQueryParams,
+    rejectEmptyPathSegments,
+    rejectHeadMethod,
+    rejectInvalidCharset,
+    rejectInvalidContentType,
+    rejectMethodMismatch,
+    rejectNullBytePaths,
+    rejectUnknownQueryParams,
+    rejectUnsupportedMethods,
+    requestLogger,
+    requireContentType,
+    supplyEmptyBody,
+ )
 import Network.HTTP.Types (methodOptions, status200)
-import Network.Wai (Middleware, mapResponseHeaders, requestMethod, responseLBS)
+import Network.Wai (Middleware, mapResponseHeaders, requestHeaders, requestMethod, responseLBS)
 import Network.Wai.Handler.WebSockets (websocketsOr)
 import Network.WebSockets (
     Connection,
@@ -49,6 +65,7 @@ import Network.WebSockets (
 import Pty.Connect ()
 import Pty.Pty qualified as Pty
 import Servant
+import Server.ErrorFormatters (errorFormattersContext)
 import State
 import System.Directory (getCurrentDirectory)
 import System.Environment (getArgs)
@@ -60,15 +77,21 @@ import Text.Read (readMaybe)
 --                                                                 // middleware
 -- ════════════════════════════════════════════════════════════════════════════
 
--- | CORS middleware for cross-origin requests.
+{- | CORS middleware for cross-origin requests.
+Only responds to actual CORS preflight requests (OPTIONS with Access-Control-Request-Method).
+Non-preflight OPTIONS requests pass through to Servant for proper 405 handling.
+-}
 enableCors :: Middleware
 enableCors app req callback
-    | requestMethod req == methodOptions =
+    | requestMethod req == methodOptions && isCorsPreflightRequest =
         callback $ responseLBS status200 corsHeaders ""
     | otherwise =
         app req $ \response ->
             callback $ mapResponseHeaders (<> corsHeaders) response
   where
+    -- CORS preflight requests have Access-Control-Request-Method header
+    isCorsPreflightRequest =
+        any (\(h, _) -> h == "Access-Control-Request-Method") (requestHeaders req)
     corsHeaders =
         [ ("Access-Control-Allow-Origin", "*")
         , ("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
@@ -165,7 +188,42 @@ main = Log.withLoggerLevel "weapon" defaultLogLevel $ \logger -> do
 
     Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
 
-    let servantApp = requestLogger logger $ rejectEmptyPathSegments $ enableCors $ supplyEmptyBody $ serve api (server appState)
+    -- Middleware chain (applied outside-in, so rightmost runs first):
+    -- 1. serve api (Servant handles request)
+    -- 2. supplyEmptyBody (provides {} for empty POST/PUT/PATCH/DELETE)
+    -- 3. requireContentType (reject body requests without Content-Type)
+    -- 4. rejectInvalidContentType (reject text/json, application/x-invalid, etc.)
+    -- 5. limitJsonDepth (reject deeply nested JSON - DoS protection)
+    -- 6. rejectInvalidCharset (only UTF-8 allowed)
+    -- 7. enableCors (add CORS headers for preflight, pass others through)
+    -- 8. rejectUnknownQueryParams (strict parameter validation)
+    -- 9. rejectDuplicateQueryParams (prevent parameter pollution)
+    -- 10. rejectEmptyPathSegments (reject /session/ style paths)
+    -- 11. rejectNullBytePaths (reject null byte injection)
+    -- 12. rejectDoubleEncodedPaths (reject path traversal via double encoding)
+    -- 13. rejectMethodMismatch (405 for wrong method on known routes)
+    -- 14. rejectUnsupportedMethods (405 for OPTIONS, TRACE, CONNECT, etc.)
+    -- 15. rejectHeadMethod (HEAD not in OpenAPI spec)
+    -- 16. addAllowHeader (RFC 9110: Allow header on 405)
+    -- 17. requestLogger (log all requests)
+    let servantApp =
+            requestLogger logger $
+                addAllowHeader $
+                    rejectHeadMethod $
+                        rejectUnsupportedMethods $
+                            rejectMethodMismatch $
+                                rejectDoubleEncodedPaths $
+                                    rejectNullBytePaths $
+                                        rejectEmptyPathSegments $
+                                            rejectDuplicateQueryParams $
+                                                rejectUnknownQueryParams $
+                                                    enableCors $
+                                                        rejectInvalidCharset $
+                                                            limitJsonDepth $
+                                                                rejectInvalidContentType $
+                                                                    requireContentType $
+                                                                        supplyEmptyBody $
+                                                                            serveWithContext api errorFormattersContext (server appState)
         websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
 
     -- Start server with retry logic handled by MultiCore

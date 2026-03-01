@@ -43,6 +43,7 @@ module Api.Session (
     -- ** Session Updates
     UpdateSessionInput (..),
     ForkSessionInput (..),
+    InitSessionInput (..),
 
     -- ** File Diffs
     FileDiff (..),
@@ -81,6 +82,11 @@ module Api.Session (
     SessionCommandAPI,
     SessionShellAPI,
     SessionPermissionAPI,
+
+    -- ** Command Input Types (strict JSON parsing)
+    SessionCommandInput (..),
+    SessionShellInput (..),
+    SessionShellModel (..),
 ) where
 
 import Data.Aeson (
@@ -96,6 +102,7 @@ import Data.Aeson (
  )
 import Data.Text (Text)
 import GHC.Generics (Generic)
+import Json.Strict (withStrictObject)
 import Servant (
     Capture,
     Delete,
@@ -107,6 +114,9 @@ import Servant (
     ReqBody,
     type (:>),
  )
+
+-- Import AssistantMessageInfo for SessionShellAPI return type
+import Api.Message (AssistantMessageInfo (..))
 
 -- Re-export canonical session types from Session.Types
 import Session.Types (
@@ -278,11 +288,61 @@ newtype ForkSessionInput = ForkSessionInput
     deriving (Eq, Show, Generic)
 
 instance FromJSON ForkSessionInput where
-    parseJSON = withObject "ForkSessionInput" $ \v ->
+    parseJSON = withStrictObject "ForkSessionInput" ["messageID"] $ \v ->
         ForkSessionInput <$> v .:? "messageID"
 
 instance ToJSON ForkSessionInput where
     toJSON fsi = object ["messageID" .= fsiMessageId fsi]
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // init session input //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Input for initializing a session.
+
+Contains the model and provider IDs, plus a message ID to associate
+with the initialization action.
+
+==== Required Fields
+
+* @modelID@ - The model identifier (e.g., "claude-sonnet-4-20250514")
+* @providerID@ - The provider identifier (e.g., "anthropic")
+* @messageID@ - The message ID to track the init (e.g., "msg_abc123")
+
+==== Example JSON
+
+@
+{
+  "modelID": "claude-sonnet-4-20250514",
+  "providerID": "anthropic",
+  "messageID": "msg_abc123"
+}
+@
+-}
+data InitSessionInput = InitSessionInput
+    { isiModelId :: !Text
+    -- ^ The model identifier
+    , isiProviderId :: !Text
+    -- ^ The provider identifier
+    , isiMessageId :: !Text
+    -- ^ The message ID for tracking
+    }
+    deriving (Eq, Show, Generic)
+
+instance FromJSON InitSessionInput where
+    parseJSON = withStrictObject "InitSessionInput" ["modelID", "providerID", "messageID"] $ \v ->
+        InitSessionInput
+            <$> v .: "modelID"
+            <*> v .: "providerID"
+            <*> v .: "messageID"
+
+instance ToJSON InitSessionInput where
+    toJSON isi =
+        object
+            [ "modelID" .= isiModelId isi
+            , "providerID" .= isiProviderId isi
+            , "messageID" .= isiMessageId isi
+            ]
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //
@@ -352,7 +412,7 @@ type SessionTodoAPI =
 
 -- | @POST /session/:sessionID/init@ - Initialize a session.
 type SessionInitAPI =
-    "session" :> Capture "sessionID" Text :> "init" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+    "session" :> Capture "sessionID" Text :> "init" :> QueryParam "directory" Text :> ReqBody '[JSON] InitSessionInput :> Post '[JSON] Bool
 
 {- | @POST /session/:sessionID/fork@ - Fork a session.
 
@@ -420,7 +480,8 @@ type SessionCommandAPI =
     "session"
         :> Capture "sessionID" Text
         :> "command"
-        :> ReqBody '[JSON] Value
+        :> QueryParam "directory" Text
+        :> ReqBody '[JSON] SessionCommandInput
         :> Post '[JSON] Value
 
 -- | @POST /session/:sessionID/shell@ - Execute a shell command.
@@ -428,8 +489,9 @@ type SessionShellAPI =
     "session"
         :> Capture "sessionID" Text
         :> "shell"
-        :> ReqBody '[JSON] Value
-        :> Post '[JSON] Value
+        :> QueryParam "directory" Text
+        :> ReqBody '[JSON] SessionShellInput
+        :> Post '[JSON] AssistantMessageInfo
 
 -- | @POST /session/:sessionID/permissions/:permissionID@ - Handle permission request.
 type SessionPermissionAPI =
@@ -440,3 +502,85 @@ type SessionPermissionAPI =
         :> QueryParam "directory" Text
         :> ReqBody '[JSON] Value
         :> Post '[JSON] Bool
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // command input types //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Input for session command endpoint (strict JSON parsing)
+data SessionCommandInput = SessionCommandInput
+    { sciCommand :: Text
+    , sciArguments :: Text
+    , sciMessageID :: Maybe Text
+    , sciAgent :: Maybe Text
+    , sciModel :: Maybe Text
+    , sciVariant :: Maybe Text
+    , sciParts :: Maybe Value
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON SessionCommandInput where
+    parseJSON = withStrictObject "SessionCommandInput" ["command", "arguments", "messageID", "agent", "model", "variant", "parts"] $ \v ->
+        SessionCommandInput
+            <$> v .: "command"
+            <*> v .: "arguments"
+            <*> v .:? "messageID"
+            <*> v .:? "agent"
+            <*> v .:? "model"
+            <*> v .:? "variant"
+            <*> v .:? "parts"
+
+instance ToJSON SessionCommandInput where
+    toJSON sci =
+        object
+            [ "command" .= sciCommand sci
+            , "arguments" .= sciArguments sci
+            , "messageID" .= sciMessageID sci
+            , "agent" .= sciAgent sci
+            , "model" .= sciModel sci
+            , "variant" .= sciVariant sci
+            , "parts" .= sciParts sci
+            ]
+
+-- | Model specification for shell input
+data SessionShellModel = SessionShellModel
+    { ssmProviderID :: Text
+    , ssmModelID :: Text
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON SessionShellModel where
+    parseJSON = withStrictObject "SessionShellModel" ["providerID", "modelID"] $ \v ->
+        SessionShellModel
+            <$> v .: "providerID"
+            <*> v .: "modelID"
+
+instance ToJSON SessionShellModel where
+    toJSON ssm =
+        object
+            [ "providerID" .= ssmProviderID ssm
+            , "modelID" .= ssmModelID ssm
+            ]
+
+-- | Input for session shell endpoint (strict JSON parsing)
+data SessionShellInput = SessionShellInput
+    { ssiAgent :: Text
+    , ssiCommand :: Text
+    , ssiModel :: Maybe SessionShellModel
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON SessionShellInput where
+    parseJSON = withStrictObject "SessionShellInput" ["agent", "command", "model"] $ \v ->
+        SessionShellInput
+            <$> v .: "agent"
+            <*> v .: "command"
+            <*> v .:? "model"
+
+instance ToJSON SessionShellInput where
+    toJSON ssi =
+        object
+            [ "agent" .= ssiAgent ssi
+            , "command" .= ssiCommand ssi
+            , "model" .= ssiModel ssi
+            ]

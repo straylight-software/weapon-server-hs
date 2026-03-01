@@ -2,10 +2,11 @@
 
 {- |
 Module      : Property.TuiProps
-Description : Property tests for Tui.Store module
+Description : Property tests for Tui.Store module and Api.Tui types
 
 Property-based tests for the TUI store, covering both pure helper functions
-and IO operations with storage.
+and IO operations with storage. Also includes JSON roundtrip tests for
+TUI API types.
 -}
 module Property.TuiProps (
     -- * Test Entry Point
@@ -14,9 +15,18 @@ module Property.TuiProps (
     -- * Generators (exported for reuse)
     genText,
     genJsonValue,
+    genPublishToastShowProps,
+    genPublishInput,
 ) where
 
-import Data.Aeson (Value (..), object, (.=))
+import Api.Tui (
+    PublishCommandExecuteProps (..),
+    PublishInput (..),
+    PublishPromptAppendProps (..),
+    PublishSessionSelectProps (..),
+    PublishToastShowProps (..),
+ )
+import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -198,6 +208,51 @@ prop_storageKeys_nonEmpty = withTests 1 $ property $ do
     assert (not $ null TuiStore.submittedKey)
 
 --------------------------------------------------------------------------------
+-- JSON Roundtrip Properties for Api.Tui types
+--------------------------------------------------------------------------------
+
+-- | Property: PublishToastShowProps JSON roundtrip
+prop_publishToastShowProps_roundtrip :: Property
+prop_publishToastShowProps_roundtrip = property $ do
+    props <- forAll genPublishToastShowProps
+    tripping props encode decode
+
+-- | Property: PublishPromptAppendProps JSON roundtrip
+prop_publishPromptAppendProps_roundtrip :: Property
+prop_publishPromptAppendProps_roundtrip = property $ do
+    props <- forAll genPublishPromptAppendProps
+    tripping props encode decode
+
+-- | Property: PublishCommandExecuteProps JSON roundtrip
+prop_publishCommandExecuteProps_roundtrip :: Property
+prop_publishCommandExecuteProps_roundtrip = property $ do
+    props <- forAll genPublishCommandExecuteProps
+    tripping props encode decode
+
+-- | Property: PublishSessionSelectProps JSON roundtrip
+prop_publishSessionSelectProps_roundtrip :: Property
+prop_publishSessionSelectProps_roundtrip = property $ do
+    props <- forAll genPublishSessionSelectProps
+    tripping props encode decode
+
+-- | Property: PublishInput JSON roundtrip (all variants)
+prop_publishInput_roundtrip :: Property
+prop_publishInput_roundtrip = property $ do
+    input <- forAll genPublishInput
+    tripping input encode decode
+
+-- | Property: PublishToastShowProps duration is optional and integer
+prop_publishToastShowProps_duration_optional :: Property
+prop_publishToastShowProps_duration_optional = property $ do
+    -- Test with duration
+    dur <- forAll $ Gen.int (Range.linear 0 60000)
+    let withDur = PublishToastShowProps Nothing "test" "info" (Just dur)
+    tripping withDur encode decode
+    -- Test without duration
+    let withoutDur = PublishToastShowProps Nothing "test" "info" Nothing
+    tripping withoutDur encode decode
+
+--------------------------------------------------------------------------------
 -- Generators
 --------------------------------------------------------------------------------
 
@@ -228,6 +283,43 @@ genJsonValue =
             key <- genText
             val <- genText
             pure $ object ["key" .= key, "value" .= val]
+        ]
+
+-- | Generate a toast variant (info, success, warning, error)
+genToastVariant :: Gen Text
+genToastVariant = Gen.element ["info", "success", "warning", "error"]
+
+-- | Generate PublishToastShowProps
+genPublishToastShowProps :: Gen PublishToastShowProps
+genPublishToastShowProps =
+    PublishToastShowProps
+        <$> Gen.maybe genText
+        <*> genText
+        <*> genToastVariant
+        <*> Gen.maybe (Gen.int (Range.linear 0 60000))
+
+-- | Generate PublishPromptAppendProps
+genPublishPromptAppendProps :: Gen PublishPromptAppendProps
+genPublishPromptAppendProps = PublishPromptAppendProps <$> genText
+
+-- | Generate PublishCommandExecuteProps
+genPublishCommandExecuteProps :: Gen PublishCommandExecuteProps
+genPublishCommandExecuteProps = PublishCommandExecuteProps <$> genText
+
+-- | Generate PublishSessionSelectProps (session IDs start with "ses")
+genPublishSessionSelectProps :: Gen PublishSessionSelectProps
+genPublishSessionSelectProps = do
+    suffix <- genText
+    pure $ PublishSessionSelectProps ("ses" <> suffix)
+
+-- | Generate any PublishInput variant
+genPublishInput :: Gen PublishInput
+genPublishInput =
+    Gen.choice
+        [ PublishPromptAppend <$> genPublishPromptAppendProps
+        , PublishCommandExecute <$> genPublishCommandExecuteProps
+        , PublishToastShow <$> genPublishToastShowProps
+        , PublishSessionSelect <$> genPublishSessionSelectProps
         ]
 
 --------------------------------------------------------------------------------
@@ -261,5 +353,14 @@ tests =
             , testProperty "getPrompt returns empty for fresh storage" prop_getPrompt_fresh
             , testProperty "getLast returns Nothing for fresh storage" prop_getLast_fresh
             , testProperty "multiple appends accumulate" prop_appendPrompt_accumulates
+            ]
+        , testGroup
+            "Api.Tui JSON Roundtrip"
+            [ testProperty "PublishToastShowProps roundtrip" prop_publishToastShowProps_roundtrip
+            , testProperty "PublishPromptAppendProps roundtrip" prop_publishPromptAppendProps_roundtrip
+            , testProperty "PublishCommandExecuteProps roundtrip" prop_publishCommandExecuteProps_roundtrip
+            , testProperty "PublishSessionSelectProps roundtrip" prop_publishSessionSelectProps_roundtrip
+            , testProperty "PublishInput roundtrip" prop_publishInput_roundtrip
+            , testProperty "PublishToastShowProps duration optional" prop_publishToastShowProps_duration_optional
             ]
         ]

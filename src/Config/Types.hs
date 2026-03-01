@@ -55,6 +55,7 @@ module Config.Types (
     KeybindsConfig (..),
     ServerConfig (..),
     TUIConfig (..),
+    ScrollAccelerationConfig (..),
     PermissionConfig (..),
     PermissionRule (..),
     CompactionConfig (..),
@@ -121,9 +122,10 @@ import Control.Applicative ((<|>))
 import Data.Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
-import Data.Aeson.Types (Parser)
+import Data.Aeson.Types (Pair, Parser)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Dhall (FromDhall (..), ToDhall (..))
 import GHC.Generics (Generic)
@@ -765,7 +767,7 @@ server:
   hostname: "localhost"
   port: 4096
   mdns: false
-  cors: true
+  cors: ["https://example.com"]
 @
 -}
 data ServerConfig = ServerConfig
@@ -775,20 +777,24 @@ data ServerConfig = ServerConfig
     -- ^ Port number (default: 4096)
     , scMdns :: Maybe Bool
     -- ^ Enable mDNS discovery (default: false)
-    , scCors :: Maybe Bool
-    -- ^ Enable CORS headers (default: true)
+    , scMdnsDomain :: Maybe Text
+    -- ^ Custom domain name for mDNS service
+    , scCors :: Maybe [Text]
+    -- ^ Additional domains to allow for CORS
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
 instance ToJSON ServerConfig where
     toJSON sc =
-        object
-            [ "hostname" .= scHostname sc
-            , "port" .= scPort sc
-            , "mdns" .= scMdns sc
-            , "cors" .= scCors sc
-            ]
+        object $
+            catMaybes
+                [ fmap ("hostname" .=) (scHostname sc)
+                , fmap ("port" .=) (scPort sc)
+                , fmap ("mdns" .=) (scMdns sc)
+                , fmap ("mdnsDomain" .=) (scMdnsDomain sc)
+                , fmap ("cors" .=) (scCors sc)
+                ]
 
 instance FromJSON ServerConfig where
     parseJSON = withObject "ServerConfig" $ \v ->
@@ -796,21 +802,37 @@ instance FromJSON ServerConfig where
             <$> v .:? "hostname"
             <*> v .:? "port"
             <*> v .:? "mdns"
+            <*> v .:? "mdnsDomain"
             <*> v .:? "cors"
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                 TUI Config
 -- ════════════════════════════════════════════════════════════════════════════
 
+-- | Scroll acceleration configuration.
+newtype ScrollAccelerationConfig = ScrollAccelerationConfig
+    { sacEnabled :: Bool
+    -- ^ Whether scroll acceleration is enabled
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (FromDhall, ToDhall)
+
+instance ToJSON ScrollAccelerationConfig where
+    toJSON s = object ["enabled" .= sacEnabled s]
+
+instance FromJSON ScrollAccelerationConfig where
+    parseJSON = withObject "ScrollAccelerationConfig" $ \v ->
+        ScrollAccelerationConfig <$> v .: "enabled"
+
 {- | Terminal UI configuration.
 
 Controls scrolling behavior and diff display in the TUI.
 -}
 data TUIConfig = TUIConfig
-    { tuiScrollSpeed :: Maybe Int
-    -- ^ Lines to scroll per mouse wheel tick (default: 1)
-    , tuiScrollAcceleration :: Maybe Int
-    -- ^ Acceleration factor for fast scrolling (default: 1)
+    { tuiScrollSpeed :: Maybe Double
+    -- ^ Scroll speed (default: 1.0)
+    , tuiScrollAcceleration :: Maybe ScrollAccelerationConfig
+    -- ^ Scroll acceleration settings
     , tuiDiffStyle :: Maybe DiffStyle
     -- ^ How to display file diffs (default: 'DiffAuto')
     }
@@ -819,11 +841,12 @@ data TUIConfig = TUIConfig
 
 instance ToJSON TUIConfig where
     toJSON t =
-        object
-            [ "scroll_speed" .= tuiScrollSpeed t
-            , "scroll_acceleration" .= tuiScrollAcceleration t
-            , "diff_style" .= tuiDiffStyle t
-            ]
+        object $
+            catMaybes
+                [ fmap ("scroll_speed" .=) (tuiScrollSpeed t)
+                , fmap ("scroll_acceleration" .=) (tuiScrollAcceleration t)
+                , fmap ("diff_style" .=) (tuiDiffStyle t)
+                ]
 
 instance FromJSON TUIConfig where
     parseJSON = withObject "TUIConfig" $ \v ->
@@ -911,25 +934,26 @@ data PermissionConfig = PermissionConfig
 
 instance ToJSON PermissionConfig where
     toJSON p =
-        object
-            [ "read" .= permRead p
-            , "edit" .= permEdit p
-            , "glob" .= permGlob p
-            , "grep" .= permGrep p
-            , "list" .= permList p
-            , "bash" .= permBash p
-            , "task" .= permTask p
-            , "external_directory" .= permExternalDirectory p
-            , "todowrite" .= permTodowrite p
-            , "todoread" .= permTodoread p
-            , "question" .= permQuestion p
-            , "webfetch" .= permWebfetch p
-            , "websearch" .= permWebsearch p
-            , "codesearch" .= permCodesearch p
-            , "lsp" .= permLsp p
-            , "doom_loop" .= permDoomLoop p
-            , "skill" .= permSkill p
-            ]
+        object $
+            catMaybes
+                [ fmap ("read" .=) (permRead p)
+                , fmap ("edit" .=) (permEdit p)
+                , fmap ("glob" .=) (permGlob p)
+                , fmap ("grep" .=) (permGrep p)
+                , fmap ("list" .=) (permList p)
+                , fmap ("bash" .=) (permBash p)
+                , fmap ("task" .=) (permTask p)
+                , fmap ("external_directory" .=) (permExternalDirectory p)
+                , fmap ("todowrite" .=) (permTodowrite p)
+                , fmap ("todoread" .=) (permTodoread p)
+                , fmap ("question" .=) (permQuestion p)
+                , fmap ("webfetch" .=) (permWebfetch p)
+                , fmap ("websearch" .=) (permWebsearch p)
+                , fmap ("codesearch" .=) (permCodesearch p)
+                , fmap ("lsp" .=) (permLsp p)
+                , fmap ("doom_loop" .=) (permDoomLoop p)
+                , fmap ("skill" .=) (permSkill p)
+                ]
 
 instance FromJSON PermissionConfig where
     parseJSON = withObject "PermissionConfig" $ \v ->
@@ -974,11 +998,12 @@ data CompactionConfig = CompactionConfig
 
 instance ToJSON CompactionConfig where
     toJSON c =
-        object
-            [ "auto" .= compAuto c
-            , "prune" .= compPrune c
-            , "reserved" .= compReserved c
-            ]
+        object $
+            catMaybes
+                [ fmap ("auto" .=) (compAuto c)
+                , fmap ("prune" .=) (compPrune c)
+                , fmap ("reserved" .=) (compReserved c)
+                ]
 
 instance FromJSON CompactionConfig where
     parseJSON = withObject "CompactionConfig" $ \v ->
@@ -990,68 +1015,66 @@ instance FromJSON CompactionConfig where
 {- | Experimental features configuration.
 
 These features may change or be removed in future versions.
-Enable at your own risk.
+Enable at your own risk. Matches TypeScript Config.experimental schema.
 -}
 data ExperimentalConfig = ExperimentalConfig
-    { expThinking :: Maybe Bool
-    -- ^ Enable extended thinking display (default: false)
-    , expWorktree :: Maybe Bool
-    -- ^ Enable git worktree support (default: false)
-    , expFileCache :: Maybe Bool
-    -- ^ Enable file content caching (default: true)
-    , expParallelTools :: Maybe Bool
-    -- ^ Enable parallel tool execution (default: true)
-    , expStreaming :: Maybe Bool
-    -- ^ Enable streaming responses (default: true)
+    { expDisablePasteSummary :: Maybe Bool
+    -- ^ Disable paste summary feature
+    , expBatchTool :: Maybe Bool
+    -- ^ Enable the batch tool
+    , expOpenTelemetry :: Maybe Bool
+    -- ^ Enable OpenTelemetry spans for AI SDK calls
+    , expPrimaryTools :: Maybe [Text]
+    -- ^ Tools that should only be available to primary agents
+    , expContinueLoopOnDeny :: Maybe Bool
+    -- ^ Continue the agent loop when a tool call is denied
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
 instance ToJSON ExperimentalConfig where
     toJSON e =
-        object
-            [ "thinking" .= expThinking e
-            , "worktree" .= expWorktree e
-            , "fileCache" .= expFileCache e
-            , "parallelTools" .= expParallelTools e
-            , "streaming" .= expStreaming e
-            ]
+        object $
+            catMaybes
+                [ fmap ("disable_paste_summary" .=) (expDisablePasteSummary e)
+                , fmap ("batch_tool" .=) (expBatchTool e)
+                , fmap ("openTelemetry" .=) (expOpenTelemetry e)
+                , fmap ("primary_tools" .=) (expPrimaryTools e)
+                , fmap ("continue_loop_on_deny" .=) (expContinueLoopOnDeny e)
+                ]
 
 instance FromJSON ExperimentalConfig where
     parseJSON = withObject "ExperimentalConfig" $ \v ->
         ExperimentalConfig
-            <$> v .:? "thinking"
-            <*> v .:? "worktree"
-            <*> v .:? "fileCache"
-            <*> v .:? "parallelTools"
-            <*> v .:? "streaming"
+            <$> v .:? "disable_paste_summary"
+            <*> v .:? "batch_tool"
+            <*> v .:? "openTelemetry"
+            <*> v .:? "primary_tools"
+            <*> v .:? "continue_loop_on_deny"
 
 {- | Enterprise/cloud deployment configuration.
 
 For self-hosted or enterprise deployments that connect to
 a central management server.
 -}
-data EnterpriseConfig = EnterpriseConfig
+newtype EnterpriseConfig = EnterpriseConfig
     { entUrl :: Maybe Text
     -- ^ Enterprise server URL
-    , entApiKey :: Maybe Text
-    -- ^ API key for authentication
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
 instance ToJSON EnterpriseConfig where
     toJSON e =
-        object
-            [ "url" .= entUrl e
-            , "apiKey" .= entApiKey e
-            ]
+        object $
+            catMaybes
+                [ fmap ("url" .=) (entUrl e)
+                ]
 
 instance FromJSON EnterpriseConfig where
     parseJSON = withObject "EnterpriseConfig" $ \v ->
         EnterpriseConfig
             <$> v .:? "url"
-            <*> v .:? "apiKey"
 
 {- | File watcher configuration.
 
@@ -1703,45 +1726,50 @@ instance FromJSON SkillConfig where
 
 {- | Custom command configuration.
 
-Commands are shell commands that can be run with @/run name@.
+Commands are AI prompt templates that can be invoked with @/name@.
 
 @
 command:
-  build:
-    command: "cargo build --release"
-    description: "Build the project in release mode"
-    workdir: "./backend"
+  review:
+    template: "Review the changes in $1"
+    description: "Review changes in a commit, branch, or PR"
+    agent: "code-reviewer"
 @
 -}
 data CommandConfig = CommandConfig
-    { cmdCommand :: Text
-    -- ^ Shell command to execute
+    { cmdTemplate :: Text
+    -- ^ Prompt template with placeholders like $1, $ARGUMENTS
     , cmdDescription :: Maybe Text
     -- ^ Brief description
-    , cmdEnvironment :: Maybe (Map Text Text)
-    -- ^ Environment variables
-    , cmdWorkdir :: Maybe Text
-    -- ^ Working directory (relative to project root)
+    , cmdAgent :: Maybe Text
+    -- ^ Agent to use for this command
+    , cmdModel :: Maybe Text
+    -- ^ Model to use for this command
+    , cmdSubtask :: Maybe Bool
+    -- ^ Whether this command runs as a subtask
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
 instance ToJSON CommandConfig where
     toJSON c =
-        object
-            [ "command" .= cmdCommand c
-            , "description" .= cmdDescription c
-            , "environment" .= cmdEnvironment c
-            , "workdir" .= cmdWorkdir c
-            ]
+        object $
+            ("template" .= cmdTemplate c)
+                : catMaybes
+                    [ ("description" .=) <$> cmdDescription c
+                    , ("agent" .=) <$> cmdAgent c
+                    , ("model" .=) <$> cmdModel c
+                    , ("subtask" .=) <$> cmdSubtask c
+                    ]
 
 instance FromJSON CommandConfig where
     parseJSON = withObject "CommandConfig" $ \v ->
         CommandConfig
-            <$> v .: "command"
+            <$> v .: "template"
             <*> v .:? "description"
-            <*> v .:? "environment"
-            <*> v .:? "workdir"
+            <*> v .:? "agent"
+            <*> v .:? "model"
+            <*> v .:? "subtask"
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                 Full Config
@@ -1829,45 +1857,43 @@ data Config = Config
     , -- Auto-update
       cfgAutoUpdate :: Maybe AutoUpdate
     -- ^ Auto-update behavior (default: 'AutoUpdateNotify')
-    , -- Disabled tools
-      cfgDisabledTools :: Maybe [Text]
-    -- ^ List of tool names to disable
-    , -- Instrumentation
-      cfgInstrumentation :: Maybe Bool
-    -- ^ Enable telemetry/instrumentation (default: false)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
 instance ToJSON Config where
     toJSON c =
-        object
-            [ "model" .= cfgModel c
-            , "systemPrompt" .= cfgSystemPrompt c
-            , "maxTokens" .= cfgMaxTokens c
-            , "logLevel" .= cfgLogLevel c
-            , "keybinds" .= cfgKeybinds c
-            , "server" .= cfgServer c
-            , "tui" .= cfgTui c
-            , "permission" .= cfgPermission c
-            , "compaction" .= cfgCompaction c
-            , "experimental" .= cfgExperimental c
-            , "enterprise" .= cfgEnterprise c
-            , "watcher" .= cfgWatcher c
-            , "agent" .= cfgAgent c
-            , "provider" .= cfgProvider c
-            , "mcp" .= cfgMcp c
-            , "formatter" .= cfgFormatter c
-            , "lsp" .= cfgLsp c
-            , "skill" .= cfgSkill c
-            , "command" .= cfgCommand c
-            , "theme" .= cfgTheme c
-            , "themes" .= cfgThemes c
-            , "share" .= cfgShare c
-            , "autoUpdate" .= cfgAutoUpdate c
-            , "disabledTools" .= cfgDisabledTools c
-            , "instrumentation" .= cfgInstrumentation c
-            ]
+        -- Only include fields that exist in the TypeScript/OpenAPI Config schema
+        -- Use catMaybes to omit null optional fields entirely
+        object $
+            catMaybes
+                [ optField "model" (cfgModel c)
+                , optField "systemPrompt" (cfgSystemPrompt c)
+                , optField "maxTokens" (cfgMaxTokens c)
+                , optField "logLevel" (cfgLogLevel c)
+                , optField "keybinds" (Just $ cfgKeybinds c)
+                , optField "server" (Just $ cfgServer c)
+                , optField "tui" (Just $ cfgTui c)
+                , optField "permission" (Just $ cfgPermission c)
+                , optField "compaction" (Just $ cfgCompaction c)
+                , optField "experimental" (Just $ cfgExperimental c)
+                , optField "enterprise" (Just $ cfgEnterprise c)
+                , optField "watcher" (Just $ cfgWatcher c)
+                , optField "agent" (cfgAgent c)
+                , optField "provider" (cfgProvider c)
+                , optField "mcp" (cfgMcp c)
+                , optField "formatter" (cfgFormatter c)
+                , optField "lsp" (cfgLsp c)
+                , optField "skill" (cfgSkill c)
+                , optField "command" (cfgCommand c)
+                , optField "theme" (cfgTheme c)
+                , optField "themes" (cfgThemes c)
+                , optField "share" (cfgShare c)
+                , optField "autoupdate" (cfgAutoUpdate c)
+                ]
+      where
+        optField :: (ToJSON v) => Key -> Maybe v -> Maybe Pair
+        optField k = fmap (k .=)
 
 instance FromJSON Config where
     parseJSON = withObject "Config" $ \v ->
@@ -1894,9 +1920,7 @@ instance FromJSON Config where
             <*> v .:? "theme"
             <*> v .:? "themes"
             <*> v .:? "share"
-            <*> v .:? "autoUpdate"
-            <*> v .:? "disabledTools"
-            <*> v .:? "instrumentation"
+            <*> v .:? "autoupdate"
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                    Defaults
@@ -1912,7 +1936,8 @@ defaultServer =
         { scHostname = Just "localhost"
         , scPort = Just 4096
         , scMdns = Just False
-        , scCors = Just True
+        , scMdnsDomain = Nothing
+        , scCors = Nothing
         }
 
 {- | Default TUI configuration.
@@ -1922,8 +1947,8 @@ Standard scroll speed with automatic diff style.
 defaultTUI :: TUIConfig
 defaultTUI =
     TUIConfig
-        { tuiScrollSpeed = Just 1
-        , tuiScrollAcceleration = Just 1
+        { tuiScrollSpeed = Just 1.0
+        , tuiScrollAcceleration = Nothing
         , tuiDiffStyle = Just DiffAuto
         }
 
@@ -1967,16 +1992,16 @@ defaultCompaction =
 
 {- | Default experimental features configuration.
 
-File caching, parallel tools, and streaming enabled by default.
+All experimental features disabled by default.
 -}
 defaultExperimental :: ExperimentalConfig
 defaultExperimental =
     ExperimentalConfig
-        { expThinking = Just False
-        , expWorktree = Just False
-        , expFileCache = Just True
-        , expParallelTools = Just True
-        , expStreaming = Just True
+        { expDisablePasteSummary = Nothing
+        , expBatchTool = Nothing
+        , expOpenTelemetry = Nothing
+        , expPrimaryTools = Nothing
+        , expContinueLoopOnDeny = Nothing
         }
 
 {- | Default enterprise configuration.
@@ -1987,7 +2012,6 @@ defaultEnterprise :: EnterpriseConfig
 defaultEnterprise =
     EnterpriseConfig
         { entUrl = Nothing
-        , entApiKey = Nothing
         }
 
 {- | Default watcher configuration.
@@ -2038,6 +2062,4 @@ defaultConfig =
         , cfgThemes = Nothing
         , cfgShare = Nothing
         , cfgAutoUpdate = Just AutoUpdateNotify
-        , cfgDisabledTools = Nothing
-        , cfgInstrumentation = Just False
         }

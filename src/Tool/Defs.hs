@@ -21,6 +21,7 @@ module Tool.Defs (
     -- * Tool Lists
     allTools,
     toolDefinitions,
+    toolListItems,
 
     -- * Schema Builders
     -- $schemabuilders
@@ -64,6 +65,21 @@ toolDefinitions = map toApiDef allTools
             [ "name" .= tdName
             , "description" .= tdDescription
             , "input_schema" .= tdInputSchema
+            ]
+
+{- | Tool list items in OpenAPI schema format.
+
+This converts 'allTools' into the JSON format expected by the
+tool.list endpoint (id, description, parameters).
+-}
+toolListItems :: [Value]
+toolListItems = map toListItem allTools
+  where
+    toListItem ToolDef{..} =
+        object
+            [ "id" .= tdName
+            , "description" .= tdDescription
+            , "parameters" .= tdInputSchema
             ]
 
 -- ═══════════════════════════════════════════════════════════════════════════

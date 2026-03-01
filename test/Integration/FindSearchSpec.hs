@@ -18,7 +18,7 @@ import Find.Search qualified as Search
 import System.Directory (createDirectoryIfMissing, findExecutable)
 import System.FilePath ((</>))
 import Test.Fixture (withTempDir)
-import Test.Helpers (lookupText)
+import Test.Helpers (valueToText)
 import Test.Hspec
 
 -- | Check if ripgrep is available
@@ -82,7 +82,7 @@ spec = do
 
                     results <- findFile tmpDir "*.hs"
                     case results of
-                        [v] -> lookupText "path" v `shouldSatisfy` maybe False (T.isSuffixOf "test.hs")
+                        [v] -> valueToText v `shouldSatisfy` maybe False (T.isSuffixOf "test.hs")
                         [] -> expectationFailure "Expected exactly one result, got none"
                         (_ : _ : _moreThanOne) -> expectationFailure "Expected exactly one result, got multiple"
 

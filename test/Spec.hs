@@ -16,6 +16,7 @@ import Property.ApiFileProps qualified as ApiFileProps
 import Property.ApiSessionProps qualified as ApiSessionProps
 import Property.ApiTypesProps qualified as ApiTypesProps
 import Property.BusProps qualified as BusProps
+import Property.CommandProps qualified as CommandProps
 import Property.ConfigDhallProps qualified as ConfigDhallProps
 import Property.ConfigMergeProps qualified as ConfigMergeProps
 import Property.ConfigProps qualified as ConfigProps
@@ -109,6 +110,7 @@ main = do
                 [ StorageProps.tests
                 , StorageKeyProps.tests
                 , BusProps.tests
+                , CommandProps.tests
                 , ConfigDhallProps.tests
                 , ConfigMergeProps.tests
                 , ConfigProps.tests

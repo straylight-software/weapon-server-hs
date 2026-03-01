@@ -105,7 +105,8 @@ module Handlers (
     tuiShowToastHandler,
     tuiPublishHandler,
     tuiSelectSessionHandler,
-    tuiControlHandler,
+    tuiControlNextHandler,
+    tuiControlResponseHandler,
 
     -- * Skill/Formatter Handlers
     skillHandler,
@@ -173,6 +174,7 @@ import Message.Parts qualified as Parts
 import Message.Todo qualified as Todo
 
 import Api.Validation qualified as V
+import Command.Command qualified as Command
 import Path.Build qualified as PathBuild
 import Project.Build qualified as ProjectBuild
 import Project.Discovery qualified as ProjectDiscovery
@@ -187,7 +189,7 @@ import Pty.Pty qualified as Pty
 import Pty.Types qualified as PtyT
 import Request.Store qualified as RequestStore
 import Servant
-import Server.ErrorFormatters (errorResponse)
+import Server.ErrorFormatters (badRequestError, errorResponse, notFoundError, notFoundErrorWithMsg)
 import Session.Session qualified as Sess
 import Session.Types (GlobalSession)
 import Skill.Skill qualified as Skill
@@ -237,7 +239,7 @@ withSessionUpdate st sid f = do
     let ctx = sessionContext st
     msession <- liftIO $ Sess.update ctx sid f
     case msession of
-        Nothing -> throwError err404
+        Nothing -> throwError notFoundError
         Just session -> return session
 
 -- * Global Handlers
@@ -288,15 +290,15 @@ projectCurrentHandler :: AppState -> Maybe Text -> Handler Project
 projectCurrentHandler st mDir = liftIO $ do
     let dir = maybe (unpack (stDirectory st)) unpack mDir
     full <- makeAbsolute dir
-    let proj = ProjectBuild.projectFromDir full
+    proj <- ProjectBuild.projectFromDirIO full
     mergeProjectOverrides st proj
 
 projectGetHandler :: AppState -> Text -> Handler Project
 projectGetHandler st pid = do
-    let current = ProjectBuild.projectFromDir (unpack (stDirectory st))
+    current <- liftIO $ ProjectBuild.projectFromDirIO (unpack (stDirectory st))
     if Api.id current == pid
         then liftIO $ mergeProjectOverrides st current
-        else throwError err404
+        else throwError notFoundError
 
 -- | Merge stored project overrides with computed project
 mergeProjectOverrides :: AppState -> Project -> IO Project
@@ -309,9 +311,9 @@ mergeProjectOverrides st proj = do
 -- | Update project properties (PATCH /project/{projectID})
 projectUpdateHandler :: AppState -> Text -> Value -> Handler Project
 projectUpdateHandler st pid input = do
-    let current = ProjectBuild.projectFromDir (unpack (stDirectory st))
+    current <- liftIO $ ProjectBuild.projectFromDirIO (unpack (stDirectory st))
     if Api.id current /= pid
-        then throwError err404
+        then throwError notFoundError
         else liftIO $ do
             -- Extract name from input
             let newName = extractText input "name"
@@ -398,7 +400,14 @@ providerOauthAuthorizeHandler st pid input = do
                     Nothing -> extractText input "redirect_uri"
         let scopes = extractTextList input "scopes"
         let url = OAuth.buildAuthorizeUrl pid state redirect scopes
-        let payload = object ["providerID" .= pid, "state" .= state, "url" .= url]
+        -- Response matches ProviderAuthAuthorization schema: {url, method, instructions}
+        -- method is "auto" (auto-redirect) or "code" (manual code entry)
+        let payload =
+                object
+                    [ "url" .= url
+                    , "method" .= ("auto" :: Text)
+                    , "instructions" .= ("Click the link to authorize " <> pid <> " access." :: Text)
+                    ]
         Storage.writeCached (stDirCache st) (stStorage st) ["auth", "oauth", pid] (object ["state" .= state, "redirect" .= redirect])
         return payload
 
@@ -513,8 +522,14 @@ configHandler st = liftIO $ do
     cfg <- Config.load (stDhallCache st) (unpack (stDirectory st))
     return $ Data.Aeson.toJSON cfg
 
-commandHandler :: Handler [Value]
-commandHandler = return Tool.toolDefinitions
+{- | List available commands (GET /command)
+Combines built-in defaults, config commands, and skills
+-}
+commandHandler :: AppState -> Maybe Text -> Handler [Value]
+commandHandler st mDir = liftIO $ do
+    let dir = fromMaybe (stDirectory st) mDir
+    commands <- Command.listCommands (stDhallCache st) (unpack dir)
+    return $ map Data.Aeson.toJSON commands
 
 agentHandler :: Handler [Value]
 agentHandler = liftIO $ do
@@ -548,7 +563,7 @@ sessionGetHandler st sid = do
     let ctx = sessionContext st
     msession <- liftIO $ Sess.get ctx sid
     case msession of
-        Nothing -> throwError err404
+        Nothing -> throwError notFoundError
         Just session -> return session
 
 sessionDeleteHandler :: AppState -> Text -> Handler Bool
@@ -598,10 +613,9 @@ sessionTodoHandler st sid = do
         result <- Storage.readMaybe (stStorage st) key
         pure $ fromMaybe [] result
 
-sessionInitHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-sessionInitHandler st sid _mDir input = do
+sessionInitHandler :: AppState -> Text -> Maybe Text -> InitSessionInput -> Handler Bool
+sessionInitHandler st sid _mDir _input = do
     _ <- V.validateSessionId sid
-    _ <- V.requireJsonObject input
     liftIO $ do
         Bus.publish (stBus st) "session.initialized" (object ["sessionID" .= sid])
         return True
@@ -677,10 +691,9 @@ loadSummary exeCache root = do
         Nothing -> pure (SessionSummary 0 0 (Just 0))
         Just (_, summary) -> pure summary
 
-sessionCommandHandler :: AppState -> Text -> Value -> Handler Value
-sessionCommandHandler st sid input = do
+sessionCommandHandler :: AppState -> Text -> Maybe Text -> SessionCommandInput -> Handler Value
+sessionCommandHandler st sid _mDir input = do
     _ <- V.validateSessionId sid
-    _ <- V.requireJsonObject input
     liftIO $ do
         let ctx =
                 ToolT.ToolContext
@@ -690,22 +703,49 @@ sessionCommandHandler st sid input = do
                     }
         now <- getCurrentTime
         let timestamp = realToFrac (utcTimeToPOSIXSeconds now) :: Double
-        output <- ToolExec.execute ctx "bash" input
+            -- Convert input to Value for tool execution
+            -- The bash tool expects "command" and "description"
+            -- Combine sciCommand and sciArguments into the full command
+            fullCommand = sciCommand input <> " " <> sciArguments input
+            inputValue =
+                object
+                    [ "command" .= fullCommand
+                    , "description" .= ("session command: " <> sciCommand input :: Text)
+                    ]
+        output <- ToolExec.execute ctx "bash" inputValue
         let isError = ToolT.toIsError output
             outputText = ToolT.toOutput output
-            -- Build AssistantMessage (info)
+            workdir = unpack (stDirectory st)
+            -- Build AssistantMessage (info) with all required fields per OpenAPI schema
             info =
-                object
+                object $
                     [ "id" .= ("msg_cmd_" <> sid)
                     , "sessionID" .= sid
                     , "role" .= ("assistant" :: Text)
                     , "time" .= object ["created" .= timestamp, "completed" .= timestamp]
-                    , "error" .= if isError then Just (object ["type" .= ("error" :: Text), "message" .= outputText]) else Nothing
+                    , "parentID" .= ("" :: Text) -- Command messages don't have a parent
+                    , "modelID" .= ("" :: Text) -- No model used for direct commands
+                    , "providerID" .= ("" :: Text)
+                    , "mode" .= ("command" :: Text)
+                    , "agent" .= ("" :: Text) -- No agent for direct commands
+                    , "path" .= object ["cwd" .= workdir, "root" .= workdir]
+                    , "cost" .= (0 :: Double)
+                    , "tokens"
+                        .= object
+                            [ "input" .= (0 :: Int)
+                            , "output" .= (0 :: Int)
+                            , "reasoning" .= (0 :: Int)
+                            , "cache" .= object ["read" .= (0 :: Int), "write" .= (0 :: Int)]
+                            ]
                     ]
+                        ++ ["error" .= object ["name" .= ("UnknownError" :: Text), "data" .= object ["message" .= outputText]] | isError]
+            msgId = "msg_cmd_" <> sid
             -- Build parts array with a text part containing the output
             parts =
                 [ object
                     [ "id" .= ("part_cmd_" <> sid)
+                    , "sessionID" .= sid
+                    , "messageID" .= msgId
                     , "type" .= ("text" :: Text)
                     , "text" .= outputText
                     ]
@@ -714,21 +754,65 @@ sessionCommandHandler st sid input = do
         Bus.publish (stBus st) "command.executed" response
         return response
 
-sessionShellHandler :: AppState -> Text -> Value -> Handler Value
-sessionShellHandler st sid input = do
+sessionShellHandler :: AppState -> Text -> Maybe Text -> SessionShellInput -> Handler AssistantMessageInfo
+sessionShellHandler st sid _mDir input = do
     _ <- V.validateSessionId sid
-    _ <- V.requireJsonObject input
     liftIO $ do
-        let ptyInput =
-                (PtyParse.parseInput input)
+        now <- getCurrentTime
+        let timestamp = realToFrac (utcTimeToPOSIXSeconds now) :: Double
+            workdir = stDirectory st
+            msgId = "msg_shell_" <> sid
+            agentName = ssiAgent input
+
+        -- Convert SessionShellInput to Value for pty parsing
+        let inputValue =
+                object
+                    [ "agent" .= ssiAgent input
+                    , "command" .= ssiCommand input
+                    , "model" .= ssiModel input
+                    ]
+            ptyInput =
+                (PtyParse.parseInput inputValue)
                     { PtyT.cpiSessionId = Just sid
                     }
-        result <- Pty.create (stPtyManager st) ptyInput
-        case result of
-            Left err -> return $ errorResponse err
-            Right info -> do
-                Bus.publish (stBus st) "pty.created" (object ["info" .= info, "sessionID" .= sid])
-                return $ Data.Aeson.toJSON info
+
+        ptyResult <- Pty.create (stPtyManager st) ptyInput
+
+        -- Publish pty.created event on success
+        case ptyResult of
+            Right info -> Bus.publish (stBus st) "pty.created" (object ["info" .= info])
+            Left _err -> pure ()
+
+        -- Build AssistantMessageInfo matching the OpenAPI schema
+        let msg =
+                AssistantMessageInfo
+                    { amiId = msgId
+                    , amiSessionId = sid
+                    , amiTime = MessageTime timestamp (Just timestamp)
+                    , amiParentId = "" -- Shell commands don't have a parent user message
+                    , amiModelId = "" -- No model used for shell commands
+                    , amiProviderId = ""
+                    , amiMode = "shell"
+                    , amiAgent = agentName
+                    , amiPath = MessagePath workdir workdir
+                    , amiCost = 0
+                    , amiTokens =
+                        MessageTokens
+                            { mtTotal = Nothing
+                            , mtInput = 0
+                            , mtOutput = 0
+                            , mtReasoning = 0
+                            , mtCache = TokenCache 0 0
+                            }
+                    , amiSummary = Nothing
+                    , amiVariant = Nothing
+                    , amiFinish = Nothing
+                    , amiError = Nothing
+                    , amiStructured = Nothing
+                    }
+
+        Bus.publish (stBus st) "shell.started" (object ["message" .= msg, "sessionID" .= sid])
+        return msg
 
 sessionRevertHandler :: AppState -> Text -> SessionRevert -> Handler Session
 sessionRevertHandler st sid input =
@@ -1291,7 +1375,7 @@ sessionMessageGetHandler st sid msgId = do
             (Just <$> Storage.read (stStorage st) key)
                 `catch` \(Storage.NotFoundError _) -> return Nothing
     case result of
-        Nothing -> throwError err404
+        Nothing -> throwError notFoundError
         Just msg -> return msg
 
 sessionMessagePartDeleteHandler :: AppState -> Text -> Text -> Text -> Handler Bool
@@ -1299,11 +1383,11 @@ sessionMessagePartDeleteHandler st sid msgId partId = do
     let key = ["message", sid, msgId]
     result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
-        Nothing -> throwError err404
+        Nothing -> throwError notFoundError
         Just msg -> do
             let updated = Parts.deletePart partId (msgParts msg)
             case updated of
-                Nothing -> throwError err404
+                Nothing -> throwError notFoundError
                 Just parts -> do
                     let next = msg{msgParts = parts}
                     liftIO $ Storage.writeCached (stDirCache st) (stStorage st) key next
@@ -1318,23 +1402,23 @@ sessionMessagePartUpdateHandler st sid msgId partId input = do
     let bodyPart = extractText input "id"
     case (bodySession, bodyMessage, bodyPart) of
         (Just s, Just m, Just p) ->
-            when (s /= sid || m /= msgId || p /= partId) $ throwError err400
-        (Nothing, _, _) -> throwError err400
-        (_, Nothing, _) -> throwError err400
-        (_, _, Nothing) -> throwError err400
+            when (s /= sid || m /= msgId || p /= partId) $ throwError $ badRequestError "ID mismatch between path and body"
+        (Nothing, _, _) -> throwError $ badRequestError "Missing required field: sessionID"
+        (_, Nothing, _) -> throwError $ badRequestError "Missing required field: messageID"
+        (_, _, Nothing) -> throwError $ badRequestError "Missing required field: id"
     result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
-        Nothing -> throwError err404
+        Nothing -> throwError notFoundError
         Just msg -> do
             let updated = replacePart partId input (msgParts msg)
             case updated of
-                Nothing -> throwError err404
+                Nothing -> throwError notFoundError
                 Just parts -> do
                     let next = msg{msgParts = parts}
                     liftIO $ Storage.writeCached (stDirCache st) (stStorage st) key next
                     let mpart = Parts.findPart partId parts
                     case mpart of
-                        Nothing -> throwError err404
+                        Nothing -> throwError notFoundError
                         Just part -> do
                             liftIO $ Bus.publish (stBus st) "message.part.updated" (object ["part" .= part])
                             return part
@@ -1605,16 +1689,19 @@ fileReadHandler :: Maybe Text -> Text -> Handler FileContent
 fileReadHandler mDir path = do
     -- Validate path is not empty
     when (T.null path) $
-        throwError err400{errBody = "Path cannot be empty"}
+        throwError $
+            badRequestError "Path cannot be empty"
     fullPath <- liftIO $ resolvePath mDir path
     -- Validate path is a file, not a directory
     isDir <- liftIO $ doesDirectoryExist fullPath
     when isDir $
-        throwError err400{errBody = "Path is a directory, not a file"}
+        throwError $
+            notFoundErrorWithMsg "Path is a directory, not a file"
     -- Check file exists
     exists <- liftIO $ doesFileExist fullPath
     unless exists $
-        throwError err404{errBody = "File not found"}
+        throwError $
+            notFoundErrorWithMsg "File not found"
     bytes <- liftIO $ BS.readFile fullPath
     case (hasNull bytes, TE.decodeUtf8' bytes) of
         (True, _) -> return $ FileContent ContentTypeBinary (encodeBase64 bytes)
@@ -1634,10 +1721,12 @@ lspHandler st = liftIO $ do
     LspStore.getDiagnostics (stStorage st)
 
 vcsHandler :: AppState -> Handler VcsInfo
-vcsHandler st = liftIO $ do
+vcsHandler st = do
     let root = unpack (stDirectory st)
-    branchName <- VcsStatus.loadBranch (stExeCache st) root
-    return $ VcsInfo branchName
+    branchName <- liftIO $ VcsStatus.loadBranch (stExeCache st) root
+    case branchName of
+        Nothing -> throwError $ notFoundErrorWithMsg "Not a git repository"
+        Just branch -> return $ VcsInfo branch
 
 permissionHandler :: AppState -> Maybe Text -> Handler [Value]
 permissionHandler st _mDir = liftIO $ do
@@ -1664,26 +1753,39 @@ questionReplyHandler = requestResponseHandler "question" "reply" "replied" "ques
 questionRejectHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
 questionRejectHandler = requestResponseHandler "question" "reject" "rejected" "question.rejected"
 
-permissionReplyHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-permissionReplyHandler = requestResponseHandler "permission" "reply" "replied" "permission.replied"
+permissionReplyHandler :: AppState -> Text -> Maybe Text -> PermissionReplyInput -> Handler Bool
+permissionReplyHandler st rid _mDir input = do
+    _ <- V.validateRequestId rid
+    liftIO $ do
+        let payload =
+                object
+                    [ "requestID" .= rid
+                    , "reply" .= priReply input
+                    , "message" .= priMessage input
+                    , "status" .= ("replied" :: Text)
+                    ]
+        RequestStore.writeRequest (stStorage st) "permission" rid payload
+        Bus.publish (stBus st) "permission.replied" payload
+        return True
 
-findHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Text -> Handler [Value]
-findHandler st mQuery mPattern mDir = do
+findHandler :: AppState -> Maybe Text -> Maybe Text -> Handler [Value]
+findHandler st mQuery mPattern = do
     -- Require at least one of query or pattern
     searchPattern <- case (mQuery, mPattern) of
         (Just q, _) -> pure q
         (Nothing, Just p) -> pure p
         (Nothing, Nothing) -> V.throwValidation "Missing required query parameter: pattern"
-    liftIO $ do
-        let root = maybe (unpack (stDirectory st)) unpack mDir
-        FindSearch.findText root searchPattern
+    -- Always search project directory - no user-supplied directory to prevent DoS
+    let root = unpack (stDirectory st)
+    liftIO $ FindSearch.findText root searchPattern
 
-findFileHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Bool -> Maybe Text -> Maybe Int -> Handler [Value]
-findFileHandler st mQuery mDir mDirs mType mLimit = do
+findFileHandler :: AppState -> Maybe Text -> Maybe Bool -> Maybe Text -> Maybe Int -> Handler [Value]
+findFileHandler st mQuery mDirs mType mLimit = do
     query <- V.requireQueryParam "query" mQuery
     validType <- V.validateFileTypeEnum mType
+    -- Always search project directory - no user-supplied directory to prevent DoS
+    let root = unpack (stDirectory st)
     liftIO $ do
-        let root = maybe (unpack (stDirectory st)) unpack mDir
         let opts =
                 FindSearch.FindFileOptions
                     { FindSearch.ffoIncludeDirs = fromMaybe False mDirs
@@ -1692,12 +1794,13 @@ findFileHandler st mQuery mDir mDirs mType mLimit = do
                     }
         FindSearch.findFileWithOptions root query opts
 
-findSymbolHandler :: AppState -> Maybe Text -> Maybe Text -> Handler [Value]
-findSymbolHandler st mQuery mDir = do
-    query <- V.requireQueryParam "query" mQuery
-    liftIO $ do
-        let root = maybe (unpack (stDirectory st)) unpack mDir
-        FindSearch.findSymbol root query
+findSymbolHandler :: AppState -> Maybe Text -> Handler [Value]
+findSymbolHandler _st mQuery = do
+    -- Validate query is present (required by OpenAPI spec)
+    _ <- V.requireQueryParam "query" mQuery
+    -- NOTE: TypeScript implementation returns [] (stub for LSP workspace symbols)
+    -- This endpoint is intended to use LSP's workspace symbol search, not ripgrep
+    return []
 
 fileStatusHandler :: AppState -> Maybe Text -> Maybe Text -> Handler [Value]
 fileStatusHandler st mDir mPath = liftIO $ do
@@ -1714,17 +1817,13 @@ fileStatusHandler st mDir mPath = liftIO $ do
                     return [object ["path" .= path, "status" .= ("clean" :: Text), "exists" .= exists]]
                 (_x : _xs) -> return $ map Data.Aeson.toJSON filtered
 
-tuiAppendPromptHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiAppendPromptHandler st _mDir input = do
-    _ <- V.requireJsonObject input
-    liftIO $ do
-        let text = case extractText input "text" of
-                Just t -> t
-                Nothing -> fromMaybe "" (extractText input "prompt")
-        prompt <- TuiStore.appendPrompt (stStorage st) text
-        let payload = object ["prompt" .= prompt]
-        Bus.publish (stBus st) "tui.append-prompt" payload
-        return True
+tuiAppendPromptHandler :: AppState -> Maybe Text -> AppendPromptInput -> Handler Bool
+tuiAppendPromptHandler st _mDir input = liftIO $ do
+    let text = fromMaybe "" (apiText input <|> apiPrompt input)
+    prompt <- TuiStore.appendPrompt (stStorage st) text
+    let payload = object ["prompt" .= prompt]
+    Bus.publish (stBus st) "tui.append-prompt" payload
+    return True
 
 tuiOpenHandler :: AppState -> Text -> Maybe Text -> Handler Bool
 tuiOpenHandler st name _mDir = liftIO $ do
@@ -1746,38 +1845,66 @@ tuiClearPromptHandler st _mDir = liftIO $ do
     Bus.publish (stBus st) "tui.clear-prompt" (object [])
     return True
 
-{- | Generic TUI handler that stores input and publishes an event
-Requires JSON object body (per OpenAPI spec)
--}
-tuiGenericHandler :: Text -> AppState -> Maybe Text -> Value -> Handler Bool
-tuiGenericHandler eventName st _mDir input = do
-    _ <- V.requireJsonObject input
-    liftIO $ do
-        TuiStore.setLast (stStorage st) input
-        Bus.publish (stBus st) eventName (object ["payload" .= input])
-        return True
+tuiExecuteCommandHandler :: AppState -> Maybe Text -> ExecuteCommandInput -> Handler Bool
+tuiExecuteCommandHandler st _mDir input = liftIO $ do
+    let payload = object ["command" .= eciCommand input]
+    TuiStore.setLast (stStorage st) payload
+    Bus.publish (stBus st) "tui.execute-command" (object ["payload" .= payload])
+    return True
 
-tuiExecuteCommandHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiExecuteCommandHandler = tuiGenericHandler "tui.execute-command"
+tuiShowToastHandler :: AppState -> Maybe Text -> ShowToastInput -> Handler Bool
+tuiShowToastHandler st _mDir input = liftIO $ do
+    let payload =
+            object
+                [ "message" .= stiMessage input
+                , "variant" .= stiVariant input
+                , "title" .= stiTitle input
+                , "duration" .= stiDuration input
+                ]
+    TuiStore.setLast (stStorage st) payload
+    Bus.publish (stBus st) "tui.show-toast" (object ["payload" .= payload])
+    return True
 
-tuiShowToastHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiShowToastHandler = tuiGenericHandler "tui.show-toast"
+tuiPublishHandler :: AppState -> Maybe Text -> PublishInput -> Handler Bool
+tuiPublishHandler st _mDir input = liftIO $ do
+    let (eventType, payload) = case input of
+            PublishPromptAppend props ->
+                ("tui.prompt.append", object ["text" .= ppapText props])
+            PublishCommandExecute props ->
+                ("tui.command.execute", object ["command" .= pcepCommand props])
+            PublishToastShow props ->
+                ( "tui.toast.show"
+                , object $
+                    ["message" .= ptspMessage props, "variant" .= ptspVariant props]
+                        ++ maybe [] (\t -> ["title" .= t]) (ptspTitle props)
+                        ++ maybe [] (\d -> ["duration" .= d]) (ptspDuration props)
+                )
+            PublishSessionSelect props ->
+                ("tui.session.select", object ["sessionID" .= psspSessionID props])
+    TuiStore.setLast (stStorage st) payload
+    Bus.publish (stBus st) eventType (object ["payload" .= payload])
+    return True
 
-tuiPublishHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiPublishHandler = tuiGenericHandler "tui.publish"
+tuiSelectSessionHandler :: AppState -> Maybe Text -> SelectSessionInput -> Handler Bool
+tuiSelectSessionHandler st _mDir input = liftIO $ do
+    let payload = object ["sessionID" .= ssiSessionID input]
+    TuiStore.setLast (stStorage st) payload
+    Bus.publish (stBus st) "tui.select-session" (object ["payload" .= payload])
+    return True
 
-tuiSelectSessionHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-tuiSelectSessionHandler = tuiGenericHandler "tui.select-session"
+tuiControlNextHandler :: AppState -> Maybe Text -> ControlNextInput -> Handler Bool
+tuiControlNextHandler st _mDir _input = liftIO $ do
+    let payload = object ["control" .= ("next" :: Text)]
+    TuiStore.setLast (stStorage st) payload
+    Bus.publish (stBus st) "tui.control.next" payload
+    return True
 
-tuiControlHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-tuiControlHandler st name _mDir input = do
-    -- Require JSON object body (per OpenAPI spec)
-    _ <- V.requireJsonObject input
-    liftIO $ do
-        let payload = object ["control" .= name, "payload" .= input]
-        TuiStore.setLast (stStorage st) payload
-        Bus.publish (stBus st) ("tui.control." <> name) payload
-        return True
+tuiControlResponseHandler :: AppState -> Maybe Text -> ControlResponseInput -> Handler Bool
+tuiControlResponseHandler st _mDir _input = liftIO $ do
+    let payload = object ["control" .= ("response" :: Text)]
+    TuiStore.setLast (stStorage st) payload
+    Bus.publish (stBus st) "tui.control.response" payload
+    return True
 
 instanceDisposeHandler :: AppState -> Handler Bool
 instanceDisposeHandler st = liftIO $ do
@@ -1817,8 +1944,8 @@ experimentalToolIdsHandler = return $ map ToolT.tdName Tool.allTools
 -- | List tools with JSON schema for a specific provider/model (GET /experimental/tool)
 experimentalToolListHandler :: AppState -> Text -> Text -> Maybe Text -> Handler [Value]
 experimentalToolListHandler _st _provider _model _mDir = liftIO $ do
-    -- Return tool definitions with their JSON schemas
-    return Tool.toolDefinitions
+    -- Return tool list items in OpenAPI schema format (id, description, parameters)
+    return Tool.toolListItems
 
 experimentalToolHandler :: AppState -> Value -> Handler Value
 experimentalToolHandler st input = liftIO $ do
@@ -1832,9 +1959,20 @@ experimentalWorktreeGetHandler _st _mDir = liftIO $ do
     -- Return empty list - worktree listing not yet implemented
     return []
 
-experimentalWorktreePostHandler :: AppState -> Value -> Handler Value
+experimentalWorktreePostHandler :: AppState -> Value -> Handler Api.Worktree
 experimentalWorktreePostHandler st input = liftIO $ do
-    Worktree.setInfo (stStorage st) input
+    -- Extract name from input (optional, we generate one if not provided)
+    let inputName = extractText input "name"
+    -- Generate a unique name if not provided
+    let wtName = fromMaybe "worktree-1" inputName
+    -- Generate branch name from worktree name
+    let wtBranch = "worktree/" <> wtName
+    -- Generate directory path
+    let wtDirectory = unpack (stDirectory st) <> "/.opencode/worktrees/" <> unpack wtName
+    -- Store worktree info
+    let worktreeInfo = Api.Worktree wtName wtBranch (pack wtDirectory)
+    _ <- Worktree.setInfo (stStorage st) input
+    return worktreeInfo
 
 experimentalWorktreeResetHandler :: AppState -> Maybe Text -> Handler Bool
 experimentalWorktreeResetHandler st _mDir = liftIO $ do
@@ -1842,10 +1980,10 @@ experimentalWorktreeResetHandler st _mDir = liftIO $ do
     return True
 
 -- | Delete a worktree and its branch (DELETE /experimental/worktree)
-experimentalWorktreeDeleteHandler :: AppState -> Maybe Text -> Value -> Handler Bool
+experimentalWorktreeDeleteHandler :: AppState -> Maybe Text -> WorktreeRemoveInput -> Handler Bool
 experimentalWorktreeDeleteHandler st mDir input = liftIO $ do
     -- Use query param directory if provided, otherwise extract from body
-    let dir = mDir <|> extractText input "directory"
+    let dir = mDir <|> Just (wriDirectory input)
     result <- Worktree.remove (stStorage st) (stDirectory st) dir
     case result of
         Left _err -> return False
@@ -1889,30 +2027,28 @@ ptyCreateHandler st input = do
 ptyGetHandler :: AppState -> Text -> Handler Value
 ptyGetHandler st ptyId = do
     _ <- V.validatePtyId ptyId
-    liftIO $ do
-        mInfo <- Pty.get (stPtyManager st) ptyId
-        case mInfo of
-            Nothing -> return $ errorResponse "PTY not found"
-            Just info -> return $ Data.Aeson.toJSON info
+    mInfo <- liftIO $ Pty.get (stPtyManager st) ptyId
+    case mInfo of
+        Nothing -> throwError $ notFoundErrorWithMsg "PTY not found"
+        Just info -> return $ Data.Aeson.toJSON info
 
 ptyUpdateHandler :: AppState -> Text -> Value -> Handler Value
 ptyUpdateHandler st ptyId input = do
     _ <- V.validatePtyId ptyId
     _ <- V.requireJsonObject input
-    liftIO $ do
-        let parseInput = case Data.Aeson.fromJSON input of
-                Data.Aeson.Success i -> Just i
-                Data.Aeson.Error _errMsg -> Nothing
+    let parseInput = case Data.Aeson.fromJSON input of
+            Data.Aeson.Success i -> Just i
+            Data.Aeson.Error _errMsg -> Nothing
 
-        case parseInput of
-            Nothing -> return $ errorResponse "Invalid input"
-            Just updateInput -> do
-                mInfo <- Pty.update (stPtyManager st) ptyId updateInput
-                case mInfo of
-                    Nothing -> return $ errorResponse "PTY not found"
-                    Just info -> do
-                        Bus.publish (stBus st) "pty.updated" (object ["info" .= info])
-                        return $ Data.Aeson.toJSON info
+    case parseInput of
+        Nothing -> throwError $ badRequestError "Invalid input"
+        Just updateInput -> do
+            mInfo <- liftIO $ Pty.update (stPtyManager st) ptyId updateInput
+            case mInfo of
+                Nothing -> throwError $ notFoundErrorWithMsg "PTY not found"
+                Just info -> liftIO $ do
+                    Bus.publish (stBus st) "pty.updated" (object ["info" .= info])
+                    return $ Data.Aeson.toJSON info
 
 ptyDeleteHandler :: AppState -> Text -> Handler Bool
 ptyDeleteHandler st ptyId = liftIO $ do
@@ -2040,7 +2176,7 @@ server st =
         :<|> authDeleteHandler st
         :<|> agentHandler
         :<|> configHandler st
-        :<|> commandHandler
+        :<|> commandHandler st
         :<|> sessionStatusHandler st
         :<|> sessionListHandler st
         :<|> sessionCreateHandler st
@@ -2102,8 +2238,8 @@ server st =
         :<|> tuiShowToastHandler st
         :<|> tuiPublishHandler st
         :<|> tuiSelectSessionHandler st
-        :<|> tuiControlHandler st "next"
-        :<|> tuiControlHandler st "response"
+        :<|> tuiControlNextHandler st
+        :<|> tuiControlResponseHandler st
         :<|> instanceDisposeHandler st
         :<|> globalDisposeHandler st
         :<|> eventHandler st

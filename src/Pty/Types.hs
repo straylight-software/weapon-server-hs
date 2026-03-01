@@ -41,6 +41,7 @@ import Data.ByteString qualified as BS
 import Data.Text (Text)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import Json.Strict (withStrictObject)
 
 -- | PTY status
 data PtyStatus
@@ -103,7 +104,7 @@ data CreatePtyInput = CreatePtyInput
     deriving (Eq, Show, Generic)
 
 instance FromJSON CreatePtyInput where
-    parseJSON = withObject "CreatePtyInput" $ \v ->
+    parseJSON = withStrictObject "CreatePtyInput" ["command", "args", "cwd", "title", "env", "sandbox", "network", "mounts", "sessionId", "agent"] $ \v ->
         CreatePtyInput
             <$> v .:? "command"
             <*> v .:? "args"
@@ -123,7 +124,7 @@ data UpdatePtyInput = UpdatePtyInput
     deriving (Eq, Show, Generic)
 
 instance FromJSON UpdatePtyInput where
-    parseJSON = withObject "UpdatePtyInput" $ \v ->
+    parseJSON = withStrictObject "UpdatePtyInput" ["title", "size"] $ \v ->
         UpdatePtyInput
             <$> v .:? "title"
             <*> v .:? "size"
@@ -136,7 +137,7 @@ data ResizeInput = ResizeInput
     deriving (Eq, Show, Generic)
 
 instance FromJSON ResizeInput where
-    parseJSON = withObject "ResizeInput" $ \v ->
+    parseJSON = withStrictObject "ResizeInput" ["rows", "cols"] $ \v ->
         ResizeInput
             <$> v .: "rows"
             <*> v .: "cols"

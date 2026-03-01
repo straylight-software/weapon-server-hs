@@ -6,34 +6,34 @@ This module runs generated property tests against the server's WAI application
 to verify compliance with the OpenAPI specification.
 
 Key features:
-- Each operation gets isolated storage to avoid file lock conflicts
 - Pre-seeds sessions so session endpoints can be properly tested
 - Rewrites random session IDs in requests to use pre-seeded sessions
+- Automatic streaming endpoint detection (SSE/WebSocket operations are skipped)
 -}
 module Integration.HaskemathesisTest (tests) where
 
 import Api (api)
 
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
-import Data.OpenApi (OpenApi)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Handlers (server)
 import Haskemathesis.Check.Standard (strictChecks)
 import Haskemathesis.Config (TestConfig (..), defaultStatefulChecks, defaultTestConfig)
+import Haskemathesis.Coverage.HPC (hpcAvailable)
 import Haskemathesis.Execute.Types (ApiRequest (..), ExecutorWithTimeout)
 import Haskemathesis.Execute.Wai (executeWaiWithTimeout)
-import Haskemathesis.Integration.Tasty (testTreeForExecutorNegative, testTreeForExecutorWithConfig)
+import Haskemathesis.Execute.WaiCoverage (CoverageResult (..), executeWaiWithCoverage)
+import Haskemathesis.Integration.Tasty (testTreeForExecutorFactoryIO, testTreeForExecutorFactoryNegativeIO)
 import Haskemathesis.OpenApi.Loader (loadOpenApiFile)
+import Haskemathesis.OpenApi.Types (ResolvedOperation (..))
 import Haskemathesis.Stateful.Checks (ensureModificationPersisted)
 
 import Config.Dhall qualified as Dhall
-import Haskemathesis.OpenApi.Resolve (resolveOperations)
-import Haskemathesis.OpenApi.Types (ResolvedOperation (..))
 import Katip (Severity (ErrorS))
 import Log qualified
-import Middleware (rejectEmptyPathSegments, supplyEmptyBody)
+import Middleware (rejectEmptyPathSegments, rejectInvalidContentType, requireContentType, supplyEmptyBody)
 import Network.Wai (Application)
 import Servant (serveWithContext)
 import Server.ErrorFormatters (errorFormattersContext)
@@ -43,6 +43,7 @@ import State (AppState (..), initialStateNoProxyWithCache)
 import Storage.Storage qualified as Storage
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, getCurrentDirectory, removeDirectoryRecursive)
 import System.FilePath ((</>))
+import System.IO (hPutStrLn, stderr)
 import Test.Tasty (TestTree, testGroup)
 import Util.StorageKeys (sessionKey)
 
@@ -50,24 +51,22 @@ import Util.StorageKeys (sessionKey)
 openApiSpecPath :: FilePath
 openApiSpecPath = "./sdk/openapi.json"
 
--- | Endpoints to skip (WebSocket and SSE endpoints that can't be tested with WAI)
-skipEndpoints :: [Text]
-skipEndpoints =
-    [ "pty.connect" -- WebSocket (uses Upgrade header)
-    , "event.subscribe" -- SSE streaming endpoint (text/event-stream)
-    , "global.event" -- SSE streaming endpoint (text/event-stream)
-    , "session.subscribe" -- SSE streaming endpoint
-    , "part.update" -- Uses $ref to Part schema with anyOf that haskemathesis can't resolve
+{- | Additional endpoints to skip (beyond auto-detected streaming endpoints)
+
+Note: SSE and WebSocket endpoints are automatically skipped by haskemathesis.
+This list is for operations that fail for other reasons.
+-}
+additionalSkipEndpoints :: [Text]
+additionalSkipEndpoints =
+    [ "part.update" -- Uses $ref to Part schema with anyOf that haskemathesis can't resolve
     ]
 
 -- | Filter out non-testable endpoints
 operationFilter :: ResolvedOperation -> Bool
 operationFilter op =
     case roOperationId op of
-        Just opId -> opId `notElem` skipEndpoints
-        Nothing ->
-            -- For operations without IDs, check path
-            roPath op /= "/pty/{ptyID}/connect"
+        Just opId -> opId `notElem` additionalSkipEndpoints
+        Nothing -> True
 
 -- | Known session ID that we pre-seed for testing
 knownSessionId :: Text
@@ -79,9 +78,8 @@ knownSessionIds = [knownSessionId, "ses_test_2", "ses_test_3"]
 
 {- | Create a test WAI application with isolated state and pre-seeded data
 
-Each call creates a unique storage directory to avoid file lock conflicts
-when tests run in parallel. The storage dir is also used as the project
-directory AND home directory to isolate all config file access.
+The storage dir is used as the project directory AND home directory
+to isolate all config file access.
 
 Pre-seeds sessions so session endpoints can be properly tested.
 -}
@@ -107,7 +105,12 @@ createTestApp dhallCache counter = do
     -- Pre-seed sessions with known IDs
     preSeedSessions state
 
-    let app = rejectEmptyPathSegments $ supplyEmptyBody $ serveWithContext api errorFormattersContext (server state)
+    let app =
+            rejectEmptyPathSegments $
+                rejectInvalidContentType $
+                    requireContentType $
+                        supplyEmptyBody $
+                            serveWithContext api errorFormattersContext (server state)
     pure (app, state)
 
 -- | Pre-seed sessions with known IDs for testing
@@ -162,15 +165,23 @@ rewriteSessionId req =
                  in req{reqPath = newPath}
             _otherSegments -> req
 
-{- | Create an executor with a unique app instance that rewrites session IDs
-Each executor has its own app, so different tests (properties) don't conflict
+-- | Create a standard executor (no coverage tracking)
+createExecutor :: Application -> ExecutorWithTimeout
+createExecutor app timeout req = do
+    let req' = rewriteSessionId req
+    executeWaiWithTimeout app timeout req'
+
+{- | Create a coverage-tracking executor
+
+Uses HPC to track code coverage during test execution. This enables
+coverage-guided fuzzing where inputs that discover new code paths are
+prioritized.
 -}
-createExecutorForOperation :: Dhall.DhallCache -> IORef Int -> IO ExecutorWithTimeout
-createExecutorForOperation dhallCache counter = do
-    (app, _state) <- createTestApp dhallCache counter
-    pure $ \timeout req -> do
-        let req' = rewriteSessionId req
-        executeWaiWithTimeout app timeout req'
+createCoverageExecutor :: Application -> ExecutorWithTimeout
+createCoverageExecutor app timeout req = do
+    let req' = rewriteSessionId req
+    result <- executeWaiWithCoverage app timeout req'
+    pure (crResponse result)
 
 -- | Test configuration with all features enabled (except response time checks)
 testConfig :: TestConfig
@@ -187,8 +198,14 @@ testConfig =
 
 {- | All haskemathesis tests
 
-We create a separate executor (with unique storage) for each operation
-to avoid file lock conflicts when tests run in parallel.
+Uses testTreeForExecutorFactoryIO which creates isolated executors per operation,
+automatically filters streaming endpoints, and returns which operations were skipped.
+
+The factory pattern ensures each operation gets its own isolated storage directory,
+preventing file lock conflicts between concurrent tests.
+
+Coverage-guided fuzzing is enabled when HPC instrumentation is available
+(compile with coverage: True in cabal.project.local).
 -}
 tests :: Dhall.DhallCache -> IO TestTree
 tests dhallCache = do
@@ -197,27 +214,36 @@ tests dhallCache = do
     case specResult of
         Left err -> error $ "Failed to load OpenAPI spec: " <> show err
         Right openApi -> do
-            let operations = resolveOperations openApi
-                filteredOps = filter operationFilter operations
+            -- Check if HPC coverage is available
+            hasCoverage <- hpcAvailable
+            when hasCoverage $
+                hPutStrLn stderr "Coverage-guided fuzzing enabled (HPC available)"
 
-            -- Create test trees for each operation with isolated storage
-            positiveTrees <- mapM (makeOperationTest dhallCache counter openApi) filteredOps
-            negativeTrees <- mapM (makeOperationTestNegative dhallCache counter openApi) filteredOps
+            -- Factory creates isolated executor per operation
+            -- Each operation gets its own storage directory to prevent file lock conflicts
+            let mkExecutor :: ResolvedOperation -> IO ExecutorWithTimeout
+                mkExecutor _op = do
+                    (app, _state) <- createTestApp dhallCache counter
+                    pure $
+                        if hasCoverage
+                            then createCoverageExecutor app
+                            else createExecutor app
+
+            -- Use the factory IO variants that create isolated executors per operation
+            (positiveTree, skippedStreaming) <- testTreeForExecutorFactoryIO openApi testConfig mkExecutor
+            (negativeTree, _) <- testTreeForExecutorFactoryNegativeIO openApi testConfig mkExecutor
+
+            -- Report skipped operations
+            unless (null skippedStreaming) $
+                hPutStrLn stderr $
+                    "Auto-skipped streaming operations: " ++ show skippedStreaming
+            unless (null additionalSkipEndpoints) $
+                hPutStrLn stderr $
+                    "Manually skipped operations: " ++ show additionalSkipEndpoints
+
             pure $
                 testGroup
                     "Haskemathesis OpenAPI Compliance"
-                    [ testGroup "OpenAPI Conformance" positiveTrees
-                    , testGroup "OpenAPI Conformance (Negative)" negativeTrees
+                    [ testGroup "OpenAPI Conformance" [positiveTree]
+                    , testGroup "OpenAPI Conformance (Negative)" [negativeTree]
                     ]
-
--- | Create a test for a single operation with isolated storage
-makeOperationTest :: Dhall.DhallCache -> IORef Int -> OpenApi -> ResolvedOperation -> IO TestTree
-makeOperationTest dhallCache counter openApi op = do
-    executor <- createExecutorForOperation dhallCache counter
-    pure $ testTreeForExecutorWithConfig openApi testConfig executor [op]
-
--- | Create a negative test for a single operation with isolated storage
-makeOperationTestNegative :: Dhall.DhallCache -> IORef Int -> OpenApi -> ResolvedOperation -> IO TestTree
-makeOperationTestNegative dhallCache counter openApi op = do
-    executor <- createExecutorForOperation dhallCache counter
-    pure $ testTreeForExecutorNegative openApi testConfig executor [op]

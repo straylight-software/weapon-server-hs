@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
 {- | ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -34,13 +36,17 @@ module Api.Experimental (
     ExperimentalWorktreePostAPI,
     ExperimentalWorktreeResetAPI,
     ExperimentalWorktreeDeleteAPI,
+    WorktreeRemoveInput (..),
+    Worktree (..),
 
     -- ** Global Sessions
     ExperimentalSessionListAPI,
 ) where
 
-import Data.Aeson (Value)
+import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Text (Text)
+import GHC.Generics (Generic)
+import Json.Strict (withStrictObject)
 import Servant (
     Delete,
     Get,
@@ -116,9 +122,9 @@ type ExperimentalWorktreeGetAPI = "experimental" :> "worktree" :> QueryParam "di
 
 {- | @POST /experimental/worktree@ - Create or update a worktree.
 
-Creates a new git worktree or updates an existing one.
+Creates a new git worktree. Returns the worktree info with name, branch, and directory.
 -}
-type ExperimentalWorktreePostAPI = "experimental" :> "worktree" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type ExperimentalWorktreePostAPI = "experimental" :> "worktree" :> ReqBody '[JSON] Value :> Post '[JSON] Worktree
 
 {- | @POST /experimental/worktree/reset@ - Reset a worktree.
 
@@ -130,7 +136,47 @@ type ExperimentalWorktreeResetAPI = "experimental" :> "worktree" :> "reset" :> Q
 
 Removes a git worktree and cleans up associated resources.
 -}
-type ExperimentalWorktreeDeleteAPI = "experimental" :> "worktree" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Delete '[JSON] Bool
+type ExperimentalWorktreeDeleteAPI = "experimental" :> "worktree" :> QueryParam "directory" Text :> ReqBody '[JSON] WorktreeRemoveInput :> Delete '[JSON] Bool
+
+-- | Input for worktree remove endpoint (strict JSON parsing)
+newtype WorktreeRemoveInput = WorktreeRemoveInput
+    { wriDirectory :: Text
+    -- ^ Directory of the worktree to remove
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON WorktreeRemoveInput where
+    parseJSON = withStrictObject "WorktreeRemoveInput" ["directory"] $ \v ->
+        WorktreeRemoveInput <$> v .: "directory"
+
+instance ToJSON WorktreeRemoveInput where
+    toJSON wri = object ["directory" .= wriDirectory wri]
+
+-- | Worktree response type matching the OpenAPI Worktree schema
+data Worktree = Worktree
+    { wtName :: Text
+    -- ^ Name of the worktree
+    , wtBranch :: Text
+    -- ^ Git branch for this worktree
+    , wtDirectory :: Text
+    -- ^ Absolute path to the worktree directory
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON Worktree where
+    parseJSON = withObject "Worktree" $ \v ->
+        Worktree
+            <$> v .: "name"
+            <*> v .: "branch"
+            <*> v .: "directory"
+
+instance ToJSON Worktree where
+    toJSON (Worktree nm branch dir) =
+        object
+            [ "name" .= nm
+            , "branch" .= branch
+            , "directory" .= dir
+            ]
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // session endpoints //

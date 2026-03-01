@@ -66,6 +66,7 @@ library
     Api.Validation
     Bus.Bus
     Bus.Event
+    Command.Command
     Config.Config
     Config.Dhall
     Config.Merge
@@ -90,6 +91,7 @@ library
     Global.Event
     Handlers
     Health.Build
+    Json.Strict
     LLM.Anthropic
     LLM.OpenRouter
     LLM.Types
@@ -301,6 +303,7 @@ test-suite weapon-server-test
     Property.ApiSessionProps
     Property.ApiTypesProps
     Property.BusProps
+    Property.CommandProps
     Property.ConfigDhallProps
     Property.ConfigMergeProps
     Property.ConfigProps

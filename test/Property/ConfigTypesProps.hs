@@ -53,13 +53,17 @@ genServerConfig =
         <$> Gen.maybe genText
         <*> Gen.maybe (Gen.int (Range.linear 1 65535))
         <*> Gen.maybe Gen.bool
-        <*> Gen.maybe Gen.bool
+        <*> Gen.maybe genText
+        <*> Gen.maybe (Gen.list (Range.linear 0 3) genText)
+
+genScrollAccelerationConfig :: Gen ScrollAccelerationConfig
+genScrollAccelerationConfig = ScrollAccelerationConfig <$> Gen.bool
 
 genTUIConfig :: Gen TUIConfig
 genTUIConfig =
     TUIConfig
-        <$> Gen.maybe (Gen.int (Range.linear 1 10))
-        <*> Gen.maybe (Gen.int (Range.linear 1 10))
+        <$> Gen.maybe (Gen.double (Range.linearFrac 0.1 10.0))
+        <*> Gen.maybe genScrollAccelerationConfig
         <*> Gen.maybe genDiffStyle
 
 genFormatterEntry :: Gen FormatterEntry
@@ -85,11 +89,11 @@ genCompactionConfig =
 genExperimentalConfig :: Gen ExperimentalConfig
 genExperimentalConfig =
     ExperimentalConfig
-        <$> Gen.maybe Gen.bool
-        <*> Gen.maybe Gen.bool
-        <*> Gen.maybe Gen.bool
-        <*> Gen.maybe Gen.bool
-        <*> Gen.maybe Gen.bool
+        <$> Gen.maybe Gen.bool -- expDisablePasteSummary
+        <*> Gen.maybe Gen.bool -- expBatchTool
+        <*> Gen.maybe Gen.bool -- expOpenTelemetry
+        <*> Gen.maybe (Gen.list (Range.linear 0 5) genText) -- expPrimaryTools
+        <*> Gen.maybe Gen.bool -- expContinueLoopOnDeny
 
 -- ============================================================================
 -- Properties

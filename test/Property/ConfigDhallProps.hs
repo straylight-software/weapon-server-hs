@@ -87,7 +87,8 @@ prop_defaultConfigServerDefaults = property $ do
     let server = cfgServer defaultConfig
     scPort server === Just 4096
     scHostname server === Just "localhost"
-    scCors server === Just True
+    -- cors is now an optional array of strings, not a boolean
+    scCors server === Nothing
 
 -- | Property: defaultConfig has INFO log level
 prop_defaultConfigLogLevel :: Property
@@ -98,11 +99,6 @@ prop_defaultConfigLogLevel = property $ do
 prop_defaultConfigTheme :: Property
 prop_defaultConfigTheme = property $ do
     cfgTheme defaultConfig === Just "ono-sendai"
-
--- | Property: defaultConfig instrumentation is disabled
-prop_defaultConfigInstrumentation :: Property
-prop_defaultConfigInstrumentation = property $ do
-    cfgInstrumentation defaultConfig === Just False
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                              Test Tree
@@ -126,6 +122,5 @@ tests =
             , testProperty "server defaults" prop_defaultConfigServerDefaults
             , testProperty "log level" prop_defaultConfigLogLevel
             , testProperty "theme" prop_defaultConfigTheme
-            , testProperty "instrumentation disabled" prop_defaultConfigInstrumentation
             ]
         ]

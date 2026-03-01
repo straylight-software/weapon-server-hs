@@ -37,9 +37,11 @@ module Agent.Types (
     getEffectiveTemperature,
 ) where
 
+import Control.Applicative ((<|>))
 import Data.Aeson
+import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
@@ -75,6 +77,9 @@ instance FromJSON PermissionAction where
 Each rule specifies an action to take, and optionally a glob pattern
 to match against file paths or tool arguments.
 
+Internal representation uses (action, glob) pairs, but the API
+representation uses the flattened format with (permission, pattern, action).
+
 ==== __Examples__
 
 @
@@ -96,12 +101,16 @@ data PermissionRule = PermissionRule
     }
     deriving (Show, Eq, Generic)
 
+-- | Internal ToJSON for map-based format (used in config files)
+permissionRuleToMapJSON :: PermissionRule -> Value
+permissionRuleToMapJSON pr =
+    object
+        [ "action" .= prAction pr
+        , "glob" .= prGlob pr
+        ]
+
 instance ToJSON PermissionRule where
-    toJSON pr =
-        object
-            [ "action" .= prAction pr
-            , "glob" .= prGlob pr
-            ]
+    toJSON = permissionRuleToMapJSON
 
 instance FromJSON PermissionRule where
     parseJSON = withObject "PermissionRule" $ \v ->
@@ -120,6 +129,10 @@ When checking permissions, rules are typically evaluated as:
 2. Fall back to wildcard ("*") if no exact match
 3. For each matching rule, check glob pattern if present
 4. First matching rule determines the action
+
+NOTE: The API representation is an array of { permission, pattern, action }
+objects, while the internal representation is a map. The ToJSON instance
+converts from map to array format to match the OpenAPI schema.
 -}
 newtype PermissionRuleset = PermissionRuleset
     { unRuleset :: Map.Map Text [PermissionRule]
@@ -127,11 +140,41 @@ newtype PermissionRuleset = PermissionRuleset
     }
     deriving (Show, Eq, Generic)
 
+{- | Convert internal map format to OpenAPI array format
+{ "read": [{ action: "allow", glob: "*.hs" }] }
+becomes: [{ permission: "read", pattern: "*.hs", action: "allow" }]
+-}
 instance ToJSON PermissionRuleset where
-    toJSON (PermissionRuleset m) = toJSON m
+    toJSON (PermissionRuleset m) =
+        toJSON
+            [ object
+                [ "permission" .= permName
+                , "pattern" .= fromMaybe "*" (prGlob rule)
+                , "action" .= prAction rule
+                ]
+            | (permName, rules) <- Map.toList m
+            , rule <- rules
+            ]
 
+-- | FromJSON supports both array format (API) and map format (config)
 instance FromJSON PermissionRuleset where
-    parseJSON v = PermissionRuleset <$> parseJSON v
+    parseJSON v = parseArray v <|> parseMap v
+      where
+        -- Parse array format: [{ permission, pattern, action }]
+        parseArray = withArray "PermissionRuleset" $ \arr -> do
+            rules <- mapM parseRule (toList arr)
+            let grouped = foldr (\(perm, rule) acc -> Map.insertWith (++) perm [rule] acc) Map.empty rules
+            pure (PermissionRuleset grouped)
+
+        parseRule = withObject "PermissionRule" $ \obj -> do
+            perm <- obj .: "permission"
+            pat <- obj .: "pattern"
+            action <- obj .: "action"
+            let glob = if pat == "*" then Nothing else Just pat
+            pure (perm, PermissionRule action glob)
+
+        -- Parse map format: { "read": [{ action, glob }] }
+        parseMap val = PermissionRuleset <$> parseJSON val
 
 {- | The operational mode of an agent.
 
@@ -209,22 +252,24 @@ data Agent = Agent
 
 instance ToJSON Agent where
     toJSON a =
-        object
+        object $
             [ "name" .= agentName a
-            , "description" .= agentDescription a
             , "mode" .= agentMode a
-            , "native" .= agentNative a
-            , "hidden" .= agentHidden a
-            , "topP" .= agentTopP a
-            , "temperature" .= agentTemperature a
-            , "color" .= agentColor a
             , "permission" .= agentPermission a
-            , "model" .= fmap (\(p, m) -> object ["providerID" .= p, "modelID" .= m]) (agentModel a)
-            , "variant" .= agentVariant a
-            , "prompt" .= agentPrompt a
             , "options" .= agentOptions a
-            , "steps" .= agentSteps a
             ]
+                ++ catMaybes
+                    [ ("description" .=) <$> agentDescription a
+                    , ("native" .=) <$> agentNative a
+                    , ("hidden" .=) <$> agentHidden a
+                    , ("topP" .=) <$> agentTopP a
+                    , ("temperature" .=) <$> agentTemperature a
+                    , ("color" .=) <$> agentColor a
+                    , fmap (\(p, m) -> "model" .= object ["providerID" .= p, "modelID" .= m]) (agentModel a)
+                    , ("variant" .=) <$> agentVariant a
+                    , ("prompt" .=) <$> agentPrompt a
+                    , ("steps" .=) <$> agentSteps a
+                    ]
 
 instance FromJSON Agent where
     parseJSON = withObject "Agent" $ \v ->

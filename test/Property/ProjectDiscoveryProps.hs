@@ -26,6 +26,10 @@ import Test.Helpers (listLength)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
+-- | Generate a timestamp for testing
+genTimestamp :: Gen Double
+genTimestamp = Gen.double (Range.linearFrac 1000000000 2000000000)
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Pure Helper Tests
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -38,9 +42,10 @@ prop_buildProjectListIncludesRoot = property $ do
         forAll $
             Gen.list (Range.linear 0 5) $
                 Gen.text (Range.linear 1 10) Gen.alphaNum
+    now <- forAll genTimestamp
     let rootPath = "/tmp/" <> T.unpack root
     let subdirPaths = map T.unpack subdirs
-    let projects = Discovery.buildProjectList rootPath subdirPaths
+    let projects = Discovery.buildProjectList now rootPath subdirPaths
     case projects of
         [] -> failure
         (firstProject : _) -> worktree firstProject === T.pack rootPath
@@ -52,9 +57,10 @@ prop_buildProjectListIncludesSubdirs = property $ do
     -- Generate unique subdirs to avoid deduplication
     subdir1 <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
     subdir2 <- forAll $ Gen.text (Range.linear 11 20) Gen.alphaNum
+    now <- forAll genTimestamp
     let rootPath = "/workspace/" <> T.unpack root
     let subdirs = [T.unpack subdir1, T.unpack subdir2]
-    let projects = Discovery.buildProjectList rootPath subdirs
+    let projects = Discovery.buildProjectList now rootPath subdirs
     -- Should have root + 2 subdirs (unless duplicates)
     assert $ listLength projects >= 1
 
@@ -62,8 +68,9 @@ prop_buildProjectListIncludesSubdirs = property $ do
 prop_buildProjectListEmptySubdirs :: Property
 prop_buildProjectListEmptySubdirs = property $ do
     root <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    now <- forAll genTimestamp
     let rootPath = "/tmp/" <> T.unpack root
-    let projects = Discovery.buildProjectList rootPath []
+    let projects = Discovery.buildProjectList now rootPath []
     listLength projects === 1
     case projects of
         [] -> failure
@@ -72,9 +79,10 @@ prop_buildProjectListEmptySubdirs = property $ do
 -- | Property: deduplicateProjects removes duplicates
 prop_deduplicateProjectsRemovesDuplicates :: Property
 prop_deduplicateProjectsRemovesDuplicates = property $ do
-    name <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
-    let path = "/tmp/" <> T.unpack name
-    let proj = ProjectBuild.projectFromDir path
+    nm <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    now <- forAll genTimestamp
+    let path = "/tmp/" <> T.unpack nm
+    let proj = ProjectBuild.projectFromDir now path
     let duplicated = [proj, proj, proj]
     let deduplicated = Discovery.deduplicateProjects duplicated
     listLength deduplicated === 1
@@ -86,8 +94,9 @@ prop_deduplicateProjectsPreservesOrder = property $ do
         forAll $
             Gen.list (Range.linear 1 10) $
                 Gen.text (Range.linear 1 15) Gen.alphaNum
+    now <- forAll genTimestamp
     let paths = map (\n -> "/tmp/" <> T.unpack n) names
-    let projects = map ProjectBuild.projectFromDir paths
+    let projects = map (ProjectBuild.projectFromDir now) paths
     let deduplicated = Discovery.deduplicateProjects projects
     -- Deduplicated should be a prefix of unique elements
     assert $ listLength deduplicated <= listLength projects
@@ -99,8 +108,9 @@ prop_deduplicateProjectsIdempotent = property $ do
         forAll $
             Gen.list (Range.linear 1 10) $
                 Gen.text (Range.linear 1 15) Gen.alphaNum
+    now <- forAll genTimestamp
     let paths = map (\n -> "/tmp/" <> T.unpack n) names
-    let projects = map ProjectBuild.projectFromDir paths
+    let projects = map (ProjectBuild.projectFromDir now) paths
     let once = Discovery.deduplicateProjects projects
     let twice = Discovery.deduplicateProjects once
     once === twice
@@ -108,8 +118,9 @@ prop_deduplicateProjectsIdempotent = property $ do
 -- | Property: sameWorktree is reflexive
 prop_sameWorktreeReflexive :: Property
 prop_sameWorktreeReflexive = property $ do
-    name <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
-    let proj = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack name)
+    nm <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    now <- forAll genTimestamp
+    let proj = ProjectBuild.projectFromDir now ("/tmp/" <> T.unpack nm)
     assert $ Discovery.sameWorktree proj proj
 
 -- | Property: sameWorktree is symmetric
@@ -117,17 +128,19 @@ prop_sameWorktreeSymmetric :: Property
 prop_sameWorktreeSymmetric = property $ do
     name1 <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
     name2 <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
-    let proj1 = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack name1)
-    let proj2 = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack name2)
+    now <- forAll genTimestamp
+    let proj1 = ProjectBuild.projectFromDir now ("/tmp/" <> T.unpack name1)
+    let proj2 = ProjectBuild.projectFromDir now ("/tmp/" <> T.unpack name2)
     Discovery.sameWorktree proj1 proj2 === Discovery.sameWorktree proj2 proj1
 
 -- | Property: sameWorktree with same path returns True
 prop_sameWorktreeSamePath :: Property
 prop_sameWorktreeSamePath = property $ do
-    name <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
-    let path = "/tmp/" <> T.unpack name
-    let proj1 = ProjectBuild.projectFromDir path
-    let proj2 = ProjectBuild.projectFromDir path
+    nm <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    now <- forAll genTimestamp
+    let path = "/tmp/" <> T.unpack nm
+    let proj1 = ProjectBuild.projectFromDir now path
+    let proj2 = ProjectBuild.projectFromDir now path
     assert $ Discovery.sameWorktree proj1 proj2
 
 -- | Property: sameWorktree with different paths returns False
@@ -135,8 +148,9 @@ prop_sameWorktreeDifferentPath :: Property
 prop_sameWorktreeDifferentPath = property $ do
     name1 <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
     name2 <- forAll $ Gen.text (Range.linear 11 20) Gen.alphaNum
-    let proj1 = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack name1)
-    let proj2 = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack name2)
+    now <- forAll genTimestamp
+    let proj1 = ProjectBuild.projectFromDir now ("/tmp/" <> T.unpack name1)
+    let proj2 = ProjectBuild.projectFromDir now ("/tmp/" <> T.unpack name2)
     if name1 == name2
         then success
         else assert $ not (Discovery.sameWorktree proj1 proj2)
@@ -148,10 +162,10 @@ prop_sameWorktreeDifferentPath = property $ do
 -- | Property: discoverProjects includes subdirs with weapon.dhall
 prop_discoverProjects :: Property
 prop_discoverProjects = property $ do
-    name <- forAll genText
+    nm <- forAll genText
     result <- evalIO $ do
         tmpDir <- createTempDirectory "/tmp" "project-discovery"
-        let subDir = tmpDir </> T.unpack name
+        let subDir = tmpDir </> T.unpack nm
         createDirectoryIfMissing True subDir
         writeFile (subDir </> "weapon.dhall") "{=}"
         projects <- Discovery.discoverProjects tmpDir
@@ -162,10 +176,10 @@ prop_discoverProjects = property $ do
 -- | Property: discoverProjects ignores subdirs without weapon.dhall
 prop_discoverProjectsIgnoresNonProjects :: Property
 prop_discoverProjectsIgnoresNonProjects = property $ do
-    name <- forAll genText
+    nm <- forAll genText
     result <- evalIO $ do
         tmpDir <- createTempDirectory "/tmp" "project-discovery"
-        let subDir = tmpDir </> T.unpack name
+        let subDir = tmpDir </> T.unpack nm
         createDirectoryIfMissing True subDir
         -- No weapon.dhall file
         projects <- Discovery.discoverProjects tmpDir

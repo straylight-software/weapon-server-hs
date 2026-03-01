@@ -46,13 +46,17 @@ genServerConfig =
         <$> genMaybeText
         <*> Gen.maybe (Gen.int (Range.linear 1 65535))
         <*> genMaybeBool
-        <*> genMaybeBool
+        <*> genMaybeText
+        <*> Gen.maybe (Gen.list (Range.linear 0 3) genText)
+
+genScrollAccelerationConfig :: Gen ScrollAccelerationConfig
+genScrollAccelerationConfig = ScrollAccelerationConfig <$> Gen.bool
 
 genTUIConfig :: Gen TUIConfig
 genTUIConfig =
     TUIConfig
-        <$> Gen.maybe (Gen.int (Range.linear 1 10))
-        <*> Gen.maybe (Gen.int (Range.linear 1 10))
+        <$> Gen.maybe (Gen.double (Range.linearFrac 0.1 10.0))
+        <*> Gen.maybe genScrollAccelerationConfig
         <*> Gen.maybe genDiffStyle
 
 genCompactionConfig :: Gen CompactionConfig
@@ -65,17 +69,16 @@ genCompactionConfig =
 genExperimentalConfig :: Gen ExperimentalConfig
 genExperimentalConfig =
     ExperimentalConfig
-        <$> genMaybeBool
-        <*> genMaybeBool
-        <*> genMaybeBool
-        <*> genMaybeBool
-        <*> genMaybeBool
+        <$> genMaybeBool -- expDisablePasteSummary
+        <*> genMaybeBool -- expBatchTool
+        <*> genMaybeBool -- expOpenTelemetry
+        <*> Gen.maybe (Gen.list (Range.linear 0 5) genText) -- expPrimaryTools
+        <*> genMaybeBool -- expContinueLoopOnDeny
 
 genEnterpriseConfig :: Gen EnterpriseConfig
 genEnterpriseConfig =
     EnterpriseConfig
         <$> genMaybeText
-        <*> genMaybeText
 
 genWatcherConfig :: Gen WatcherConfig
 genWatcherConfig =
@@ -108,8 +111,6 @@ genConfig =
         <*> pure Nothing -- themes
         <*> pure Nothing -- share
         <*> pure Nothing -- autoUpdate
-        <*> pure Nothing -- disabledTools
-        <*> genMaybeBool -- instrumentation
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                    mergeOptional Properties
@@ -200,7 +201,7 @@ prop_mergeServerPreservesFields :: Property
 prop_mergeServerPreservesFields = property $ do
     base <- forAll genServerConfig
     port <- forAll $ Gen.int (Range.linear 1 65535)
-    let override = ServerConfig Nothing (Just port) Nothing Nothing
+    let override = ServerConfig Nothing (Just port) Nothing Nothing Nothing
     let merged = mergeServer base override
     scPort merged === Just port
     scHostname merged === scHostname base
@@ -228,20 +229,19 @@ prop_mergeCompactionIdempotent = property $ do
 prop_mergeExperimentalPreservesFields :: Property
 prop_mergeExperimentalPreservesFields = property $ do
     base <- forAll genExperimentalConfig
-    thinking <- forAll Gen.bool
-    let override = defaultExperimental{expThinking = Just thinking}
+    batchTool <- forAll Gen.bool
+    let override = defaultExperimental{expBatchTool = Just batchTool}
     let merged = mergeExperimental base override
-    expThinking merged === Just thinking
+    expBatchTool merged === Just batchTool
 
 -- | Property: mergeEnterprise override wins
 prop_mergeEnterpriseOverrideWins :: Property
 prop_mergeEnterpriseOverrideWins = property $ do
     base <- forAll genEnterpriseConfig
     url <- forAll genText
-    let override = EnterpriseConfig (Just url) Nothing
+    let override = EnterpriseConfig (Just url)
     let merged = mergeEnterprise base override
     entUrl merged === Just url
-    entApiKey merged === entApiKey base
 
 -- | Property: mergeWatcher override replaces ignore list
 prop_mergeWatcherOverrideWins :: Property

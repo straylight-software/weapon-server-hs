@@ -12,7 +12,7 @@
     };
 
     haskemathesis = {
-      url = "git+ssh://git@github.com/straylight-software/haskemathesis.git";
+      url = "git+ssh://git@github.com/straylight-software/haskemathesis.git?ref=executor-io-api";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-parts.follows = "flake-parts";
       inputs.treefmt-nix.follows = "treefmt-nix";

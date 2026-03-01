@@ -115,8 +115,6 @@ mergeConfigs base override =
         , cfgThemes = mergeOptional (cfgThemes base) (cfgThemes override)
         , cfgShare = mergeOptional (cfgShare base) (cfgShare override)
         , cfgAutoUpdate = mergeOptional (cfgAutoUpdate base) (cfgAutoUpdate override)
-        , cfgDisabledTools = mergeOptional (cfgDisabledTools base) (cfgDisabledTools override)
-        , cfgInstrumentation = mergeOptional (cfgInstrumentation base) (cfgInstrumentation override)
         }
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -239,6 +237,7 @@ mergeServer base override =
         { scHostname = mergeOptional (scHostname base) (scHostname override)
         , scPort = mergeOptional (scPort base) (scPort override)
         , scMdns = mergeOptional (scMdns base) (scMdns override)
+        , scMdnsDomain = mergeOptional (scMdnsDomain base) (scMdnsDomain override)
         , scCors = mergeOptional (scCors base) (scCors override)
         }
 
@@ -287,11 +286,11 @@ mergeCompaction base override =
 mergeExperimental :: ExperimentalConfig -> ExperimentalConfig -> ExperimentalConfig
 mergeExperimental base override =
     ExperimentalConfig
-        { expThinking = mergeOptional (expThinking base) (expThinking override)
-        , expWorktree = mergeOptional (expWorktree base) (expWorktree override)
-        , expFileCache = mergeOptional (expFileCache base) (expFileCache override)
-        , expParallelTools = mergeOptional (expParallelTools base) (expParallelTools override)
-        , expStreaming = mergeOptional (expStreaming base) (expStreaming override)
+        { expDisablePasteSummary = mergeOptional (expDisablePasteSummary base) (expDisablePasteSummary override)
+        , expBatchTool = mergeOptional (expBatchTool base) (expBatchTool override)
+        , expOpenTelemetry = mergeOptional (expOpenTelemetry base) (expOpenTelemetry override)
+        , expPrimaryTools = mergeOptional (expPrimaryTools base) (expPrimaryTools override)
+        , expContinueLoopOnDeny = mergeOptional (expContinueLoopOnDeny base) (expContinueLoopOnDeny override)
         }
 
 -- | Merge enterprise configurations.
@@ -299,7 +298,6 @@ mergeEnterprise :: EnterpriseConfig -> EnterpriseConfig -> EnterpriseConfig
 mergeEnterprise base override =
     EnterpriseConfig
         { entUrl = mergeOptional (entUrl base) (entUrl override)
-        , entApiKey = mergeOptional (entApiKey base) (entApiKey override)
         }
 
 -- | Merge watcher configurations.

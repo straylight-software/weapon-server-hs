@@ -11,7 +11,10 @@ import Config.Dhall qualified as Dhall
 import Control.Concurrent.STM
 import Control.Exception (bracket, catch)
 import Control.Monad (void)
-import Data.Aeson (Value, object, toJSON, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
+import Data.Aeson.Key qualified as K
+import Data.Aeson.KeyMap qualified as KM
+import Data.List qualified as List
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
@@ -33,7 +36,7 @@ import System.FilePath ((</>))
 import System.Posix.Signals qualified as Sig
 import System.Process (readProcessWithExitCode)
 import Test.Fixture (withTempDir)
-import Test.Helpers (hasKey, lookupArray, lookupText, runHandlerIO, waitVar)
+import Test.Helpers (hasKey, lookupArray, lookupText, runHandlerIO, valueToText, waitForCount, waitVar)
 import Test.Hspec
 import Util.Identifier qualified as Identifier
 
@@ -98,15 +101,31 @@ withState dhallCache exeCache action =
                             }
                 action st
 
+-- | Match a find.text result which has path: {text: "..."} and lines: {text: "..."}
 matchFind :: Text -> Text -> Value -> Bool
 matchFind token path val =
-    case lookupText "path" val of
+    case lookupNestedText "path" "text" val of
         Just p -> token `T.isInfixOf` p || p == path
         Nothing -> False
 
+-- | Extract nested text value like path.text from ripgrep JSON output
+lookupNestedText :: Text -> Text -> Value -> Maybe Text
+lookupNestedText outerKey innerKey val =
+    case lookupObject outerKey val of
+        Just inner -> lookupText innerKey inner
+        Nothing -> Nothing
+
+-- | Extract an object value from a JSON object by key
+lookupObject :: Text -> Value -> Maybe Value
+lookupObject key (Object obj) = KM.lookup (K.fromText key) obj
+lookupObject _ _ = Nothing
+
+{- | Check if a JSON string value ends with a suffix.
+find.files returns array of strings, not objects.
+-}
 hasSuffix :: Text -> Value -> Bool
 hasSuffix suffix val =
-    case lookupText "path" val of
+    case valueToText val of
         Just p -> suffix `T.isSuffixOf` p
         Nothing -> False
 
@@ -119,12 +138,16 @@ spec dhallCache exeCache = do
                 _ <- Bus.subscribe (stBus st) "command.executed" $ \event ->
                     atomically $ void $ tryPutTMVar var event
                 let input =
-                        object
-                            [ "command" .= ("echo hello_test" :: Text)
-                            , "description" .= ("test" :: Text)
-                            , "timeout" .= (2000 :: Int)
-                            ]
-                res <- runHandlerIO (sessionCommandHandler st "session" input)
+                        SessionCommandInput
+                            { sciCommand = "echo"
+                            , sciArguments = "hello_test"
+                            , sciMessageID = Nothing
+                            , sciAgent = Nothing
+                            , sciModel = Nothing
+                            , sciVariant = Nothing
+                            , sciParts = Nothing
+                            }
+                res <- runHandlerIO (sessionCommandHandler st "session" Nothing input)
                 evt <- waitVar 1000000 var
                 pure (res, evt)
             case result of
@@ -141,13 +164,14 @@ spec dhallCache exeCache = do
                                 Just out -> T.isInfixOf "hello_test" out `shouldBe` True
                     isJust evt `shouldBe` True
 
-        it "vcs handler returns branch info when git is available" $ do
+        it "vcs handler returns branch info in git repo, 404 otherwise" $ do
             result <- withIgnoreSignals $ withState dhallCache exeCache $ \st -> do
                 exe <- findExecutable "git"
                 case exe of
                     Nothing -> do
+                        -- No git available, should return 404
                         res <- runHandlerIO (vcsHandler st)
-                        pure (res, Nothing)
+                        pure (res, False)
                     Just _ -> do
                         let root = T.unpack (stDirectory st)
                         -- Initialize git repo
@@ -161,11 +185,14 @@ spec dhallCache exeCache = do
                         _ <- readProcessWithExitCode "git" ["-C", root, "config", "user.email", "test@test.com"] ""
                         _ <- readProcessWithExitCode "git" ["-C", root, "config", "user.name", "Test"] ""
                         res <- runHandlerIO (vcsHandler st)
-                        pure (res, Just ())
+                        pure (res, True)
             case result of
-                (Left err, _) -> expectationFailure $ "Handler failed: " ++ show err
-                (Right info, Nothing) -> branch info `shouldBe` Nothing
-                (Right info, Just _) -> isJust (branch info) `shouldBe` True
+                -- When git is not available or not in repo, expect 404
+                (Left _err, False) -> pure ()
+                -- When in git repo, expect branch info
+                (Left err, True) -> expectationFailure $ "Handler failed in git repo: " ++ show err
+                (Right info, True) -> T.null (branch info) `shouldBe` False
+                (Right _info, False) -> expectationFailure "Expected 404 when not in git repo"
 
         it "find handler finds content in files" $ do
             result <- withIgnoreSignals $ withState dhallCache exeCache $ \st -> do
@@ -173,7 +200,7 @@ spec dhallCache exeCache = do
                 let path = root </> "find_test.txt"
                 TIO.writeFile path "find unique_token_xyz"
                 ( do
-                        vals <- runHandlerIO (findHandler st (Just "unique_token_xyz") Nothing Nothing)
+                        vals <- runHandlerIO (findHandler st (Just "unique_token_xyz") Nothing)
                         pure (T.pack path, vals, Nothing)
                     )
                     `catch` \(e :: SearchError) -> pure (T.pack path, Right [], Just e)
@@ -190,7 +217,7 @@ spec dhallCache exeCache = do
                 let path = root </> "test_findfile.txt"
                 TIO.writeFile path "file content"
                 ( do
-                        vals <- runHandlerIO (findFileHandler st (Just "*.txt") Nothing Nothing Nothing Nothing)
+                        vals <- runHandlerIO (findFileHandler st (Just "*.txt") Nothing Nothing Nothing)
                         pure (T.pack path, vals, Nothing)
                     )
                     `catch` \(e :: SearchError) -> pure (T.pack path, Right [], Just e)
@@ -198,7 +225,8 @@ spec dhallCache exeCache = do
                 (_, Left err, _) -> expectationFailure $ "Handler failed: " ++ show err
                 (_, Right _, Just e) -> expectationFailure $ "Search error: " ++ show e
                 (path, Right vals, Nothing) -> do
-                    let matches = filter (\v -> lookupText "path" v == Just path || hasSuffix ".txt" v) vals
+                    -- find.files returns array of strings, not objects
+                    let matches = filter (\v -> valueToText v == Just path || hasSuffix ".txt" v) vals
                     null matches `shouldBe` False
 
         it "pty handler lifecycle creates, lists, updates, and deletes" $ do
@@ -240,24 +268,80 @@ spec dhallCache exeCache = do
                 _ <- Bus.subscribe (stBus st) "pty.created" $ \event ->
                     atomically $ void $ tryPutTMVar var event
                 let input =
-                        object
-                            [ "command" .= ("sleep" :: Text)
-                            , "args" .= (["infinity"] :: [Text])
-                            , "sandbox" .= False
-                            ]
-                res <- runHandlerIO (sessionShellHandler st "session" input)
+                        SessionShellInput
+                            { ssiAgent = "test"
+                            , ssiCommand = "sleep 1"
+                            , ssiModel = Nothing
+                            }
+                res <- runHandlerIO (sessionShellHandler st "session" Nothing input)
                 evt <- waitVar 100000 var
-                case res of
-                    Left err -> pure (Left err, evt)
-                    Right val -> do
-                        case lookupText "id" val of
-                            Nothing -> pure (Right val, evt)
-                            Just pid -> do
-                                _ <- Pty.remove (stPtyManager st) pid
-                                pure (Right val, evt)
+                -- Clean up any PTY created - extract id from event properties
+                case evt of
+                    Nothing -> pure ()
+                    Just busEvt -> do
+                        let props = Bus.beProperties busEvt
+                        case lookupObject "info" props >>= lookupText "id" of
+                            Nothing -> pure ()
+                            Just pid -> void $ Pty.remove (stPtyManager st) pid
+                pure (res, evt)
             case result of
                 (Left err, _) -> expectationFailure $ "Handler failed: " ++ show err
-                (Right val, evt) -> do
-                    case lookupText "id" val of
-                        Nothing -> expectationFailure "No PTY id returned"
-                        Just _ -> isJust evt `shouldBe` True
+                (Right msgInfo, evt) -> do
+                    -- Verify we got a valid AssistantMessageInfo with an ID
+                    T.null (amiId msgInfo) `shouldBe` False
+                    isJust evt `shouldBe` True
+
+        it "messages remain ordered after session cancel" $ do
+            result <- withIgnoreSignals $ withState dhallCache exeCache $ \st -> do
+                let sessionId = "session_cancel_order_test"
+
+                -- Track session.status events to know when background work is done
+                statusCountVar <- newTVarIO (0 :: Int)
+                unsubStatus <- Bus.subscribe (stBus st) "session.status" $ \_event ->
+                    atomically $ modifyTVar' statusCountVar (+ 1)
+
+                -- 1. Send first message
+                let parts1 = [object ["type" .= ("text" :: Text), "text" .= ("first message" :: Text)]]
+                let input1 = CreateMessageInput Nothing parts1 Nothing Nothing
+                _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input1)
+                -- Wait for first message cycle to complete (busy + idle = 2)
+                _ <- waitForCount 2000000 statusCountVar 2
+
+                -- 2. Abort/cancel the session (publishes session.error)
+                abortVar <- newEmptyTMVarIO
+                _ <- Bus.subscribe (stBus st) "session.error" $ \event ->
+                    atomically $ void $ tryPutTMVar abortVar event
+                _ <- runHandlerIO (sessionAbortHandler st sessionId Nothing)
+                _ <- waitVar 2000000 abortVar
+
+                -- 3. Send second message
+                let parts2 = [object ["type" .= ("text" :: Text), "text" .= ("second message" :: Text)]]
+                let input2 = CreateMessageInput Nothing parts2 Nothing Nothing
+                _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input2)
+                -- Wait for second message cycle to complete (should be 4 total now)
+                _ <- waitForCount 2000000 statusCountVar 4
+                unsubStatus
+
+                -- 4. Get all messages
+                runHandlerIO (sessionMessageListHandler st sessionId Nothing)
+
+            case result of
+                Left err -> expectationFailure $ "Handler failed: " ++ show err
+                Right msgs -> do
+                    -- Extract roles
+                    let roles = map (messageInfoRole . msgInfo) msgs
+                    let userIndices = List.elemIndices "user" roles
+                    let assistantIndices = List.elemIndices "assistant" roles
+
+                    -- Key property: Each user message should come before its corresponding assistant
+                    -- Verify strict ordering: user1 < assistant1 < user2 < assistant2
+                    -- Pattern matching ensures we have at least 2 of each
+                    case (userIndices, assistantIndices) of
+                        (u1 : u2 : _moreUsers, a1 : a2 : _moreAssistants) -> do
+                            u1 `shouldSatisfy` (< a1)
+                            a1 `shouldSatisfy` (< u2)
+                            u2 `shouldSatisfy` (< a2)
+                        ([], _anyAssistants) -> expectationFailure "Expected at least 2 user messages, got 0"
+                        ([_oneUser], _anyAssistants) -> expectationFailure "Expected at least 2 user messages, got 1"
+                        (_anyUsers, []) -> expectationFailure "Expected at least 2 assistant messages, got 0"
+                        (_anyUsers, [_oneAssistant]) -> expectationFailure "Expected at least 2 assistant messages, got 1"

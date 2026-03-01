@@ -55,6 +55,15 @@ module Server.ErrorFormatters (
     forbiddenBody,
     internalErrorBody,
 
+    -- * Handler Error Helpers
+
+    {- | These functions return ServerError values suitable for use with
+    'throwError' in Servant handlers, with properly formatted JSON bodies.
+    -}
+    notFoundError,
+    notFoundErrorWithMsg,
+    badRequestError,
+
     -- * Generic Error Response Helpers
     jsonError,
     errorResponse,
@@ -284,6 +293,70 @@ jsonError baseErr pairs =
     baseErr
         { errHeaders = jsonContentType
         , errBody = encode (object pairs)
+        }
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Handler Error Helpers
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Create a 404 Not Found error for use with 'throwError'.
+
+Returns a ServerError with JSON body matching the OpenAPI NotFoundError schema.
+
+==== __Examples__
+
+@
+handler :: Handler Session
+handler = do
+    msession <- getSession sid
+    case msession of
+        Nothing -> throwError notFoundError
+        Just s  -> return s
+@
+-}
+notFoundError :: ServerError
+notFoundError =
+    err404
+        { errHeaders = jsonContentType
+        , errBody = notFoundBody
+        }
+
+{- | Create a 404 Not Found error with a custom message.
+
+==== __Examples__
+
+@
+handler :: Handler Session
+handler = do
+    msession <- getSession sid
+    case msession of
+        Nothing -> throwError $ notFoundErrorWithMsg "Session not found"
+        Just s  -> return s
+@
+-}
+notFoundErrorWithMsg :: Text -> ServerError
+notFoundErrorWithMsg msg =
+    err404
+        { errHeaders = jsonContentType
+        , errBody = errorBody "NotFoundError" msg
+        }
+
+{- | Create a 400 Bad Request error with a custom message.
+
+==== __Examples__
+
+@
+handler :: Handler ()
+handler = do
+    when (isInvalid input) $
+        throwError $ badRequestError "Invalid input format"
+@
+-}
+badRequestError :: Text -> ServerError
+badRequestError msg =
+    err400
+        { errHeaders = jsonContentType
+        , errBody = badRequestBody msg
         }
 
 -- ═══════════════════════════════════════════════════════════════════════════

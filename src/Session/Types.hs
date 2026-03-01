@@ -49,6 +49,7 @@ import Data.Aeson
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import GHC.Generics (Generic)
+import Json.Strict (withStrictObject)
 
 {- | Time tracking for a session.
 
@@ -269,7 +270,8 @@ data CreateSessionInput = CreateSessionInput
     deriving (Show, Eq, Generic)
 
 instance FromJSON CreateSessionInput where
-    parseJSON = withObject "CreateSessionInput" $ \v ->
+    -- Note: "permission" is accepted but ignored (not yet implemented)
+    parseJSON = withStrictObject "CreateSessionInput" ["title", "parentID", "permission"] $ \v ->
         CreateSessionInput
             <$> v .:? "title"
             <*> v .:? "parentID"

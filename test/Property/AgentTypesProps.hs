@@ -60,7 +60,9 @@ genPermissionRuleset :: Gen PermissionRuleset
 genPermissionRuleset = do
     entries <- Gen.list (Range.linear 0 5) $ do
         key <- genNonEmptyText
-        rules <- Gen.list (Range.linear 0 3) genPermissionRule
+        -- Must have at least 1 rule per key for roundtrip to work
+        -- (empty rule lists are not preserved in array format)
+        rules <- Gen.list (Range.linear 1 3) genPermissionRule
         pure (key, rules)
     pure $ PermissionRuleset (Map.fromList entries)
 

@@ -52,6 +52,8 @@ spec dhallCache = do
                         { Api.id = "proj_123"
                         , Api.worktree = "/home/user/project"
                         , Api.name = Just "My Project"
+                        , Api.time = ProjectTime 1709312000 1709312100 Nothing
+                        , Api.sandboxes = []
                         }
             let json = encode project
             T.isInfixOf "proj_123" (T.pack $ show json) `shouldBe` True
@@ -62,6 +64,8 @@ spec dhallCache = do
                         { Api.id = "proj_456"
                         , Api.worktree = "/home/user/other"
                         , Api.name = Nothing
+                        , Api.time = ProjectTime 1709312000 1709312100 Nothing
+                        , Api.sandboxes = []
                         }
             decode (encode project) `shouldBe` Just project
 
@@ -103,3 +107,63 @@ spec dhallCache = do
                         , stArchived = Just 1234567892
                         }
             decode (encode st) `shouldBe` Just st
+
+    describe "Strict Input Parsing" $ do
+        describe "SessionCommandInput" $ do
+            it "should parse valid input" $ do
+                let json = "{\"command\":\"echo\",\"arguments\":\"hello\"}"
+                case decode json of
+                    Just (SessionCommandInput cmd args _ _ _ _ _) -> do
+                        cmd `shouldBe` "echo"
+                        args `shouldBe` "hello"
+                    Nothing -> expectationFailure "Failed to parse valid SessionCommandInput"
+
+            it "should reject unknown properties" $ do
+                let json = "{\"command\":\"echo\",\"arguments\":\"hello\",\"unknown\":\"bad\"}"
+                (decode json :: Maybe SessionCommandInput) `shouldBe` Nothing
+
+        describe "SessionShellInput" $ do
+            it "should parse valid input" $ do
+                let json = "{\"agent\":\"test\",\"command\":\"ls\"}"
+                case decode json of
+                    Just (SessionShellInput agent cmd _) -> do
+                        agent `shouldBe` "test"
+                        cmd `shouldBe` "ls"
+                    Nothing -> expectationFailure "Failed to parse valid SessionShellInput"
+
+            it "should reject unknown properties" $ do
+                let json = "{\"agent\":\"test\",\"command\":\"ls\",\"extra\":123}"
+                (decode json :: Maybe SessionShellInput) `shouldBe` Nothing
+
+        describe "PermissionReplyInput" $ do
+            it "should parse valid input" $ do
+                let json = "{\"reply\":\"once\"}"
+                case decode json of
+                    Just (PermissionReplyInput reply _) -> reply `shouldBe` "once"
+                    Nothing -> expectationFailure "Failed to parse valid PermissionReplyInput"
+
+            it "should reject unknown properties" $ do
+                let json = "{\"reply\":\"once\",\"injected\":\"malicious\"}"
+                (decode json :: Maybe PermissionReplyInput) `shouldBe` Nothing
+
+        describe "WorktreeRemoveInput" $ do
+            it "should parse valid input" $ do
+                let json = "{\"directory\":\"/path/to/worktree\"}"
+                case decode json of
+                    Just (WorktreeRemoveInput dir) -> dir `shouldBe` "/path/to/worktree"
+                    Nothing -> expectationFailure "Failed to parse valid WorktreeRemoveInput"
+
+            it "should reject unknown properties" $ do
+                let json = "{\"directory\":\"/path\",\"__proto__\":{\"admin\":true}}"
+                (decode json :: Maybe WorktreeRemoveInput) `shouldBe` Nothing
+
+        describe "AppendPromptInput (TUI)" $ do
+            it "should parse valid input" $ do
+                let json = "{\"text\":\"hello world\"}"
+                case decode json of
+                    Just (AppendPromptInput txt _) -> txt `shouldBe` Just "hello world"
+                    Nothing -> expectationFailure "Failed to parse valid AppendPromptInput"
+
+            it "should reject unknown properties" $ do
+                let json = "{\"text\":\"hello\",\"extra\":\"field\"}"
+                (decode json :: Maybe AppendPromptInput) `shouldBe` Nothing

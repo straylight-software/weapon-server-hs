@@ -29,6 +29,7 @@ module Tool.Tool (
     -- * Tool Definitions
     allTools,
     toolDefinitions,
+    toolListItems,
 
     -- * Tool Execution
     execute,
@@ -37,6 +38,6 @@ module Tool.Tool (
     executeStreaming,
 ) where
 
-import Tool.Defs (allTools, toolDefinitions)
+import Tool.Defs (allTools, toolDefinitions, toolListItems)
 import Tool.Exec (execute, executeStreaming, executeToolUse, executeToolUseStreaming)
 import Tool.Types

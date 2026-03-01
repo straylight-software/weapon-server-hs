@@ -10,7 +10,7 @@ import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (SomeException, bracket, catch)
-import Control.Monad (forM_, void)
+import Control.Monad (void)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 
 import Data.Aeson.KeyMap qualified as KM
@@ -34,7 +34,7 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Katip (Severity (ErrorS))
 import Log qualified
-import Network.HTTP.Types (hContentType, status200, status400)
+import Network.HTTP.Types (hContentType, status200, status404)
 import Network.Wai (defaultRequest, responseToStream)
 import Network.Wai.Internal (ResponseReceived (..))
 import Prompt.Async qualified as PromptAsync
@@ -87,7 +87,7 @@ data TuiHandlersResult = TuiHandlersResult
 
 data ExperimentalWorktreeResult = ExperimentalWorktreeResult
     { ewrGet :: !(Either ServerError [Text])
-    , ewrSet :: !(Either ServerError Value)
+    , ewrSet :: !(Either ServerError Worktree)
     , ewrReset :: !(Either ServerError Bool)
     , ewrRoot :: !Text
     }
@@ -283,8 +283,10 @@ prop_providerOauthHandlers dhallCache exeCache = property $ do
         (Left _err, _) -> failure
         (_, Left _err) -> failure
         (Right auth, Right callbackResult) -> do
-            lookupText "providerID" auth === Just pid
-            assert $ isJust (lookupText "state" auth)
+            -- Response schema: {url, method, instructions}
+            assert $ isJust (lookupText "url" auth)
+            assert $ isJust (lookupText "method" auth)
+            assert $ isJust (lookupText "instructions" auth)
             -- Callback returns Bool
             callbackResult === True
 
@@ -296,13 +298,15 @@ prop_configHandler dhallCache exeCache = property $ do
         Right val -> assert $ isObject val
 
 prop_commandHandler :: CachedProperty
-prop_commandHandler _dhallCache _exeCache = property $ do
-    result <- evalIO $ runHandlerIO commandHandler
+prop_commandHandler dhallCache exeCache = property $ do
+    result <- evalIO $ withStateWith dhallCache exeCache $ \st -> runHandlerIO (commandHandler st Nothing)
     case result of
         Left _err -> failure
         Right defs -> do
             let names = mapMaybe (lookupText "name") defs
-            assert $ "bash" `elem` names
+            -- Built-in commands should include "init" and "review"
+            assert $ "init" `elem` names
+            assert $ "review" `elem` names
 
 prop_agentHandler :: CachedProperty
 prop_agentHandler _dhallCache _exeCache = property $ do
@@ -411,7 +415,8 @@ prop_sessionInitHandler dhallCache exeCache = property $ do
         var <- newEmptyTMVarIO
         _ <- Bus.subscribe (stBus st) "session.initialized" $ \event ->
             atomically $ void $ tryPutTMVar var event
-        res <- runHandlerIO (sessionInitHandler st sid Nothing (object []))
+        let initInput = InitSessionInput "test-model" "test-provider" "msg_test123"
+        res <- runHandlerIO (sessionInitHandler st sid Nothing initInput)
         evt <- waitVar 1000000 var
         pure (res, evt)
     case result of
@@ -700,97 +705,6 @@ prop_sessionMessagesOrderedCorrectly dhallCache exeCache = property $ do
                 (Nothing, _) -> failure
                 (_, Nothing) -> failure
 
-{- | Property: After cancelling a message and sending a new one, messages remain correctly ordered.
-When a user:
-1. Sends a message (user1 + assistant1)
-2. Cancels the assistant response
-3. Sends another message (user2 + assistant2)
-
-The messages should be ordered: user1 < assistant1 < user2 < assistant2
-This tests that cancellation doesn't break the timestamp-based ordering.
--}
-prop_messagesOrderedAfterCancel :: CachedProperty
-prop_messagesOrderedAfterCancel dhallCache exeCache = property $ do
-    result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
-        withEnv "OPENROUTER_API_KEY" Nothing $ do
-            let sessionId = "session_cancel_order_test"
-
-            -- Track session.status events to know when background work is done
-            statusCountVar <- newTVarIO (0 :: Int)
-            unsubStatus <- Bus.subscribe (stBus st) "session.status" $ \_event ->
-                atomically $ modifyTVar' statusCountVar (+ 1)
-
-            -- 1. Send first message
-            let parts1 = [object ["type" .= ("text" :: Text), "text" .= ("first message" :: Text)]]
-            let input1 = CreateMessageInput Nothing parts1 Nothing Nothing
-            _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input1)
-            -- Wait for first message cycle to complete (busy + idle = 2)
-            _ <- waitForCount 2000000 statusCountVar 2
-
-            -- 2. Abort/cancel the session (publishes session.error)
-            abortVar <- newEmptyTMVarIO
-            _ <- Bus.subscribe (stBus st) "session.error" $ \event ->
-                atomically $ void $ tryPutTMVar abortVar event
-            _ <- runHandlerIO (sessionAbortHandler st sessionId Nothing)
-            _ <- waitVar 2000000 abortVar
-
-            -- 3. Send second message
-            let parts2 = [object ["type" .= ("text" :: Text), "text" .= ("second message" :: Text)]]
-            let input2 = CreateMessageInput Nothing parts2 Nothing Nothing
-            _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input2)
-            -- Wait for second message cycle to complete (should be 4 total now)
-            _ <- waitForCount 2000000 statusCountVar 4
-            unsubStatus
-
-            -- 4. Get all messages
-            runHandlerIO (sessionMessageListHandler st sessionId Nothing)
-
-    case result of
-        Left _err -> failure
-        Right msgs -> do
-            -- Should have 4 messages: user1, assistant1, user2, assistant2
-            annotate $ "Number of messages: " ++ show (listLength msgs)
-            assert $ listLength msgs >= 4
-
-            -- Extract roles, IDs, and timestamps for debugging
-            let roles = map (messageInfoRole . msgInfo) msgs
-            let ids = map (messageInfoId . msgInfo) msgs
-            let times = map (messageInfoCreatedTime . msgInfo) msgs
-            annotate $ "Message roles in order: " ++ show roles
-            annotate $ "Message IDs in order: " ++ show ids
-            annotate $ "Message created times: " ++ show times
-
-            -- Find all user and assistant indices
-            let userIndices = List.elemIndices "user" roles
-            let assistantIndices = List.elemIndices "assistant" roles
-
-            annotate $ "User indices: " ++ show userIndices
-            annotate $ "Assistant indices: " ++ show assistantIndices
-
-            -- Should have at least 2 users and 2 assistants
-            assert $ listLength userIndices >= 2
-            assert $ listLength assistantIndices >= 2
-
-            -- Key property: Each user message should come before its corresponding assistant
-            -- user1 < assistant1, user2 < assistant2
-            -- More specifically: roles should follow pattern [user, assistant, user, assistant, ...]
-            let pairs = zip userIndices assistantIndices
-            forM_ pairs $ \(uIdx, aIdx) -> do
-                annotate $ "Checking user@" ++ show uIdx ++ " < assistant@" ++ show aIdx
-                assert $ uIdx < aIdx
-
-            -- Also verify strict ordering: user1 < assistant1 < user2 < assistant2
-            case (userIndices, assistantIndices) of
-                (u1 : u2 : _restU, a1 : a2 : _restA) -> do
-                    annotate $ "Strict order check: u1=" ++ show u1 ++ " a1=" ++ show a1 ++ " u2=" ++ show u2 ++ " a2=" ++ show a2
-                    assert $ u1 < a1
-                    assert $ a1 < u2
-                    assert $ u2 < a2
-                ([], _anyA) -> failure
-                ([_singleU], _anyA) -> failure
-                (_anyU, []) -> failure
-                (_anyU, [_singleA]) -> failure
-
 {- | Property: When user and assistant messages have the same timestamp,
 user message should come before assistant message (role priority sorting).
 This is the core property that ensures correct message ordering.
@@ -1001,7 +915,7 @@ prop_permissionHandlers :: CachedProperty
 prop_permissionHandlers dhallCache exeCache = property $ do
     rid <- forAll genName
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
-        let payload = object ["ok" .= True]
+        let payload = PermissionReplyInput{priReply = "once", priMessage = Nothing}
         _ <- runHandlerIO (permissionReplyHandler st rid Nothing payload)
         runHandlerIO (permissionHandler st Nothing)
     case result of
@@ -1042,7 +956,7 @@ prop_tuiHandlers :: CachedProperty
 prop_tuiHandlers dhallCache exeCache = property $ do
     txt <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
-        let input = object ["text" .= txt]
+        let input = AppendPromptInput (Just txt) Nothing
         appended <- runHandlerIO (tuiAppendPromptHandler st Nothing input)
         prompt <- TuiStore.getPrompt (stStorage st)
         submitted <- runHandlerIO (tuiSubmitPromptHandler st Nothing)
@@ -1051,12 +965,12 @@ prop_tuiHandlers dhallCache exeCache = property $ do
         openSessions <- runHandlerIO (tuiOpenHandler st "open-sessions" Nothing)
         openThemes <- runHandlerIO (tuiOpenHandler st "open-themes" Nothing)
         openModels <- runHandlerIO (tuiOpenHandler st "open-models" Nothing)
-        exec <- runHandlerIO (tuiExecuteCommandHandler st Nothing (object ["cmd" .= ("ok" :: Text)]))
-        toast <- runHandlerIO (tuiShowToastHandler st Nothing (object ["msg" .= ("ok" :: Text)]))
-        publish <- runHandlerIO (tuiPublishHandler st Nothing (object ["payload" .= ("ok" :: Text)]))
-        select <- runHandlerIO (tuiSelectSessionHandler st Nothing (object ["sessionID" .= ("ok" :: Text)]))
-        controlNext <- runHandlerIO (tuiControlHandler st "next" Nothing (object ["ok" .= True]))
-        controlResponse <- runHandlerIO (tuiControlHandler st "response" Nothing (object ["ok" .= True]))
+        exec <- runHandlerIO (tuiExecuteCommandHandler st Nothing (ExecuteCommandInput (Just "ok")))
+        toast <- runHandlerIO (tuiShowToastHandler st Nothing (ShowToastInput (Just "ok") Nothing Nothing Nothing))
+        publish <- runHandlerIO (tuiPublishHandler st Nothing (PublishPromptAppend (PublishPromptAppendProps "test")))
+        select <- runHandlerIO (tuiSelectSessionHandler st Nothing (SelectSessionInput (Just "ok")))
+        controlNext <- runHandlerIO (tuiControlNextHandler st Nothing ControlNextInput)
+        controlResponse <- runHandlerIO (tuiControlResponseHandler st Nothing ControlResponseInput)
         lastVal <- TuiStore.getLast (stStorage st)
         pure
             TuiHandlersResult
@@ -1132,9 +1046,12 @@ prop_experimentalWorktreeHandlers dhallCache exeCache = property $ do
         ExperimentalWorktreeResult{ewrGet = Left _err} -> failure
         ExperimentalWorktreeResult{ewrSet = Left _err} -> failure
         ExperimentalWorktreeResult{ewrReset = Left _err} -> failure
-        ExperimentalWorktreeResult{ewrGet = Right get1, ewrSet = Right set1, ewrReset = Right True} -> do
+        ExperimentalWorktreeResult{ewrGet = Right get1, ewrSet = Right set1, ewrReset = Right True, ewrRoot = root} -> do
             get1 === ([] :: [Text])
-            set1 === object ["root" .= ("test" :: Text), "ready" .= True]
+            -- Worktree has name, branch, directory
+            wtName set1 === "worktree-1"
+            wtBranch set1 === "worktree/worktree-1"
+            T.isInfixOf root (wtDirectory set1) === True
         _otherResult -> failure
 
 prop_fileListHandler :: CachedProperty
@@ -1187,7 +1104,7 @@ prop_fileReadHandlerEmptyPath _dhallCache _exeCache = property $ do
         Left err -> errHTTPCode err === 400
         Right _ -> failure
 
--- | Property: fileReadHandler returns 400 for directory path
+-- | Property: fileReadHandler returns 404 for directory path
 prop_fileReadHandlerDirectoryPath :: CachedProperty
 prop_fileReadHandlerDirectoryPath _dhallCache _exeCache = property $ do
     dirName <- forAll genName
@@ -1195,7 +1112,7 @@ prop_fileReadHandlerDirectoryPath _dhallCache _exeCache = property $ do
         createDirectory (root </> T.unpack dirName)
         runHandlerIO (fileReadHandler (Just (T.pack root)) dirName)
     case result of
-        Left err -> errHTTPCode err === 400
+        Left err -> errHTTPCode err === 404
         Right _ -> failure
 
 -- | Property: fileReadHandler returns 404 for non-existent file
@@ -1275,7 +1192,7 @@ prop_ptyConnectHandler dhallCache exeCache = property $ do
         pure (status, chunk)
     case result of
         (status, chunk) -> do
-            status === status400
+            status === status404
             let text = TE.decodeUtf8 (LBS.toStrict (toLazyByteString chunk))
             assert $ "PTY not found" `T.isInfixOf` text
 
@@ -1464,7 +1381,6 @@ tests dhallCache exeCache =
         , testProperty "session message handlers" (prop_sessionMessageHandlers dhallCache exeCache)
         , testProperty "session message create publishes events" (prop_sessionMessageCreatePublishesEvents dhallCache exeCache)
         , testProperty "session messages ordered correctly" (prop_sessionMessagesOrderedCorrectly dhallCache exeCache)
-        , testProperty "messages ordered after cancel" (prop_messagesOrderedAfterCancel dhallCache exeCache)
         , testProperty "same timestamp user before assistant" (prop_sameTimestampUserBeforeAssistant dhallCache exeCache)
         , testProperty "message events forwarded to eventChan" (prop_messageEventsForwardedToEventChan dhallCache exeCache)
         , testProperty "session.status events published" (prop_sessionStatusEventsPublished dhallCache exeCache)

@@ -35,7 +35,10 @@ module Find.Search (
 ) where
 
 import Control.Exception (Exception, throwIO)
-import Data.Aeson (Value, object, (.=))
+import Data.Aeson (ToJSON (toJSON), Value (..), object, (.=))
+import Data.Aeson qualified as A
+import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString.Lazy.Char8 qualified as LBS
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -205,17 +208,16 @@ rgMatchesToJson = map toRgValue
 
 {- | Convert fd results to JSON values.
 
-Transforms parsed fd output into JSON objects suitable for API responses.
+Transforms parsed fd output into JSON strings suitable for API responses.
+The OpenAPI spec defines @find.files@ as returning @array of string@.
 
 ==== Example
 
 >>> fdResultsToJson ["src/Main.hs", "src/Lib.hs"]
-[{"path":"src/Main.hs"},{"path":"src/Lib.hs"}]
+["src/Main.hs","src/Lib.hs"]
 -}
 fdResultsToJson :: [Text] -> [Value]
-fdResultsToJson = map toFdValue
-  where
-    toFdValue path = object ["path" .= path]
+fdResultsToJson = map toJSON
 
 {- | Build fd type arguments based on options.
 
@@ -289,16 +291,43 @@ processFdOutput opts output =
         results = fdResultsToJson paths
      in applyResultLimit (ffoLimit opts) results
 
--- | Run ripgrep and return results as JSON.
+-- | Run ripgrep with --json and return results matching OpenAPI schema.
 runRg :: FilePath -> Text -> IO [Value]
 runRg root query = do
     requireExecutable "rg" "Install ripgrep: https://github.com/BurntSushi/ripgrep"
-    let args = ["--line-number", "--no-heading", "--color", "never", T.unpack query, root]
+    let args = ["--json", "--hidden", "--glob=!.git/*", T.unpack query, root]
     output <- runProcess "rg" args
-    pure $ processRgOutput output
+    pure $ processRgJsonOutput output
 
--- | Process ripgrep output into JSON values.
-processRgOutput :: String -> [Value]
-processRgOutput output =
-    let matches = mapMaybe parseRgLine (T.lines (T.pack output))
-     in rgMatchesToJson matches
+{- | Process ripgrep JSON output into API response format.
+Ripgrep --json outputs one JSON object per line with type field.
+We extract "match" types and return their data field which matches OpenAPI schema.
+-}
+processRgJsonOutput :: String -> [Value]
+processRgJsonOutput output =
+    mapMaybe parseRgJsonLine (lines output)
+
+{- | Parse a single JSON line from ripgrep --json output.
+Only extracts "match" type entries and returns the data field.
+-}
+parseRgJsonLine :: String -> Maybe Value
+parseRgJsonLine line = do
+    val <- A.decode (LBS.pack line)
+    case val of
+        A.Object obj -> do
+            typeVal <- KM.lookup "type" obj
+            case typeVal of
+                A.String "match" -> KM.lookup "data" obj
+                -- Other JSON types don't indicate a match
+                A.String _nonMatch -> Nothing
+                A.Object _obj -> Nothing
+                A.Array _arr -> Nothing
+                A.Number _num -> Nothing
+                A.Bool _b -> Nothing
+                A.Null -> Nothing
+        -- Non-object JSON values can't contain match data
+        A.Array _arr -> Nothing
+        A.String _str -> Nothing
+        A.Number _num -> Nothing
+        A.Bool _b -> Nothing
+        A.Null -> Nothing

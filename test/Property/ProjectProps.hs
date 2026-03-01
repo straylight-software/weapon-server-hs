@@ -11,7 +11,7 @@ function and the pure helper functions 'makeProjectId' and 'makeProjectName'.
 -}
 module Property.ProjectProps where
 
-import Api (Project (Project), id)
+import Api (Project (..), ProjectTime (..), id)
 import Data.Char (isAsciiLower, isDigit)
 import Data.Text qualified as T
 import Hedgehog
@@ -21,6 +21,10 @@ import Project.Build qualified as ProjectBuild
 import Test.Tasty
 import Test.Tasty.Hedgehog
 import Prelude hiding (id)
+
+-- | Generate a timestamp for testing
+genTimestamp :: Gen Double
+genTimestamp = Gen.double (Range.linearFrac 1000000000 2000000000)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Pure Helper Tests
@@ -74,86 +78,88 @@ prop_makeProjectNameDeterministic = property $ do
 prop_projectFromDirUsesBase :: Property
 prop_projectFromDirUsesBase = property $ do
     base <- forAll $ Gen.text (Range.linear 1 12) Gen.alphaNum
+    now <- forAll genTimestamp
     let dir = "/tmp/" <> T.unpack base
-    let project = ProjectBuild.projectFromDir dir
-    case project of
-        Project pid wt nm -> do
-            pid === "proj_" <> base
-            wt === T.pack dir
-            nm === Just base
+    let project = ProjectBuild.projectFromDir now dir
+    id project === "proj_" <> base
+    worktree project === T.pack dir
+    name project === Just base
 
 -- | Property: projectFromDir handles root directory
 prop_projectFromDirDefault :: Property
 prop_projectFromDirDefault = property $ do
+    now <- forAll genTimestamp
     let dir = "/"
-    let project = ProjectBuild.projectFromDir dir
-    case project of
-        Project pid _ nm -> do
-            pid === "proj_default"
-            nm === Nothing
+    let project = ProjectBuild.projectFromDir now dir
+    id project === "proj_default"
+    name project === Nothing
 
 -- | Property: project id is deterministic based on directory
 prop_projectIdDeterministic :: Property
 prop_projectIdDeterministic = property $ do
     base <- forAll $ Gen.text (Range.linear 1 12) Gen.alphaNum
+    now <- forAll genTimestamp
     let dir = "/tmp/" <> T.unpack base
-    let project1 = ProjectBuild.projectFromDir dir
-    let project2 = ProjectBuild.projectFromDir dir
+    let project1 = ProjectBuild.projectFromDir now dir
+    let project2 = ProjectBuild.projectFromDir now dir
     id project1 === id project2
 
 -- | Property: project id format is proj_{basename}
 prop_projectIdFormat :: Property
 prop_projectIdFormat = property $ do
     base <- forAll $ Gen.text (Range.linear 1 12) Gen.alphaNum
+    now <- forAll genTimestamp
     let dir = "/some/path/" <> T.unpack base
-    let project = ProjectBuild.projectFromDir dir
+    let project = ProjectBuild.projectFromDir now dir
     T.isPrefixOf "proj_" (id project) === True
 
 -- | Property: project worktree path is absolute
 prop_projectWorktreeAbsolute :: Property
 prop_projectWorktreeAbsolute = property $ do
     dir <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
-    let project = ProjectBuild.projectFromDir ("/home/user/" <> T.unpack dir)
-    case project of
-        Project _projectId wt _projectName -> T.isPrefixOf "/" wt === True
+    now <- forAll genTimestamp
+    let project = ProjectBuild.projectFromDir now ("/home/user/" <> T.unpack dir)
+    T.isPrefixOf "/" (worktree project) === True
 
 -- | Property: project name can be extracted from path
 prop_projectNameFromPath :: Property
 prop_projectNameFromPath = property $ do
-    name <- forAll $ Gen.text (Range.linear 1 15) Gen.alphaNum
-    let path = "/home/user/projects/" <> T.unpack name
-    let project = ProjectBuild.projectFromDir path
-    case project of
-        Project _ _ (Just nm) -> nm === name
-        _otherProject -> failure
+    nm <- forAll $ Gen.text (Range.linear 1 15) Gen.alphaNum
+    now <- forAll genTimestamp
+    let path = "/home/user/projects/" <> T.unpack nm
+    let project = ProjectBuild.projectFromDir now path
+    name project === Just nm
 
 -- | Property: project id contains only valid characters
 prop_projectIdValidChars :: Property
 prop_projectIdValidChars = property $ do
     dir <- forAll $ Gen.text (Range.linear 1 20) Gen.lower
-    let project = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack dir)
+    now <- forAll genTimestamp
+    let project = ProjectBuild.projectFromDir now ("/tmp/" <> T.unpack dir)
     let pid = id project
     assert $ T.all (\c -> c == '_' || c == '-' || isAsciiLower c || isDigit c) pid
 
--- | Property: same directory produces same project
+-- | Property: same directory and timestamp produces same project
 prop_projectSameDirSameProject :: Property
 prop_projectSameDirSameProject = property $ do
     dir <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+    now <- forAll genTimestamp
     let path = "/tmp/" <> T.unpack dir
-    let p1 = ProjectBuild.projectFromDir path
-    let p2 = ProjectBuild.projectFromDir path
+    let p1 = ProjectBuild.projectFromDir now path
+    let p2 = ProjectBuild.projectFromDir now path
     p1 === p2
 
--- | Property: different directories produce different projects
+-- | Property: different directories produce different project ids
 prop_projectDifferentDirDifferentProject :: Property
 prop_projectDifferentDirDifferentProject = property $ do
     dir1 <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
     dir2 <- forAll $ Gen.text (Range.linear 11 20) Gen.alphaNum
+    now <- forAll genTimestamp
     if dir1 == dir2
         then success
         else do
-            let p1 = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack dir1)
-            let p2 = ProjectBuild.projectFromDir ("/tmp/" <> T.unpack dir2)
+            let p1 = ProjectBuild.projectFromDir now ("/tmp/" <> T.unpack dir1)
+            let p2 = ProjectBuild.projectFromDir now ("/tmp/" <> T.unpack dir2)
             assert $ id p1 /= id p2
 
 -- | Property: worktree preserves the full path
@@ -163,10 +169,31 @@ prop_projectWorktreePreservesPath = property $ do
         forAll $
             Gen.list (Range.linear 1 5) $
                 Gen.text (Range.linear 1 10) Gen.alphaNum
+    now <- forAll genTimestamp
     let path = "/" <> T.unpack (T.intercalate "/" segments)
-    let project = ProjectBuild.projectFromDir path
-    case project of
-        Project _ wt _ -> wt === T.pack path
+    let project = ProjectBuild.projectFromDir now path
+    worktree project === T.pack path
+
+-- | Property: projectFromDir sets empty sandboxes
+prop_projectFromDirEmptySandboxes :: Property
+prop_projectFromDirEmptySandboxes = property $ do
+    base <- forAll $ Gen.text (Range.linear 1 12) Gen.alphaNum
+    now <- forAll genTimestamp
+    let dir = "/tmp/" <> T.unpack base
+    let project = ProjectBuild.projectFromDir now dir
+    sandboxes project === []
+
+-- | Property: projectFromDir uses provided timestamp
+prop_projectFromDirUsesTimestamp :: Property
+prop_projectFromDirUsesTimestamp = property $ do
+    base <- forAll $ Gen.text (Range.linear 1 12) Gen.alphaNum
+    now <- forAll genTimestamp
+    let dir = "/tmp/" <> T.unpack base
+    let project = ProjectBuild.projectFromDir now dir
+    let pt = time project
+    created pt === now
+    updated pt === now
+    initialized pt === Nothing
 
 tests :: TestTree
 tests =
@@ -193,5 +220,7 @@ tests =
             , testProperty "same dir same project" prop_projectSameDirSameProject
             , testProperty "different dir different project" prop_projectDifferentDirDifferentProject
             , testProperty "worktree preserves path" prop_projectWorktreePreservesPath
+            , testProperty "empty sandboxes" prop_projectFromDirEmptySandboxes
+            , testProperty "uses timestamp" prop_projectFromDirUsesTimestamp
             ]
         ]

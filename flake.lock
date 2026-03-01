@@ -39,11 +39,11 @@
     },
     "haskell-flake": {
       "locked": {
-        "lastModified": 1770936528,
-        "narHash": "sha256-prklSEWoFyaIHo2jxq7BPw/LyTPBLR/em5C3h5lGXqg=",
+        "lastModified": 1771200453,
+        "narHash": "sha256-uJdc/H/ldyybwD/2OgIEOa/F1G1sJHj/SPH6WzCrrR4=",
         "owner": "srid",
         "repo": "haskell-flake",
-        "rev": "96d901fb45a33fe65c74f5b03f75e1195a2cd81b",
+        "rev": "ce5c692d7550956bd27e42a8d101abca161d94d4",
         "type": "github"
       },
       "original": {
@@ -67,15 +67,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1772038110,
-        "narHash": "sha256-fVMgWPM5JSQap5D3vKCP4pVrWbODmUtfEoe1YWym5is=",
-        "ref": "refs/heads/master",
-        "rev": "d48cbb4b7fb97f0f8a0484cb4e6d0f7f7b91806c",
-        "revCount": 52,
+        "lastModified": 1772392276,
+        "narHash": "sha256-AHhkspXsWSakQmtRgG6/OO9G5U75c+Cjb6Wmn+ybdiw=",
+        "ref": "executor-io-api",
+        "rev": "0685d29c009b4642127a4a4d4152f6cb9b58a485",
+        "revCount": 67,
         "type": "git",
         "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       },
       "original": {
+        "ref": "executor-io-api",
         "type": "git",
         "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       }

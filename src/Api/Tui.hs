@@ -1,4 +1,5 @@
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
 {- | ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -52,10 +53,27 @@ module Api.Tui (
     -- ** Control Flow
     TuiControlNextAPI,
     TuiControlResponseAPI,
+
+    -- * Input Types (strict JSON parsing)
+    AppendPromptInput (..),
+    ExecuteCommandInput (..),
+    ShowToastInput (..),
+    PublishInput (..),
+    PublishPromptAppendProps (..),
+    PublishCommandExecuteProps (..),
+    PublishToastShowProps (..),
+    PublishSessionSelectProps (..),
+    SelectSessionInput (..),
+    ControlNextInput (..),
+    ControlResponseInput (..),
 ) where
 
-import Data.Aeson (Value)
+import Data.Aeson (FromJSON (..), ToJSON (..), (.:?))
+import Data.Aeson qualified as A
+import Data.Aeson.Types (Parser)
 import Data.Text (Text)
+import GHC.Generics (Generic)
+import Json.Strict (withStrictObject)
 import Servant (
     JSON,
     Post,
@@ -73,7 +91,7 @@ import Servant (
 Adds text to the end of the current prompt input without submitting.
 Useful for inserting code snippets, file references, or suggestions.
 -}
-type TuiAppendPromptAPI = "tui" :> "append-prompt" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiAppendPromptAPI = "tui" :> "append-prompt" :> QueryParam "directory" Text :> ReqBody '[JSON] AppendPromptInput :> Post '[JSON] Bool
 
 {- | @POST /tui/submit-prompt@ - Submit the current prompt.
 
@@ -125,7 +143,7 @@ type TuiOpenModelsAPI = "tui" :> "open-models" :> QueryParam "directory" Text :>
 Runs a named command (e.g., "new-session", "toggle-diff").
 The request body should contain @{"command": "command-name"}@.
 -}
-type TuiExecuteCommandAPI = "tui" :> "execute-command" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiExecuteCommandAPI = "tui" :> "execute-command" :> QueryParam "directory" Text :> ReqBody '[JSON] ExecuteCommandInput :> Post '[JSON] Bool
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // notifications //
@@ -134,9 +152,9 @@ type TuiExecuteCommandAPI = "tui" :> "execute-command" :> QueryParam "directory"
 {- | @POST /tui/show-toast@ - Show a toast notification.
 
 Displays a temporary notification message in the TUI.
-The request body should contain @{"message": "text", "type": "info|warning|error"}@.
+The request body should contain @{"message": "text", "variant": "info|warning|error"}@.
 -}
-type TuiShowToastAPI = "tui" :> "show-toast" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiShowToastAPI = "tui" :> "show-toast" :> QueryParam "directory" Text :> ReqBody '[JSON] ShowToastInput :> Post '[JSON] Bool
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // publishing //
@@ -146,7 +164,7 @@ type TuiShowToastAPI = "tui" :> "show-toast" :> QueryParam "directory" Text :> R
 
 Publishes the current session or selected content.
 -}
-type TuiPublishAPI = "tui" :> "publish" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiPublishAPI = "tui" :> "publish" :> QueryParam "directory" Text :> ReqBody '[JSON] PublishInput :> Post '[JSON] Bool
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // session selection //
@@ -157,7 +175,7 @@ type TuiPublishAPI = "tui" :> "publish" :> QueryParam "directory" Text :> ReqBod
 Switches the TUI to display the specified session.
 The request body should contain @{"sessionID": "ses_xxx"}@.
 -}
-type TuiSelectSessionAPI = "tui" :> "select-session" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiSelectSessionAPI = "tui" :> "select-session" :> QueryParam "directory" Text :> ReqBody '[JSON] SelectSessionInput :> Post '[JSON] Bool
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // control flow //
@@ -167,10 +185,200 @@ type TuiSelectSessionAPI = "tui" :> "select-session" :> QueryParam "directory" T
 
 Advances to the next step in a multi-step workflow.
 -}
-type TuiControlNextAPI = "tui" :> "control" :> "next" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiControlNextAPI = "tui" :> "control" :> "next" :> QueryParam "directory" Text :> ReqBody '[JSON] ControlNextInput :> Post '[JSON] Bool
 
 {- | @POST /tui/control/response@ - Handle control response event.
 
 Provides a response for a control flow prompt (e.g., permission dialog).
 -}
-type TuiControlResponseAPI = "tui" :> "control" :> "response" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type TuiControlResponseAPI = "tui" :> "control" :> "response" :> QueryParam "directory" Text :> ReqBody '[JSON] ControlResponseInput :> Post '[JSON] Bool
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // input types //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Input for append-prompt endpoint
+data AppendPromptInput = AppendPromptInput
+    { apiText :: Maybe Text
+    -- ^ Text to append (primary field)
+    , apiPrompt :: Maybe Text
+    -- ^ Alternative field name for text (backwards compat)
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON AppendPromptInput where
+    parseJSON = withStrictObject "AppendPromptInput" ["text", "prompt"] $ \v ->
+        AppendPromptInput
+            <$> v .:? "text"
+            <*> v .:? "prompt"
+
+instance ToJSON AppendPromptInput where
+    toJSON = A.genericToJSON A.defaultOptions{A.fieldLabelModifier = drop 3}
+
+-- | Input for execute-command endpoint
+newtype ExecuteCommandInput = ExecuteCommandInput
+    { eciCommand :: Maybe Text
+    -- ^ Command to execute
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON ExecuteCommandInput where
+    parseJSON = withStrictObject "ExecuteCommandInput" ["command"] $ \v ->
+        ExecuteCommandInput <$> v .:? "command"
+
+instance ToJSON ExecuteCommandInput where
+    toJSON = A.genericToJSON A.defaultOptions{A.fieldLabelModifier = drop 3}
+
+-- | Input for show-toast endpoint
+data ShowToastInput = ShowToastInput
+    { stiMessage :: Maybe Text
+    -- ^ Toast message text
+    , stiVariant :: Maybe Text
+    -- ^ Toast variant: info, warning, error
+    , stiTitle :: Maybe Text
+    -- ^ Optional title
+    , stiDuration :: Maybe Double
+    -- ^ Optional duration in ms (OpenAPI: number)
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON ShowToastInput where
+    parseJSON = withStrictObject "ShowToastInput" ["message", "variant", "title", "duration"] $ \v ->
+        ShowToastInput
+            <$> v .:? "message"
+            <*> v .:? "variant"
+            <*> v .:? "title"
+            <*> v .:? "duration"
+
+instance ToJSON ShowToastInput where
+    toJSON = A.genericToJSON A.defaultOptions{A.fieldLabelModifier = drop 3}
+
+{- | Input for publish endpoint - discriminated union of TUI events
+
+Matches TypeScript: z.union([...TuiEvent types])
+Each event has a "type" discriminator and "properties" object.
+-}
+data PublishInput
+    = PublishPromptAppend !PublishPromptAppendProps
+    | PublishCommandExecute !PublishCommandExecuteProps
+    | PublishToastShow !PublishToastShowProps
+    | PublishSessionSelect !PublishSessionSelectProps
+    deriving (Show, Eq, Generic)
+
+-- | Properties for tui.prompt.append event
+newtype PublishPromptAppendProps = PublishPromptAppendProps
+    { ppapText :: Text
+    }
+    deriving (Show, Eq, Generic)
+
+-- | Properties for tui.command.execute event
+newtype PublishCommandExecuteProps = PublishCommandExecuteProps
+    { pcepCommand :: Text
+    }
+    deriving (Show, Eq, Generic)
+
+-- | Properties for tui.toast.show event
+data PublishToastShowProps = PublishToastShowProps
+    { ptspTitle :: Maybe Text
+    , ptspMessage :: Text
+    , ptspVariant :: Text
+    , ptspDuration :: Maybe Int
+    }
+    deriving (Show, Eq, Generic)
+
+-- | Properties for tui.session.select event
+newtype PublishSessionSelectProps = PublishSessionSelectProps
+    { psspSessionID :: Text
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON PublishInput where
+    parseJSON = A.withObject "PublishInput" $ \v -> do
+        eventType <- v A..: "type" :: Parser Text
+        props <- v A..: "properties"
+        case eventType of
+            "tui.prompt.append" -> PublishPromptAppend <$> A.parseJSON props
+            "tui.command.execute" -> PublishCommandExecute <$> A.parseJSON props
+            "tui.toast.show" -> PublishToastShow <$> A.parseJSON props
+            "tui.session.select" -> PublishSessionSelect <$> A.parseJSON props
+            other -> fail $ "Unknown event type: " <> show other
+
+instance ToJSON PublishInput where
+    toJSON (PublishPromptAppend props) =
+        A.object ["type" A..= ("tui.prompt.append" :: Text), "properties" A..= props]
+    toJSON (PublishCommandExecute props) =
+        A.object ["type" A..= ("tui.command.execute" :: Text), "properties" A..= props]
+    toJSON (PublishToastShow props) =
+        A.object ["type" A..= ("tui.toast.show" :: Text), "properties" A..= props]
+    toJSON (PublishSessionSelect props) =
+        A.object ["type" A..= ("tui.session.select" :: Text), "properties" A..= props]
+
+instance FromJSON PublishPromptAppendProps where
+    parseJSON = A.withObject "PublishPromptAppendProps" $ \v ->
+        PublishPromptAppendProps <$> v A..: "text"
+
+instance ToJSON PublishPromptAppendProps where
+    toJSON (PublishPromptAppendProps t) = A.object ["text" A..= t]
+
+instance FromJSON PublishCommandExecuteProps where
+    parseJSON = A.withObject "PublishCommandExecuteProps" $ \v ->
+        PublishCommandExecuteProps <$> v A..: "command"
+
+instance ToJSON PublishCommandExecuteProps where
+    toJSON (PublishCommandExecuteProps c) = A.object ["command" A..= c]
+
+instance FromJSON PublishToastShowProps where
+    parseJSON = A.withObject "PublishToastShowProps" $ \v ->
+        PublishToastShowProps
+            <$> v .:? "title"
+            <*> v A..: "message"
+            <*> v A..: "variant"
+            <*> v .:? "duration"
+
+instance ToJSON PublishToastShowProps where
+    toJSON (PublishToastShowProps title msg var dur) =
+        A.object $
+            ["message" A..= msg, "variant" A..= var]
+                ++ maybe [] (\t -> ["title" A..= t]) title
+                ++ maybe [] (\d -> ["duration" A..= d]) dur
+
+instance FromJSON PublishSessionSelectProps where
+    parseJSON = A.withObject "PublishSessionSelectProps" $ \v ->
+        PublishSessionSelectProps <$> v A..: "sessionID"
+
+instance ToJSON PublishSessionSelectProps where
+    toJSON (PublishSessionSelectProps sid) = A.object ["sessionID" A..= sid]
+
+-- | Input for select-session endpoint
+newtype SelectSessionInput = SelectSessionInput
+    { ssiSessionID :: Maybe Text
+    -- ^ Session ID to select
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON SelectSessionInput where
+    parseJSON = withStrictObject "SelectSessionInput" ["sessionID"] $ \v ->
+        SelectSessionInput <$> v .:? "sessionID"
+
+instance ToJSON SelectSessionInput where
+    toJSON = A.genericToJSON A.defaultOptions{A.fieldLabelModifier = drop 3}
+
+-- | Input for control/next endpoint (currently accepts empty object)
+data ControlNextInput = ControlNextInput
+    deriving (Show, Eq, Generic)
+
+instance FromJSON ControlNextInput where
+    parseJSON = withStrictObject "ControlNextInput" [] $ \_ -> pure ControlNextInput
+
+instance ToJSON ControlNextInput where
+    toJSON _ = A.object []
+
+-- | Input for control/response endpoint (currently accepts empty object)
+data ControlResponseInput = ControlResponseInput
+    deriving (Show, Eq, Generic)
+
+instance FromJSON ControlResponseInput where
+    parseJSON = withStrictObject "ControlResponseInput" [] $ \_ -> pure ControlResponseInput
+
+instance ToJSON ControlResponseInput where
+    toJSON _ = A.object []
