@@ -12,8 +12,10 @@
 -- with WebSocket support for PTY connections, CORS middleware, and the Servant API.
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Main where
 
@@ -24,10 +26,9 @@ import Control.Exception (SomeException, try)
 import Control.Monad (void)
 import Data.Aeson (object)
 import Data.ByteString qualified as BS
-import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Evring.Wai.MultiCore (ServerSettings (..), defaultServerSettings, runServerMultiCore)
+import Server.Run (ServerBackend (..), ServerSettings (..), checkBackendAvailable, defaultServerSettings, runServerWithCleanup)
 import Global.Event ()
 import Handlers
 import Katip qualified
@@ -62,16 +63,93 @@ import Network.WebSockets (
     requestPath,
     sendBinaryData,
  )
+import Options.Applicative
 import Pty.Connect ()
 import Pty.Pty qualified as Pty
 import Servant
 import Server.ErrorFormatters (errorFormattersContext)
 import State
-import System.Directory (getCurrentDirectory)
-import System.Environment (getArgs)
+import Telemetry.Manager qualified as Telemetry
+import System.Directory (XdgDirectory (..), getCurrentDirectory, getXdgDirectory)
 import System.FilePath ((</>))
-import System.IO (BufferMode (..), hSetBuffering, stdout)
-import Text.Read (readMaybe)
+import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
+
+-- ════════════════════════════════════════════════════════════════════════════
+--                                                          // command line args
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- | Server options parsed from command line
+data ServerOpts = ServerOpts
+    { optPort :: !Int
+    -- ^ Port to listen on
+    , optBackend :: !ServerBackend
+    -- ^ HTTP backend (iouring or warp)
+    , optPortRetry :: !Int
+    -- ^ Number of ports to try if busy (0 = fail immediately)
+    , optCores :: !(Maybe Int)
+    -- ^ Number of cores (Nothing = all available)
+    , optQuiet :: !Bool
+    -- ^ Suppress stdout logging (log to file only)
+    }
+    deriving (Show, Eq)
+
+-- | Parse command line options
+parseOpts :: IO ServerOpts
+parseOpts = execParser $ info (optsParser <**> helper)
+    ( fullDesc
+    <> header "weapon-server - Weapon HTTP server"
+    <> progDesc "Start the Weapon HTTP server with io_uring or warp backend"
+    )
+
+optsParser :: Parser ServerOpts
+optsParser = do
+    optPort <- option auto
+        ( long "port"
+        <> short 'p'
+        <> metavar "PORT"
+        <> value defaultPort
+        <> showDefault
+        <> help "Port to listen on"
+        )
+    optBackend <- option backendReader
+        ( long "backend"
+        <> metavar "BACKEND"
+        <> value BackendIoUring
+        <> showDefaultWith showBackend
+        <> help "HTTP backend: iouring or warp"
+        )
+    optPortRetry <- option auto
+        ( long "port-retry"
+        <> metavar "N"
+        <> value 0
+        <> showDefault
+        <> help "Number of ports to try if busy (0 = fail immediately)"
+        )
+    optCores <- optional $ option auto
+        ( long "cores"
+        <> metavar "N"
+        <> help "Number of cores to use (default: all available)"
+        )
+    optQuiet <- switch
+        ( long "quiet"
+        <> short 'q'
+        <> help "Suppress stdout logging (log to file only)"
+        )
+    pure ServerOpts{..}
+
+-- | Parse backend from string
+backendReader :: ReadM ServerBackend
+backendReader = eitherReader $ \s ->
+    case s of
+        "iouring" -> Right BackendIoUring
+        "io_uring" -> Right BackendIoUring
+        "warp" -> Right BackendWarp
+        _ -> Left $ "Unknown backend: " <> s <> ". Expected: iouring or warp"
+
+-- | Show backend for --help
+showBackend :: ServerBackend -> String
+showBackend BackendIoUring = "iouring"
+showBackend BackendWarp = "warp"
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                 // middleware
@@ -159,77 +237,85 @@ defaultLogLevel = Katip.DebugS
 defaultPort :: Int
 defaultPort = 4096
 
--- | Parse command line arguments for port
-parseArgs :: [String] -> Int
-parseArgs [] = defaultPort
-parseArgs ("--port" : portStr : _) = fromMaybe defaultPort (readMaybe portStr)
-parseArgs ("-p" : portStr : _) = fromMaybe defaultPort (readMaybe portStr)
-parseArgs (_ : rest) = parseArgs rest
-
 main :: IO ()
-main = Log.withLoggerLevel "weapon" defaultLogLevel $ \logger -> do
-    hSetBuffering stdout LineBuffering
+main = do
+    ServerOpts{..} <- parseOpts
+    
+    -- Configure logging: file always, stdout only if not quiet
+    let logConfig = (Log.defaultLogConfig "weapon")
+            { Log.lcStdout = not optQuiet
+            , Log.lcFile = True
+            , Log.lcLevel = defaultLogLevel
+            }
+    Log.withLoggerConfig logConfig $ \logger -> do
+        hSetBuffering stdout LineBuffering
+        hSetBuffering stderr LineBuffering
 
-    args <- getArgs
-    let requestedPort = parseArgs args
+        let serverLogger = Log.withNS logger "server"
+        Log.logMsg serverLogger Katip.InfoS "initializing weapon server"
 
-    let serverLogger = Log.withNS logger "server"
-    Log.logMsg serverLogger Katip.InfoS "initializing weapon server"
+        -- Check backend availability FIRST - fail fast if unavailable
+        let tempSettings = (defaultServerSettings logger) { serverBackend = optBackend }
+        available <- checkBackendAvailable tempSettings
+        case available of
+            Left err -> do
+                Log.logMsg serverLogger Katip.ErrorS $ "Backend unavailable: " <> T.pack err
+                error err
+            Right () -> pure ()
 
-    workingDirectory <- getCurrentDirectory
-    let storageDirectory = workingDirectory </> ".weapon" </> "storage"
-    let projectId = "proj_default"
+        workingDirectory <- getCurrentDirectory
+        -- Use XDG_DATA_HOME/weapon/storage to match TypeScript server
+        xdgDataDir <- getXdgDirectory XdgData "weapon"
+        let storageDirectory = xdgDataDir </> "storage"
+        let projectId = "proj_default"
 
-    appState <- initialState storageDirectory (T.pack projectId) (T.pack workingDirectory) logger
-    startPromptAsyncWorker appState
+        appState <- initialState storageDirectory (T.pack projectId) (T.pack workingDirectory) logger
+        startPromptAsyncWorker appState
 
-    -- heartbeat thread
-    _ <- forkIO $ heartbeatLoop appState
+        -- heartbeat thread
+        _ <- forkIO $ heartbeatLoop appState
 
-    Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
+        Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
 
-    -- Middleware chain (applied outside-in, so rightmost runs first):
-    -- 1. serve api (Servant handles request)
-    -- 2. supplyEmptyBody (provides {} for empty POST/PUT/PATCH/DELETE)
-    -- 3. requireContentType (reject body requests without Content-Type)
-    -- 4. rejectInvalidContentType (reject text/json, application/x-invalid, etc.)
-    -- 5. limitJsonDepth (reject deeply nested JSON - DoS protection)
-    -- 6. rejectInvalidCharset (only UTF-8 allowed)
-    -- 7. enableCors (add CORS headers for preflight, pass others through)
-    -- 8. rejectUnknownQueryParams (strict parameter validation)
-    -- 9. rejectDuplicateQueryParams (prevent parameter pollution)
-    -- 10. rejectEmptyPathSegments (reject /session/ style paths)
-    -- 11. rejectNullBytePaths (reject null byte injection)
-    -- 12. rejectDoubleEncodedPaths (reject path traversal via double encoding)
-    -- 13. rejectMethodMismatch (405 for wrong method on known routes)
-    -- 14. rejectUnsupportedMethods (405 for OPTIONS, TRACE, CONNECT, etc.)
-    -- 15. rejectHeadMethod (HEAD not in OpenAPI spec)
-    -- 16. addAllowHeader (RFC 9110: Allow header on 405)
-    -- 17. requestLogger (log all requests)
-    let servantApp =
-            requestLogger logger $
-                addAllowHeader $
-                    rejectHeadMethod $
-                        rejectUnsupportedMethods $
-                            rejectMethodMismatch $
-                                rejectDoubleEncodedPaths $
-                                    rejectNullBytePaths $
-                                        rejectEmptyPathSegments $
-                                            rejectDuplicateQueryParams $
-                                                rejectUnknownQueryParams $
-                                                    enableCors $
-                                                        rejectInvalidCharset $
-                                                            limitJsonDepth $
-                                                                rejectInvalidContentType $
-                                                                    requireContentType $
-                                                                        supplyEmptyBody $
-                                                                            serveWithContext api errorFormattersContext (server appState)
-        websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
+        -- Middleware chain (applied outside-in, so rightmost runs first):
+        let servantApp =
+                requestLogger logger $
+                    addAllowHeader $
+                        rejectHeadMethod $
+                            rejectUnsupportedMethods $
+                                rejectMethodMismatch $
+                                    rejectDoubleEncodedPaths $
+                                        rejectNullBytePaths $
+                                            rejectEmptyPathSegments $
+                                                rejectDuplicateQueryParams $
+                                                    rejectUnknownQueryParams $
+                                                        enableCors $
+                                                            rejectInvalidCharset $
+                                                                limitJsonDepth $
+                                                                    rejectInvalidContentType $
+                                                                        requireContentType $
+                                                                            supplyEmptyBody $
+                                                                                serveWithContext api errorFormattersContext (server appState)
+            websocketApp = websocketsOr defaultConnectionOptions (ptyWebSocketApp appState) servantApp
 
-    -- Start server with retry logic handled by MultiCore
-    Log.logMsg serverLogger Katip.InfoS $ "attempting to listen on port " <> T.pack (show requestedPort)
-    let settings = defaultServerSettings{serverPort = requestedPort, serverPortRetry = 10, serverCores = Just 8}
-    runServerMultiCore settings websocketApp
+        -- Start server with explicit settings (no silent fallback)
+        Log.logMsg serverLogger Katip.InfoS $ "starting on port " <> T.pack (show optPort) <> " with " <> T.pack (showBackend optBackend) <> " backend"
+        let settings = (defaultServerSettings logger)
+                { serverBackend = optBackend
+                , serverPort = optPort
+                , serverPortRetry = optPortRetry
+                , serverCores = optCores
+                }
+        
+        -- Cleanup action for graceful shutdown (telemetry flush, etc.)
+        let cleanup = case stTelemetry appState of
+                Just tm -> do
+                    Log.logMsg serverLogger Katip.InfoS "shutting down telemetry"
+                    Telemetry.stopManager tm
+                    Log.logMsg serverLogger Katip.InfoS "telemetry shutdown complete"
+                Nothing -> pure ()
+        
+        runServerWithCleanup settings websocketApp cleanup
 
 -- | Periodic heartbeat to keep SSE connections alive.
 heartbeatLoop :: AppState -> IO ()

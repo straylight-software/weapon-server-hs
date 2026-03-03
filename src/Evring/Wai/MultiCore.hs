@@ -30,6 +30,7 @@ main = runServerMultiCore defaultServerSettings myApp
 module Evring.Wai.MultiCore (
     -- * Running the server
     runServerMultiCore,
+    runServerMultiCoreWithCleanup,
 
     -- * Configuration
     ServerSettings (..),
@@ -38,16 +39,20 @@ module Evring.Wai.MultiCore (
 where
 
 import Control.Concurrent (forkOn, getNumCapabilities, newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (IOException, catch)
-import Control.Monad (forM_, replicateM)
+import Control.Exception (IOException, SomeException, catch, try)
+import Control.Monad (forM_, replicateM, when)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.Text qualified as T
 import Data.Word (Word32)
 import Evring.Wai.Conn
 import Evring.Wai.Internal (parseSockAddr)
 import Evring.Wai.Loop
 import Foreign (Ptr, castPtr, mallocBytes, poke)
 import GHC.Conc (setNumCapabilities)
+import Log qualified
 import Network.Socket
 import Network.Wai (Application)
+import System.Posix.Signals (Handler (Catch), installHandler, sigINT, sigTERM)
 import System.Posix.Types (Fd (..))
 
 -- | Server settings
@@ -59,10 +64,11 @@ data ServerSettings = ServerSettings
     , serverRingSize :: !Int
     , serverMaxConns :: !Int -- per core
     , serverCores :: !(Maybe Int) -- Nothing = use all capabilities
+    , serverLogger :: !Log.Logger
     }
 
-defaultServerSettings :: ServerSettings
-defaultServerSettings =
+defaultServerSettings :: Log.Logger -> ServerSettings
+defaultServerSettings logger =
     ServerSettings
         { serverPort = 8080
         , serverPortRetry = 10
@@ -70,6 +76,7 @@ defaultServerSettings =
         , serverRingSize = 4096
         , serverMaxConns = 4096
         , serverCores = Nothing
+        , serverLogger = logger
         }
 
 {- | Run server with one event loop per core
@@ -78,19 +85,44 @@ If the requested port is busy, will retry on subsequent ports up to
 @serverPortRetry@ times.
 -}
 runServerMultiCore :: ServerSettings -> Application -> IO ()
-runServerMultiCore settings@ServerSettings{..} app = do
+runServerMultiCore settings app = runServerMultiCoreWithCleanup settings app (pure ())
+
+{- | Run server with one event loop per core, with cleanup action on shutdown.
+
+The cleanup action is guaranteed to run when SIGTERM or SIGINT is received,
+before the process exits. This is useful for flushing telemetry, closing
+database connections, etc.
+-}
+runServerMultiCoreWithCleanup :: ServerSettings -> Application -> IO () -> IO ()
+runServerMultiCoreWithCleanup settings@ServerSettings{..} app cleanup = do
+    let lg = Log.withNS serverLogger "evring"
+    
     -- Determine core count
     numCores <- case serverCores of
         Just n -> setNumCapabilities n >> pure n
         Nothing -> getNumCapabilities
 
     -- Try to bind to port with retry
-    (actualPort, sockets) <- bindWithRetry settings numCores serverPort serverPortRetry
+    (actualPort, sockets) <- bindWithRetry lg settings numCores serverPort serverPortRetry
 
-    putStrLn $ "evring-wai (multi-core): Starting on port " ++ show actualPort
-    putStrLn $ "  Cores: " ++ show numCores
-    putStrLn $ "  Ring size: " ++ show serverRingSize
-    putStrLn ""
+    Log.logInfo lg ("Starting on port " <> T.pack (show actualPort)) ()
+    Log.logDebug lg ("Cores: " <> T.pack (show numCores) <> ", Ring size: " <> T.pack (show serverRingSize)) ()
+
+    -- Shutdown flag (also prevents multiple signal handlers from running)
+    shutdownRef <- newIORef False
+    
+    -- Install signal handlers for graceful shutdown
+    let shutdownHandler = do
+            alreadyShuttingDown <- atomicModifyIORef' shutdownRef $ \old -> (True, old)
+            when (not alreadyShuttingDown) $ do
+                Log.logInfo lg "Received shutdown signal, running cleanup..." ()
+                cleanup
+                Log.logInfo lg "Cleanup complete, exiting" ()
+                -- Close sockets to unblock workers
+                mapM_ close sockets
+    
+    _ <- installHandler sigTERM (Catch shutdownHandler) Nothing
+    _ <- installHandler sigINT (Catch shutdownHandler) Nothing
 
     -- Barrier for all workers
     dones <- replicateM numCores newEmptyMVar
@@ -98,27 +130,32 @@ runServerMultiCore settings@ServerSettings{..} app = do
     -- Fork a worker on each capability
     forM_ (zip3 [0 ..] sockets dones) $ \(coreId, sock, done) -> do
         forkOn coreId $ do
-            runWorker settings app coreId sock
+            result <- try $ runWorker settings app coreId sock
+            case result of
+                Right () -> pure ()
+                Left (e :: SomeException) ->
+                    Log.logError lg ("Worker " <> T.pack (show coreId) <> " failed: " <> T.pack (show e)) ()
             putMVar done ()
 
     -- Wait for all workers (they run forever unless killed)
     mapM_ takeMVar dones
 
-    -- Cleanup
-    mapM_ close sockets
+    -- Cleanup sockets (may already be closed by signal handler)
+    alreadyShutdown <- readIORef shutdownRef
+    when (not alreadyShutdown) $ mapM_ close sockets
 
 -- | Try to bind to a port, retrying on subsequent ports if busy
-bindWithRetry :: ServerSettings -> Int -> Int -> Int -> IO (Int, [Socket])
-bindWithRetry settings numCores port retriesLeft = do
+bindWithRetry :: Log.Logger -> ServerSettings -> Int -> Int -> Int -> IO (Int, [Socket])
+bindWithRetry lg settings numCores port retriesLeft = do
     -- First check if something is already listening on this port
     inUse <- isPortInUse port
     if inUse
         then
             if retriesLeft > 0
                 then do
-                    putStrLn $ "Port " ++ show port ++ " is busy, trying " ++ show (port + 1)
-                    bindWithRetry settings numCores (port + 1) (retriesLeft - 1)
-                else ioError $ userError $ "Port " ++ show port ++ " is in use and no retries left"
+                    Log.logInfo lg ("Port " <> T.pack (show port) <> " is busy, trying " <> T.pack (show (port + 1))) ()
+                    bindWithRetry lg settings numCores (port + 1) (retriesLeft - 1)
+                else ioError $ userError $ "Port " ++ show port ++ " is in use (use --port-retry N to try additional ports)"
         else do
             -- Port is free, try to bind
             result <- tryBindPort settings numCores port
@@ -126,8 +163,8 @@ bindWithRetry settings numCores port retriesLeft = do
                 Right sockets -> pure (port, sockets)
                 Left err
                     | retriesLeft > 0 -> do
-                        putStrLn $ "Port " ++ show port ++ " bind failed, trying " ++ show (port + 1)
-                        bindWithRetry settings numCores (port + 1) (retriesLeft - 1)
+                        Log.logInfo lg ("Port " <> T.pack (show port) <> " bind failed, trying " <> T.pack (show (port + 1))) ()
+                        bindWithRetry lg settings numCores (port + 1) (retriesLeft - 1)
                     | otherwise -> ioError err
 
 {- | Check if a port is already in use by attempting a connection
@@ -184,7 +221,7 @@ createListenSocket ServerSettings{..} = do
 runWorker :: ServerSettings -> Application -> Int -> Socket -> IO ()
 runWorker ServerSettings{..} app _coreId sock = do
     -- Each worker gets its own buffer pools
-    ctx <- newConnContext serverMaxConns
+    ctx <- newConnContext serverLogger serverMaxConns
 
     withFdSocket sock $ \listenFd -> do
         withLoop serverRingSize $ \loop -> do

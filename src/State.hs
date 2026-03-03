@@ -5,6 +5,7 @@ module State (
     AppState (..),
     initialState,
     initialStateNoProxy,
+    initialStateNoProxyQuiet,
     initialStateNoProxyWithHome,
     initialStateNoProxyWithCache,
     initialStateNoProxyWithCaches,
@@ -33,6 +34,7 @@ import Proxy.Proxy qualified as Proxy
 import Proxy.Types (defaultProxyConfig)
 import Pty.Pty qualified as Pty
 import Storage.Storage qualified as Storage
+import Telemetry.Manager qualified as Telemetry
 import Util.Identifier qualified as Identifier
 
 -- | Global Application State
@@ -53,6 +55,7 @@ data AppState = AppState
     , stDhallCache :: Dhall.DhallCache -- Cached Dhall config loader
     , stExeCache :: Formatter.ExeCache -- Cached executable lookups
     , stDirCache :: Storage.DirCache -- Cached directory existence checks
+    , stTelemetry :: Maybe Telemetry.TelemetryManager -- Full-take telemetry capture
     }
 
 -- | Initialize a new state with optional proxy and home directory override
@@ -69,7 +72,12 @@ mkAppStateWithCache proxy dhallCache homeDir storageDir projectID directory logg
 
 -- | Initialize a new state with optional proxy, home directory override, and shared caches
 mkAppStateWithCaches :: Maybe Proxy.ProxyServer -> Dhall.DhallCache -> Formatter.ExeCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
-mkAppStateWithCaches proxy dhallCache exeCache homeDir storageDir projectID directory logger = do
+mkAppStateWithCaches = mkAppStateWithCachesQuiet False
+
+-- | Initialize a new state with optional proxy, home directory override, shared caches
+-- The Bool parameter is deprecated and ignored - logging is now controlled via Log.LogConfig
+mkAppStateWithCachesQuiet :: Bool -> Maybe Proxy.ProxyServer -> Dhall.DhallCache -> Formatter.ExeCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
+mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir projectID directory logger = do
     bus <- Bus.newBus
     eventChan <- newBroadcastTChanIO
     ptyManager <- Pty.newManager (Text.unpack directory)
@@ -82,6 +90,10 @@ mkAppStateWithCaches proxy dhallCache exeCache homeDir storageDir projectID dire
     _ <- Bus.subscribeAll bus $ \event -> do
         Log.logMsg logger Katip.InfoS $ "State: bus->eventChan forwarding: " <> Bus.beType event
         atomically $ writeTChan eventChan (toJSON event)
+
+    -- Start telemetry capture (full-take: every event goes to WAL)
+    let telemetryConfig = Telemetry.defaultManagerConfig logger
+    telemetry <- Telemetry.startManager telemetryConfig bus projectID directory
 
     pure $
         AppState
@@ -101,6 +113,7 @@ mkAppStateWithCaches proxy dhallCache exeCache homeDir storageDir projectID dire
             , stDhallCache = dhallCache
             , stExeCache = exeCache
             , stDirCache = dirCache
+            , stTelemetry = Just telemetry
             }
 
 -- | Initialize a new state with MITM proxy
@@ -116,6 +129,13 @@ Takes an optional home directory override for config isolation
 -}
 initialStateNoProxy :: FilePath -> Text -> Text -> Log.Logger -> IO AppState
 initialStateNoProxy = initialStateNoProxyWithHome Nothing
+
+-- | Initialize state without proxy, suppressing startup messages (for TUI mode)
+initialStateNoProxyQuiet :: FilePath -> Text -> Text -> Log.Logger -> IO AppState
+initialStateNoProxyQuiet storageDir projectID directory logger = do
+    dhallCache <- Dhall.newDhallCache
+    exeCache <- Formatter.newExeCache
+    mkAppStateWithCachesQuiet True Nothing dhallCache exeCache Nothing storageDir projectID directory logger
 
 -- | Initialize state without proxy, with optional home directory override
 initialStateNoProxyWithHome :: Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState

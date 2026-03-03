@@ -37,11 +37,13 @@ module Evring.Wai.Server (
 )
 where
 
+import Data.Text qualified as T
 import Data.Word (Word32)
 import Evring.Wai.Conn
 import Evring.Wai.Internal (parseSockAddr)
 import Evring.Wai.Loop (CompletionResult (..), Cont (..), Loop, ioAccept, runLoop, withLoop)
 import Foreign (Ptr, castPtr, mallocBytes, poke)
+import Log qualified
 import Network.Socket
 import Network.Wai (Application)
 import System.Posix.Types (Fd (..))
@@ -52,24 +54,27 @@ data ServerSettings = ServerSettings
     , serverBacklog :: !Int
     , serverRingSize :: !Int
     , serverMaxConns :: !Int
+    , serverLogger :: !Log.Logger
     }
 
-defaultServerSettings :: ServerSettings
-defaultServerSettings =
+defaultServerSettings :: Log.Logger -> ServerSettings
+defaultServerSettings logger =
     ServerSettings
         { serverPort = 8080
         , serverBacklog = 4096
         , serverRingSize = 4096
         , serverMaxConns = 10000
+        , serverLogger = logger
         }
 
 -- | Run the server
 runServer :: ServerSettings -> Application -> IO ()
 runServer ServerSettings{..} app = do
-    putStrLn $ "evring-wai (CPS): Starting on port " ++ show serverPort
+    let lg = Log.withNS serverLogger "evring-cps"
+    Log.logInfo lg ("Starting on port " <> T.pack (show serverPort)) ()
 
     -- Create connection context with buffer pools
-    ctx <- newConnContext serverMaxConns
+    ctx <- newConnContext serverLogger serverMaxConns
 
     -- Create listen socket
     sock <- socket AF_INET Stream 0

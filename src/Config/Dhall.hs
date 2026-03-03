@@ -7,6 +7,15 @@ Description : Dhall configuration loading with caching
 
 This module handles loading and caching Dhall configuration files.
 
+= Failure Mode
+
+Parse errors are FATAL - if a config file exists but fails to parse,
+the application will fail with a descriptive error. This is intentional:
+silent fallback to defaults masks configuration mistakes.
+
+Missing files are allowed - if a config file doesn't exist, it's simply
+skipped in the layering process.
+
 = Caching Strategy
 
 The module uses 'MVar'-based caching to avoid re-parsing Dhall files
@@ -55,19 +64,35 @@ module Config.Dhall (
 
     -- * Merging (re-exported from Config.Merge)
     mergeConfigs,
+
+    -- * Errors
+    ConfigError (..),
 ) where
 
 import Config.Merge (mergeConfigs)
 import Config.Types
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
-import Control.Exception (SomeException, try)
-import Data.Either (fromRight)
+import Control.Exception (Exception, SomeException, displayException, throwIO, try)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified
 import Dhall (auto, input, inputFile)
 import System.Directory (doesFileExist, getHomeDirectory)
 import System.FilePath ((</>))
+
+-- ════════════════════════════════════════════════════════════════════════════
+--                                                                       Errors
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- | Configuration loading errors
+data ConfigError
+    = ConfigParseError FilePath String
+    -- ^ File exists but failed to parse (path, error message)
+    | ConfigDefaultsMissing FilePath
+    -- ^ Required defaults file is missing
+    deriving (Show, Eq)
+
+instance Exception ConfigError
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                              Path Functions
@@ -131,6 +156,8 @@ newDhallCache = do
 
 This function caches the result - the Dhall file is parsed only once
 per cache instance, regardless of how many times it's called.
+
+FAILS if the defaults file is missing or fails to parse.
 -}
 loadDefaultsCached :: DhallCache -> IO Config
 loadDefaultsCached cache = modifyMVar (dcDefaults cache) $ \case
@@ -142,7 +169,9 @@ loadDefaultsCached cache = modifyMVar (dcDefaults cache) $ \case
 {- | Load config from a specific Dhall file (cached).
 
 Results are cached by filepath - each file is parsed only once per cache.
-Returns Nothing if the file doesn't exist or fails to parse.
+Returns Nothing if the file doesn't exist.
+
+FAILS if the file exists but fails to parse.
 -}
 loadConfigFromFileCached :: DhallCache -> FilePath -> IO (Maybe Config)
 loadConfigFromFileCached cache path = modifyMVar (dcFiles cache) $ \files ->
@@ -153,16 +182,17 @@ loadConfigFromFileCached cache path = modifyMVar (dcFiles cache) $ \files ->
             pure (Map.insert path cfg files, cfg)
 
 -- | Load full config (global + project + defaults) using cache.
+-- FAILS on any parse error. Missing config files are allowed.
 loadConfigCached :: DhallCache -> FilePath -> IO Config
 loadConfigCached cache projectDir = do
-    -- Load built-in defaults (cached)
+    -- Load built-in defaults (cached, FAILS if missing or invalid)
     defaults <- loadDefaultsCached cache
 
-    -- Load global config (cached)
+    -- Load global config (cached, FAILS on parse error)
     globalPath <- globalConfigPath
     globalCfg <- loadConfigFromFileCached cache globalPath
 
-    -- Load project config (cached)
+    -- Load project config (cached, FAILS on parse error)
     let projectPath = projectConfigPath projectDir
     projectCfg <- loadConfigFromFileCached cache projectPath
 
@@ -178,72 +208,59 @@ loadConfigCached cache projectDir = do
 
 {- | Load defaults from Dhall file (uncached).
 
-Falls back to 'defaultConfig' if:
-
+FAILS with 'ConfigDefaultsMissing' if:
 * The defaults file doesn't exist
+
+FAILS with 'ConfigParseError' if:
 * The file fails to parse
 
 This function is used internally by 'loadDefaultsCached'.
 -}
 loadDefaults :: IO Config
-loadDefaults = loadFileWithFallback defaultsPath defaultConfig
+loadDefaults = do
+    exists <- doesFileExist defaultsPath
+    if not exists
+        then throwIO $ ConfigDefaultsMissing defaultsPath
+        else parseConfigFileStrict defaultsPath
 
 {- | Load config from a specific Dhall file (uncached).
 
-Returns 'Nothing' if:
+Returns 'Nothing' if the file doesn't exist.
 
-* The file doesn't exist
-* The file fails to parse
+FAILS with 'ConfigParseError' if the file exists but fails to parse.
 
 This function is used internally by 'loadConfigFromFileCached'.
 -}
 loadConfigFromFile :: FilePath -> IO (Maybe Config)
-loadConfigFromFile = loadFileOptional
+loadConfigFromFile path = do
+    exists <- doesFileExist path
+    if not exists
+        then pure Nothing
+        else Just <$> parseConfigFileStrict path
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Internal Helpers
 -- ════════════════════════════════════════════════════════════════════════════
 
-{- | Load a Dhall config file with a fallback value.
-
-If the file doesn't exist or fails to parse, returns the fallback.
--}
-loadFileWithFallback :: FilePath -> Config -> IO Config
-loadFileWithFallback path fallback = do
-    exists <- doesFileExist path
-    if not exists
-        then pure fallback
-        else do
-            result <- try (inputFile auto path) :: IO (Either SomeException Config)
-            pure $ fromRight fallback result
-
-{- | Load a Dhall config file, returning Nothing on failure.
-
-Separates the IO concern (file existence, parsing) from the result handling.
--}
-loadFileOptional :: FilePath -> IO (Maybe Config)
-loadFileOptional path = do
-    exists <- doesFileExist path
-    if not exists
-        then pure Nothing
-        else parseConfigFile path
-
 {- | Parse a config file that is known to exist.
 
-Returns Nothing if parsing fails.
+FAILS with 'ConfigParseError' if parsing fails.
+No silent fallback to defaults.
 -}
-parseConfigFile :: FilePath -> IO (Maybe Config)
-parseConfigFile path = do
+parseConfigFileStrict :: FilePath -> IO Config
+parseConfigFileStrict path = do
     result <- try (inputFile auto path) :: IO (Either SomeException Config)
-    pure $ either (const Nothing) Just result
+    case result of
+        Left err -> throwIO $ ConfigParseError path (displayException err)
+        Right cfg -> pure cfg
 
 {- | Load config with Dhall expression (for inline config).
 
-This is currently unused but kept for potential future use.
+FAILS with 'ConfigParseError' if parsing fails.
 -}
-_loadConfigFromText :: Data.Text.Text -> IO (Maybe Config)
+_loadConfigFromText :: Data.Text.Text -> IO Config
 _loadConfigFromText expr = do
     result <- try (input auto expr) :: IO (Either SomeException Config)
     case result of
-        Left _err -> pure Nothing
-        Right cfg -> pure (Just cfg)
+        Left err -> throwIO $ ConfigParseError "<inline>" (displayException err)
+        Right cfg -> pure cfg

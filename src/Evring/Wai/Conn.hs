@@ -49,10 +49,13 @@ import Data.ByteString.Unsafe qualified as BSU
 import Data.CaseInsensitive qualified as CI
 import Data.IORef
 import Data.Primitive (mutablePrimArrayContents, newPinnedPrimArray)
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
 
 import Data.Vault.Lazy qualified as Vault
 import Data.Word (Word8)
 import Foreign (Ptr, castPtr, copyBytes, peekArray)
+import Log qualified
 import Network.HTTP.Types
 import Network.Socket (SockAddr (..))
 import Network.Wai
@@ -74,14 +77,15 @@ bufferSize = 16384
 data ConnContext = ConnContext
     { ctxRecvPool :: !BufferPool
     , ctxSendPool :: !BufferPool
+    , ctxLogger :: !Log.Logger
     }
 
 -- | Create connection context with pools
-newConnContext :: Int -> IO ConnContext
-newConnContext maxConns = do
+newConnContext :: Log.Logger -> Int -> IO ConnContext
+newConnContext logger maxConns = do
     recvPool <- newBufferPool maxConns bufferSize
     sendPool <- newBufferPool maxConns (256 * 1024) -- 256KB for JSON responses
-    pure $ ConnContext recvPool sendPool
+    pure $ ConnContext recvPool sendPool (Log.withNS logger "conn")
 
 -- | Start handling a new connection
 startConnection :: ConnContext -> Loop -> Fd -> SockAddr -> Application -> IO ()
@@ -159,7 +163,7 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
 
                 -- Run WAI application (create body ref from parsed body)
                 bodyRef <- newIORef (prBody req)
-                response <- runApp app (buildRequest req clientAddr bodyRef)
+                response <- runApp ctxLogger app (buildRequest req clientAddr bodyRef)
 
                 let handleNormalResponse = do
                         -- Check if this is a streaming response (SSE, chunked, etc.)
@@ -353,17 +357,21 @@ buildRequest ParsedReq{..} clientAddr bodyRef =
         writeIORef bodyRef BS.empty -- WAI expects chunked reads, return empty after first
         pure body
 
--- | Run WAI app safely
+-- | Run WAI app safely, logging exceptions
 {-# INLINE runApp #-}
-runApp :: Application -> Request -> IO Response
-runApp app req = do
+runApp :: Log.Logger -> Application -> Request -> IO Response
+runApp lg app req = do
     responseRef <- newIORef Nothing
     let respond resp = do
             writeIORef responseRef (Just resp)
             pure ResponseReceived
     catch
         (void $ app req respond)
-        (\(_ :: SomeException) -> pure ())
+        (\(e :: SomeException) -> do
+            -- Log the exception - don't silently swallow
+            let path = T.decodeUtf8 (rawPathInfo req)
+            Log.logError lg ("Request handler exception on " <> path <> ": " <> T.pack (show e)) ()
+        )
     fromMaybe (responseLBS status500 [] "Internal Server Error") <$> readIORef responseRef
 
 -- | Serialize a response directly to a buffer, returns bytes written
@@ -424,7 +432,8 @@ handleRawResponse ::
     (IO ByteString -> (ByteString -> IO ()) -> IO ()) ->
     ByteString -> -- leftover data from request parsing
     IO ()
-handleRawResponse _ctx loop clientFd rawApp leftoverData = do
+handleRawResponse ctx loop clientFd rawApp leftoverData = do
+    let lg = ctxLogger ctx
     -- Leftover buffer for data read but not consumed
     leftoverRef <- newIORef leftoverData
 
@@ -464,7 +473,7 @@ handleRawResponse _ctx loop clientFd rawApp leftoverData = do
     catch
         (rawApp recvAction sendAction)
         ( \(e :: SomeException) ->
-            putStrLn $ "evring-wai: Raw handler error: " ++ show e
+            Log.logError lg ("Raw handler error: " <> T.pack (show e)) ()
         )
 
     -- After raw handler completes, close the connection
@@ -502,7 +511,8 @@ handleStreamingResponse ::
     ResponseHeaders ->
     ((StreamingBody -> IO ()) -> IO ()) ->
     IO ()
-handleStreamingResponse _ctx loop clientFd status headers withBody = do
+handleStreamingResponse ctx loop clientFd status headers withBody = do
+    let lg = ctxLogger ctx
     -- First send HTTP headers with Transfer-Encoding: chunked
     let headerBytes = buildStreamingHeaders status headers
 
@@ -541,7 +551,7 @@ handleStreamingResponse _ctx loop clientFd status headers withBody = do
         catch
             (withBody $ \streamingBody -> streamingBody sendChunk flushAction)
             ( \(e :: SomeException) ->
-                putStrLn $ "evring-wai: Streaming response error: " ++ show e
+                Log.logError lg ("Streaming response error: " <> T.pack (show e)) ()
             )
 
         -- Send final chunk (0\r\n\r\n)
