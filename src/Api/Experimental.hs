@@ -36,6 +36,7 @@ module Api.Experimental (
     ExperimentalWorktreePostAPI,
     ExperimentalWorktreeResetAPI,
     ExperimentalWorktreeDeleteAPI,
+    WorktreeCreateInput (..),
     WorktreeRemoveInput (..),
     Worktree (..),
 
@@ -46,7 +47,7 @@ module Api.Experimental (
 import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import Json.Strict (withStrictObject)
+import Json.Strict (withStrictObject, (.:!?))
 import Servant (
     Delete,
     Get,
@@ -124,7 +125,25 @@ type ExperimentalWorktreeGetAPI = "experimental" :> "worktree" :> QueryParam "di
 
 Creates a new git worktree. Returns the worktree info with name, branch, and directory.
 -}
-type ExperimentalWorktreePostAPI = "experimental" :> "worktree" :> ReqBody '[JSON] Value :> Post '[JSON] Worktree
+type ExperimentalWorktreePostAPI = "experimental" :> "worktree" :> ReqBody '[JSON] WorktreeCreateInput :> Post '[JSON] Worktree
+
+-- | Input for worktree create endpoint (strict JSON parsing)
+data WorktreeCreateInput = WorktreeCreateInput
+    { wciName :: Maybe Text
+    -- ^ Name for the worktree (optional, not nullable)
+    , wciStartCommand :: Maybe Text
+    -- ^ Additional startup script (optional, not nullable)
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON WorktreeCreateInput where
+    parseJSON = withStrictObject "WorktreeCreateInput" ["name", "startCommand"] $ \v ->
+        WorktreeCreateInput
+            <$> v .:!? "name"
+            <*> v .:!? "startCommand"
+
+instance ToJSON WorktreeCreateInput where
+    toJSON wci = object ["name" .= wciName wci, "startCommand" .= wciStartCommand wci]
 
 {- | @POST /experimental/worktree/reset@ - Reset a worktree.
 

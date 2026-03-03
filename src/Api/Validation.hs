@@ -27,6 +27,8 @@ module Api.Validation (
     validateSessionId,
     validatePtyId,
     validateRequestId,
+    validatePermissionId,
+    validatePartId,
     validateProviderId,
     validateMessageId,
 
@@ -45,6 +47,7 @@ module Api.Validation (
 ) where
 
 import Data.Aeson (FromJSON, Object, Result (..), Value (..), fromJSON)
+import Data.Char (isAlphaNum, isAsciiLower, isDigit)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Servant (Handler, ServerError (..), err400, throwError)
@@ -100,25 +103,66 @@ sessionAbortHandler st sessionId mDir = do
 requireNonEmptyIdM :: Text -> Text -> Handler Text
 requireNonEmptyIdM = requireNonEmptyId
 
--- | Validate a session ID (non-empty).
+-- | Validate a session ID (non-empty and matches pattern ^ses[a-zA-Z0-9_-]*$).
 validateSessionId :: Text -> Handler Text
-validateSessionId = requireNonEmptyId "sessionID"
+validateSessionId value
+    | T.null value = throwValidation "Missing required path parameter: sessionID"
+    | not (T.isPrefixOf "ses" value) = throwValidation "Invalid sessionID: must start with 'ses'"
+    | not (T.all isValidIdChar (T.drop 3 value)) = throwValidation "Invalid sessionID: must contain only alphanumeric characters, underscores, and hyphens after 'ses'"
+    | otherwise = pure value
 
--- | Validate a PTY ID (non-empty).
+-- | Validate a PTY ID (non-empty and matches pattern ^pty_.*).
 validatePtyId :: Text -> Handler Text
-validatePtyId = requireNonEmptyId "ptyID"
+validatePtyId value
+    | T.null value = throwValidation "Missing required path parameter: ptyID"
+    | not (T.isPrefixOf "pty_" value) = throwValidation "Invalid ptyID: must start with 'pty_'"
+    | otherwise = pure value
 
--- | Validate a request ID (non-empty, for questions/permissions).
+-- | Validate a request ID (non-empty, alphanumeric with underscore and hyphen).
 validateRequestId :: Text -> Handler Text
-validateRequestId = requireNonEmptyId "requestID"
+validateRequestId value
+    | T.null value = throwValidation "Missing required path parameter: requestID"
+    | not (T.all isValidIdChar value) = throwValidation "Invalid requestID: must contain only alphanumeric characters, underscores, and hyphens"
+    | otherwise = pure value
 
--- | Validate a provider ID (non-empty).
+-- | Validate a permission ID (non-empty, alphanumeric with underscore and hyphen).
+validatePermissionId :: Text -> Handler Text
+validatePermissionId value
+    | T.null value = throwValidation "Missing required path parameter: permissionID"
+    | not (T.all isValidIdChar value) = throwValidation "Invalid permissionID: must contain only alphanumeric characters, underscores, and hyphens"
+    | otherwise = pure value
+
+-- | Validate a part ID (non-empty, alphanumeric with underscore and hyphen).
+validatePartId :: Text -> Handler Text
+validatePartId value
+    | T.null value = throwValidation "Missing required path parameter: partID"
+    | not (T.all isValidIdChar value) = throwValidation "Invalid partID: must contain only alphanumeric characters, underscores, and hyphens"
+    | otherwise = pure value
+
+-- | Check if a character is valid for IDs (alphanumeric, underscore, hyphen)
+isValidIdChar :: Char -> Bool
+isValidIdChar c = isAlphaNum c || c == '_' || c == '-'
+
+-- | Validate a provider ID (non-empty, lowercase alphanumeric and hyphens only, must start with letter or digit).
 validateProviderId :: Text -> Handler Text
-validateProviderId = requireNonEmptyId "providerID"
+validateProviderId value
+    | T.null value = throwValidation "Missing required path parameter: providerID"
+    | not (isValidFirstChar (T.head value)) = throwValidation "Invalid providerID: must start with a lowercase letter or digit"
+    | not (T.all isValidProviderChar value) = throwValidation "Invalid providerID: must contain only lowercase letters, digits, and hyphens"
+    | otherwise = pure value
+  where
+    -- Valid provider ID characters: lowercase letters, digits, and hyphens
+    isValidProviderChar c = isAsciiLower c || isDigit c || c == '-'
+    -- First character must be letter or digit (not hyphen)
+    isValidFirstChar c = isAsciiLower c || isDigit c
 
--- | Validate a message ID (non-empty).
+-- | Validate a message ID (non-empty and matches pattern ^msg[a-zA-Z0-9_-]*$).
 validateMessageId :: Text -> Handler Text
-validateMessageId = requireNonEmptyId "messageID"
+validateMessageId value
+    | T.null value = throwValidation "Missing required path parameter: messageID"
+    | not (T.isPrefixOf "msg" value) = throwValidation "Invalid messageID: must start with 'msg'"
+    | not (T.all isValidIdChar (T.drop 3 value)) = throwValidation "Invalid messageID: must contain only alphanumeric characters, underscores, and hyphens after 'msg'"
+    | otherwise = pure value
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Query Parameter Validation

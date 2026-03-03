@@ -75,6 +75,7 @@ genCreateSessionInput =
     CreateSessionInput
         <$> Gen.maybe genText
         <*> Gen.maybe genText
+        <*> pure Nothing -- permission (not tested in roundtrip)
 
 genProjectSummary :: Gen ProjectSummary
 genProjectSummary =

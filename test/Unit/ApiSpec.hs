@@ -161,7 +161,7 @@ spec dhallCache = do
             it "should parse valid input" $ do
                 let json = "{\"text\":\"hello world\"}"
                 case decode json of
-                    Just (AppendPromptInput txt _) -> txt `shouldBe` Just "hello world"
+                    Just (AppendPromptInput txt) -> txt `shouldBe` "hello world"
                     Nothing -> expectationFailure "Failed to parse valid AppendPromptInput"
 
             it "should reject unknown properties" $ do

@@ -9,6 +9,8 @@ including parameter resolution, exit code conversion, and mount spec conversion.
 -}
 module Property.PtyInternalProps where
 
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Hedgehog
@@ -61,12 +63,13 @@ genFilePath = do
     lastSafe [x] = x
     lastSafe (_ : xs') = lastSafe xs'
 
--- | Generate environment variable pairs
-genEnvPairs :: Gen [(Text, Text)]
-genEnvPairs =
-    Gen.list
-        (Range.linear 0 5)
-        ((,) <$> genAlphaNumText <*> genAlphaNumText)
+-- | Generate environment variable map
+genEnvMap :: Gen (Map Text Text)
+genEnvMap =
+    Map.fromList
+        <$> Gen.list
+            (Range.linear 0 5)
+            ((,) <$> genAlphaNumText <*> genAlphaNumText)
 
 -- | Generate a CreatePtyInput with various optional fields
 genCreatePtyInput :: Gen CreatePtyInput
@@ -76,7 +79,7 @@ genCreatePtyInput =
         <*> Gen.maybe (Gen.list (Range.linear 0 5) genAlphaNumText)
         <*> Gen.maybe genFilePathText
         <*> Gen.maybe genAlphaNumText
-        <*> Gen.maybe genEnvPairs
+        <*> Gen.maybe genEnvMap
         <*> Gen.maybe Gen.bool
         <*> Gen.maybe Gen.bool
         <*> Gen.maybe (Gen.list (Range.linear 0 2) genMountTuple)
@@ -247,7 +250,7 @@ prop_resolveCreateParamsEnvPreserved :: Property
 prop_resolveCreateParamsEnvPreserved = property $ do
     defaultDir <- forAll genFilePath
     ptyId <- forAll genAlphaNumText
-    userEnv <- forAll genEnvPairs
+    userEnv <- forAll genEnvMap
     let input =
             CreatePtyInput
                 Nothing
@@ -260,8 +263,8 @@ prop_resolveCreateParamsEnvPreserved = property $ do
                 Nothing
                 Nothing
     let params = resolveCreateParams defaultDir ptyId input
-    -- Env should have session ID first, then user env
-    let expectedEnv = ("OPENCODE_SESSION_ID", ptyId) : userEnv
+    -- Env should have session ID first, then user env (converted to list)
+    let expectedEnv = ("OPENCODE_SESSION_ID", ptyId) : Map.toList userEnv
     cpEnv params === expectedEnv
 
 -- ============================================================================

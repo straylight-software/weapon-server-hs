@@ -10,6 +10,8 @@ default values, and error handling.
 module Property.PtyProps where
 
 import Data.Aeson (Value (..), object, (.=))
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -43,12 +45,13 @@ genFilePath = do
     lastSafe [x] = x
     lastSafe (_ : xs') = lastSafe xs'
 
--- | Generate environment variable pairs
-genEnvPairs :: Gen [(Text, Text)]
-genEnvPairs =
-    Gen.list
-        (Range.linear 0 5)
-        ((,) <$> genAlphaNumText <*> genAlphaNumText)
+-- | Generate environment variable map
+genEnvMap :: Gen (Map Text Text)
+genEnvMap =
+    Map.fromList
+        <$> Gen.list
+            (Range.linear 0 5)
+            ((,) <$> genAlphaNumText <*> genAlphaNumText)
 
 -- | Generate mount specifications
 genMounts :: Gen [(Text, Text, Bool)]
@@ -85,7 +88,7 @@ prop_parseInputAllFields = property $ do
     args <- forAll $ Gen.list (Range.linear 0 5) genAlphaNumText
     cwd <- forAll genFilePath
     title <- forAll genAlphaNumText
-    env <- forAll genEnvPairs
+    env <- forAll genEnvMap
     sandbox <- forAll Gen.bool
     network <- forAll Gen.bool
     sessionId <- forAll genAlphaNumText

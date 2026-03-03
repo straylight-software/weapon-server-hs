@@ -141,8 +141,6 @@ type OpencodeAPI =
         :<|> TuiShowToastAPI
         :<|> TuiPublishAPI
         :<|> TuiSelectSessionAPI
-        :<|> TuiControlNextAPI
-        :<|> TuiControlResponseAPI
         -- lifecycle
         :<|> InstanceDisposeAPI
         :<|> GlobalDisposeAPI

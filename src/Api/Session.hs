@@ -42,6 +42,7 @@ module Api.Session (
 
     -- ** Session Updates
     UpdateSessionInput (..),
+    UpdateSessionTime (..),
     ForkSessionInput (..),
     InitSessionInput (..),
 
@@ -87,6 +88,11 @@ module Api.Session (
     SessionCommandInput (..),
     SessionShellInput (..),
     SessionShellModel (..),
+    SummarizeSessionInput (..),
+    PermissionRespondInput (..),
+
+    -- ** Validated Query Parameters
+    MessageIDParam (..),
 ) where
 
 import Data.Aeson (
@@ -100,9 +106,11 @@ import Data.Aeson (
     (.:?),
     (.=),
  )
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
+import Data.Text qualified as T
 import GHC.Generics (Generic)
-import Json.Strict (withStrictObject)
+import Json.Strict (withStrictObject, (.:!?))
 import Servant (
     Capture,
     Delete,
@@ -114,9 +122,10 @@ import Servant (
     ReqBody,
     type (:>),
  )
+import Web.HttpApiData (FromHttpApiData (..))
 
 -- Import AssistantMessageInfo for SessionShellAPI return type
-import Api.Message (AssistantMessageInfo (..))
+import Api.Message (AssistantMessageInfo (..), PartInput (..))
 
 -- Re-export canonical session types from Session.Types
 import Session.Types (
@@ -220,6 +229,34 @@ instance FromJSON FileDiff where
 -- // session update input //
 -- ═══════════════════════════════════════════════════════════════════════════
 
+{- | Time fields that can be updated via session.update.
+
+The only mutable time field is @archived@ - setting/clearing this archives
+or unarchives a session.
+
+==== Example JSON
+
+@
+{ "archived": 1708123456789.0 }
+@
+-}
+newtype UpdateSessionTime = UpdateSessionTime
+    { ustArchived :: Maybe Double
+    -- ^ Archive timestamp (set to archive, null to unarchive)
+    }
+    deriving (Eq, Show, Generic)
+
+instance FromJSON UpdateSessionTime where
+    parseJSON = withStrictObject "UpdateSessionTime" ["archived"] $ \v ->
+        UpdateSessionTime <$> v .:!? "archived"
+
+instance ToJSON UpdateSessionTime where
+    toJSON ust =
+        object $
+            catMaybes
+                [ ("archived" .=) <$> ustArchived ust
+                ]
+
 {- | Input for updating a session via @PATCH /session/:sessionID@.
 
 All fields are optional. Only provided fields will be updated.
@@ -235,6 +272,12 @@ Or to update sharing:
 @
 { "share": { "url": "https://share.example.com/abc123" } }
 @
+
+Or to archive a session:
+
+@
+{ "time": { "archived": 1708123456789.0 } }
+@
 -}
 data UpdateSessionInput = UpdateSessionInput
     { usiTitle :: Maybe Text
@@ -245,25 +288,30 @@ data UpdateSessionInput = UpdateSessionInput
     -- ^ Sharing configuration
     , usiRevert :: Maybe SessionRevert
     -- ^ Revert configuration
+    , usiTime :: Maybe UpdateSessionTime
+    -- ^ Time fields to update (currently only archived)
     }
     deriving (Eq, Show, Generic)
 
 instance FromJSON UpdateSessionInput where
-    parseJSON = withObject "UpdateSessionInput" $ \v ->
+    parseJSON = withStrictObject "UpdateSessionInput" ["title", "summary", "share", "revert", "time"] $ \v ->
         UpdateSessionInput
-            <$> v .:? "title"
-            <*> v .:? "summary"
-            <*> v .:? "share"
-            <*> v .:? "revert"
+            <$> v .:!? "title"
+            <*> v .:!? "summary"
+            <*> v .:!? "share"
+            <*> v .:!? "revert"
+            <*> v .:!? "time"
 
 instance ToJSON UpdateSessionInput where
     toJSON input =
-        object
-            [ "title" .= usiTitle input
-            , "summary" .= usiSummary input
-            , "share" .= usiShare input
-            , "revert" .= usiRevert input
-            ]
+        object $
+            catMaybes
+                [ ("title" .=) <$> usiTitle input
+                , ("summary" .=) <$> usiSummary input
+                , ("share" .=) <$> usiShare input
+                , ("revert" .=) <$> usiRevert input
+                , ("time" .=) <$> usiTime input
+                ]
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // fork session input //
@@ -289,10 +337,12 @@ newtype ForkSessionInput = ForkSessionInput
 
 instance FromJSON ForkSessionInput where
     parseJSON = withStrictObject "ForkSessionInput" ["messageID"] $ \v ->
-        ForkSessionInput <$> v .:? "messageID"
+        ForkSessionInput <$> v .:!? "messageID"
 
 instance ToJSON ForkSessionInput where
-    toJSON fsi = object ["messageID" .= fsiMessageId fsi]
+    toJSON fsi = object $ case fsiMessageId fsi of
+        Nothing -> []
+        Just mid -> ["messageID" .= mid]
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // init session input //
@@ -438,6 +488,23 @@ type SessionShareDeleteAPI =
     "session" :> Capture "sessionID" Text :> "share" :> Delete '[JSON] Session
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Validated Query Parameters
+-- ─────────────────────────────────────────────────────────────────────────────
+
+{- | A validated messageID query parameter.
+
+According to OpenAPI spec, messageID must match pattern ^msg.*
+This type ensures validation at request parsing time.
+-}
+newtype MessageIDParam = MessageIDParam {unMessageIDParam :: Text}
+    deriving (Eq, Show, Generic)
+
+instance FromHttpApiData MessageIDParam where
+    parseUrlPiece t
+        | "msg" `T.isPrefixOf` t = Right (MessageIDParam t)
+        | otherwise = Left "messageID must start with 'msg'"
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Diffs and Revert
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -452,12 +519,12 @@ type SessionDiffAPI =
         :> Capture "sessionID" Text
         :> "diff"
         :> QueryParam "directory" Text
-        :> QueryParam "messageID" Text
+        :> QueryParam "messageID" MessageIDParam
         :> Get '[JSON] [FileDiff]
 
 -- | @POST /session/:sessionID/summarize@ - Generate a session summary.
 type SessionSummarizeAPI =
-    "session" :> Capture "sessionID" Text :> "summarize" :> Post '[JSON] Bool
+    "session" :> Capture "sessionID" Text :> "summarize" :> QueryParam "directory" Text :> ReqBody '[JSON] SummarizeSessionInput :> Post '[JSON] Bool
 
 -- | @POST /session/:sessionID/revert@ - Revert file changes.
 type SessionRevertAPI =
@@ -500,8 +567,22 @@ type SessionPermissionAPI =
         :> "permissions"
         :> Capture "permissionID" Text
         :> QueryParam "directory" Text
-        :> ReqBody '[JSON] Value
+        :> ReqBody '[JSON] PermissionRespondInput
         :> Post '[JSON] Bool
+
+-- | Input for permission.respond endpoint (strict JSON parsing)
+newtype PermissionRespondInput = PermissionRespondInput
+    { priResponse :: Text
+    -- ^ Response type: once, always, reject (required)
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON PermissionRespondInput where
+    parseJSON = withStrictObject "PermissionRespondInput" ["response"] $ \v ->
+        PermissionRespondInput <$> v .: "response"
+
+instance ToJSON PermissionRespondInput where
+    toJSON pri = object ["response" .= priResponse pri]
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // command input types //
@@ -515,7 +596,7 @@ data SessionCommandInput = SessionCommandInput
     , sciAgent :: Maybe Text
     , sciModel :: Maybe Text
     , sciVariant :: Maybe Text
-    , sciParts :: Maybe Value
+    , sciParts :: Maybe [PartInput]
     }
     deriving (Show, Eq, Generic)
 
@@ -524,11 +605,11 @@ instance FromJSON SessionCommandInput where
         SessionCommandInput
             <$> v .: "command"
             <*> v .: "arguments"
-            <*> v .:? "messageID"
-            <*> v .:? "agent"
-            <*> v .:? "model"
-            <*> v .:? "variant"
-            <*> v .:? "parts"
+            <*> v .:!? "messageID"
+            <*> v .:!? "agent"
+            <*> v .:!? "model"
+            <*> v .:!? "variant"
+            <*> v .:!? "parts"
 
 instance ToJSON SessionCommandInput where
     toJSON sci =
@@ -575,7 +656,7 @@ instance FromJSON SessionShellInput where
         SessionShellInput
             <$> v .: "agent"
             <*> v .: "command"
-            <*> v .:? "model"
+            <*> v .:!? "model"
 
 instance ToJSON SessionShellInput where
     toJSON ssi =
@@ -583,4 +664,27 @@ instance ToJSON SessionShellInput where
             [ "agent" .= ssiAgent ssi
             , "command" .= ssiCommand ssi
             , "model" .= ssiModel ssi
+            ]
+
+-- | Input for session summarize endpoint (strict JSON parsing)
+data SummarizeSessionInput = SummarizeSessionInput
+    { suiProviderID :: Text
+    , suiModelID :: Text
+    , suiAuto :: Maybe Bool
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON SummarizeSessionInput where
+    parseJSON = withStrictObject "SummarizeSessionInput" ["providerID", "modelID", "auto"] $ \v ->
+        SummarizeSessionInput
+            <$> v .: "providerID"
+            <*> v .: "modelID"
+            <*> v .:!? "auto"
+
+instance ToJSON SummarizeSessionInput where
+    toJSON sui =
+        object
+            [ "providerID" .= suiProviderID sui
+            , "modelID" .= suiModelID sui
+            , "auto" .= suiAuto sui
             ]

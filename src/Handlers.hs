@@ -105,8 +105,6 @@ module Handlers (
     tuiShowToastHandler,
     tuiPublishHandler,
     tuiSelectSessionHandler,
-    tuiControlNextHandler,
-    tuiControlResponseHandler,
 
     -- * Skill/Formatter Handlers
     skillHandler,
@@ -387,19 +385,14 @@ providerHandler st _mDir = liftIO $ do
 
     return $ ProviderList providerJson defaultModel connectedIds
 
-providerOauthAuthorizeHandler :: AppState -> Text -> Value -> Handler Value
+providerOauthAuthorizeHandler :: AppState -> Text -> OAuthAuthorizeInput -> Handler Value
 providerOauthAuthorizeHandler st pid input = do
     _ <- V.validateProviderId pid
-    _ <- V.requireJsonObject input
     liftIO $ do
         state <- OAuth.generateState
-        let redirect = case extractText input "redirectURI" of
-                Just r -> Just r
-                Nothing -> case extractText input "redirect" of
-                    Just r -> Just r
-                    Nothing -> extractText input "redirect_uri"
-        let scopes = extractTextList input "scopes"
-        let url = OAuth.buildAuthorizeUrl pid state redirect scopes
+        -- Use method from input (method index determines OAuth flow type)
+        let _method = oaiMethod input
+        let url = OAuth.buildAuthorizeUrl pid state Nothing []
         -- Response matches ProviderAuthAuthorization schema: {url, method, instructions}
         -- method is "auto" (auto-redirect) or "code" (manual code entry)
         let payload =
@@ -408,71 +401,45 @@ providerOauthAuthorizeHandler st pid input = do
                     , "method" .= ("auto" :: Text)
                     , "instructions" .= ("Click the link to authorize " <> pid <> " access." :: Text)
                     ]
-        Storage.writeCached (stDirCache st) (stStorage st) ["auth", "oauth", pid] (object ["state" .= state, "redirect" .= redirect])
+        Storage.writeCached (stDirCache st) (stStorage st) ["auth", "oauth", pid] (object ["state" .= state])
         return payload
 
-providerOauthCallbackHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
+providerOauthCallbackHandler :: AppState -> Text -> Maybe Text -> OAuthCallbackInput -> Handler Bool
 providerOauthCallbackHandler _st pid _mDir input = do
     _ <- V.validateProviderId pid
-    _ <- V.requireJsonObject input
-    -- Input expects: { method: number, code?: string }
-    -- method is required, code is optional
-    case extractInt input "method" of
-        Nothing -> throwError $ err400{errBody = "{\"error\":\"method is required\"}"}
-        Just _method -> do
-            -- In a real implementation, we would:
-            -- 1. Look up pending OAuth state by providerID
-            -- 2. Based on method, either use the code or auto-authenticate
-            -- 3. Store the resulting auth tokens
-            -- For the mock, we just accept and return success
-            let mCode = extractText input "code"
-            case mCode of
-                Just _code -> do
-                    -- Code-based OAuth flow - would exchange code for tokens
-                    return True
-                Nothing -> do
-                    -- Auto OAuth flow - would use stored credentials
-                    return True
+    -- Input has: { method: number, code?: string }
+    let _method = ociMethod input
+    let _mCode = ociCode input
+    -- In a real implementation, we would:
+    -- 1. Look up pending OAuth state by providerID
+    -- 2. Based on method, either use the code or auto-authenticate
+    -- 3. Store the resulting auth tokens
+    -- For the mock, we just accept and return success
+    return True
 
-authCreateHandler :: AppState -> Text -> Value -> Handler Bool
-authCreateHandler st pid input = liftIO $ do
-    case extractToken input of
-        Nothing -> return False
-        Just token -> do
-            Provider.setAuth (stStorage st) pid token
-            return True
+authCreateHandler :: AppState -> Text -> AuthInput -> Handler Bool
+authCreateHandler st pid input = do
+    _ <- V.validateProviderId pid
+    liftIO $ do
+        let token = extractTokenFromAuth input
+        Provider.setAuth (stStorage st) pid token
+        return True
 
-authUpdateHandler :: AppState -> Text -> Value -> Handler Bool
+authUpdateHandler :: AppState -> Text -> AuthInput -> Handler Bool
 authUpdateHandler = authCreateHandler
 
 authDeleteHandler :: AppState -> Text -> Handler Bool
-authDeleteHandler st pid = liftIO $ do
-    Provider.removeAuth (stStorage st) pid
-    return True
+authDeleteHandler st pid = do
+    _ <- V.validateProviderId pid
+    liftIO $ do
+        Provider.removeAuth (stStorage st) pid
+        return True
 
-extractToken :: Value -> Maybe Text
-extractToken (Object obj) = case KM.lookup "token" obj of
-    Just (String t) -> Just t
-    Just (Object _) -> extractFromApiKey
-    Just (Array _) -> extractFromApiKey
-    Just (Number _) -> extractFromApiKey
-    Just (Bool _) -> extractFromApiKey
-    Just Null -> extractFromApiKey
-    Nothing -> extractFromApiKey
-  where
-    extractFromApiKey = case KM.lookup "apiKey" obj of
-        Just (String t) -> Just t
-        Just (Object _) -> Nothing
-        Just (Array _) -> Nothing
-        Just (Number _) -> Nothing
-        Just (Bool _) -> Nothing
-        Just Null -> Nothing
-        Nothing -> Nothing
-extractToken (Array _) = Nothing
-extractToken (String _) = Nothing
-extractToken (Number _) = Nothing
-extractToken (Bool _) = Nothing
-extractToken Null = Nothing
+-- | Extract the authentication token/key from AuthInput
+extractTokenFromAuth :: AuthInput -> Text
+extractTokenFromAuth (AuthApi input) = aaiKey input
+extractTokenFromAuth (AuthOAuth input) = aoiAccess input -- Use access token
+extractTokenFromAuth (AuthWellKnown input) = awToken input
 
 extractText :: Value -> Text -> Maybe Text
 extractText (Object obj) key = case KM.lookup (K.fromText key) obj of
@@ -488,34 +455,6 @@ extractText (String _) _ = Nothing
 extractText (Number _) _ = Nothing
 extractText (Bool _) _ = Nothing
 extractText Null _ = Nothing
-
-extractInt :: Value -> Text -> Maybe Int
-extractInt (Object obj) key = case KM.lookup (K.fromText key) obj of
-    Just (Number n) -> Just (round n)
-    _other -> Nothing
-extractInt _other _ = Nothing
-
-extractTextList :: Value -> Text -> [Text]
-extractTextList (Object obj) key = case KM.lookup (K.fromText key) obj of
-    Just (Array xs) -> foldr collect [] xs
-    Just (Object _) -> []
-    Just (String _) -> []
-    Just (Number _) -> []
-    Just (Bool _) -> []
-    Just Null -> []
-    Nothing -> []
-  where
-    collect (String t) acc = t : acc
-    collect (Object _) acc = acc
-    collect (Array _) acc = acc
-    collect (Number _) acc = acc
-    collect (Bool _) acc = acc
-    collect Null acc = acc
-extractTextList (Array _) _ = []
-extractTextList (String _) _ = []
-extractTextList (Number _) _ = []
-extractTextList (Bool _) _ = []
-extractTextList Null _ = []
 
 configHandler :: AppState -> Handler Value
 configHandler st = liftIO $ do
@@ -634,6 +573,7 @@ sessionForkHandler st sid _forkInput = do
             CreateSessionInput
                 { csiTitle = title
                 , csiParentID = Just sid
+                , csiPermission = Nothing
                 }
 
 sessionAbortHandler :: AppState -> Text -> Maybe Text -> Handler Bool
@@ -656,7 +596,7 @@ sessionShareDeleteHandler :: AppState -> Text -> Handler Session
 sessionShareDeleteHandler st sid =
     withSessionUpdate st sid $ \s -> s{sessionShare = Nothing}
 
-sessionDiffHandler :: AppState -> Text -> Maybe Text -> Maybe Text -> Handler [FileDiff]
+sessionDiffHandler :: AppState -> Text -> Maybe Text -> Maybe MessageIDParam -> Handler [FileDiff]
 sessionDiffHandler st sid _mDir _mMessageID = do
     _ <- V.validateSessionId sid
     liftIO $ do
@@ -678,8 +618,8 @@ sessionDiffHandler st sid _mDir _mMessageID = do
         | Diff.fdiAdditions fd == 0 && Diff.fdiDeletions fd > 0 = Deleted
         | otherwise = Modified
 
-sessionSummarizeHandler :: AppState -> Text -> Handler Bool
-sessionSummarizeHandler st sid = do
+sessionSummarizeHandler :: AppState -> Text -> Maybe Text -> SummarizeSessionInput -> Handler Bool
+sessionSummarizeHandler st sid _mDir _input = do
     summary <- liftIO $ loadSummary (stExeCache st) (unpack (stDirectory st))
     _ <- withSessionUpdate st sid $ \s -> s{sessionSummary = Just summary}
     return True
@@ -822,12 +762,12 @@ sessionUnrevertHandler :: AppState -> Text -> Handler Session
 sessionUnrevertHandler st sid =
     withSessionUpdate st sid $ \s -> s{sessionRevert = Nothing}
 
-sessionPermissionHandler :: AppState -> Text -> Text -> Maybe Text -> Value -> Handler Bool
+sessionPermissionHandler :: AppState -> Text -> Text -> Maybe Text -> PermissionRespondInput -> Handler Bool
 sessionPermissionHandler st sid pid _mDir input = do
     _ <- V.validateSessionId sid
-    _ <- V.requireJsonObject input
+    _ <- V.validatePermissionId pid
     liftIO $ do
-        Bus.publish (stBus st) "permission.replied" (object ["sessionID" .= sid, "permissionID" .= pid, "response" .= input])
+        Bus.publish (stBus st) "permission.replied" (object ["sessionID" .= sid, "permissionID" .= pid, "response" .= priResponse input])
         return True
 
 -- * Message Handlers (still in-memory for now, TODO: port to storage)
@@ -883,8 +823,11 @@ createMessageIO st sid input = do
     agentCtx <- liftIO $ Context.gatherContext (stExeCache st) cwd
     let systemPrompt = Context.buildSystemPrompt agentCtx mAgent
 
+    -- Unwrap validated parts to Value for downstream processing
+    let parts = map unPartInput (cmiParts input)
+
     -- Extract user text for logging
-    let userText = extractUserText (cmiParts input)
+    let userText = extractUserText parts
     Log.logMsg lg Katip.InfoS $ "create session=" <> sid <> " model=" <> fullModelId <> " agent=" <> agentName <> " text=" <> T.take 50 userText
 
     -- Publish session.status busy event (Critical for TUI Ctrl+C support)
@@ -908,7 +851,7 @@ createMessageIO st sid input = do
     let uMsg =
             Message
                 { msgInfo = UserInfo uMsgInfo
-                , msgParts = cmiParts input
+                , msgParts = parts
                 }
 
     -- 2. Assistant Message (incomplete initially)
@@ -951,7 +894,7 @@ createMessageIO st sid input = do
     Storage.writeCached (stDirCache st) (stStorage st) ["message", sid, uMsgId] uMsg
     Storage.writeCached (stDirCache st) (stStorage st) ["message", sid, aMsgId] aMsg
 
-    let todos = Todo.extractTodos (cmiParts input)
+    let todos = Todo.extractTodos parts
     unless (null todos) $
         Storage.writeCached (stDirCache st) (stStorage st) ["todo", sid] todos
 
@@ -972,7 +915,7 @@ createMessageIO st sid input = do
     Log.logMsg lg Katip.InfoS "message.updated published"
 
     -- Publish user message parts via SSE (Critical #3)
-    forM_ (zip [(0 :: Int) ..] (cmiParts input)) $ \(idx, part) -> do
+    forM_ (zip [(0 :: Int) ..] parts) $ \(idx, part) -> do
         -- Generate a part ID if not present
         partId' <- genId (stIdGen st)
         -- Add required fields: id, sessionID, messageID
@@ -1380,6 +1323,9 @@ sessionMessageGetHandler st sid msgId = do
 
 sessionMessagePartDeleteHandler :: AppState -> Text -> Text -> Text -> Handler Bool
 sessionMessagePartDeleteHandler st sid msgId partId = do
+    _ <- V.validateSessionId sid
+    _ <- V.validateMessageId msgId
+    _ <- V.validatePartId partId
     let key = ["message", sid, msgId]
     result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
@@ -1396,16 +1342,12 @@ sessionMessagePartDeleteHandler st sid msgId partId = do
 
 sessionMessagePartUpdateHandler :: AppState -> Text -> Text -> Text -> Value -> Handler Value
 sessionMessagePartUpdateHandler st sid msgId partId input = do
+    _ <- V.validateSessionId sid
+    _ <- V.validateMessageId msgId
+    _ <- V.validatePartId partId
     let key = ["message", sid, msgId]
-    let bodySession = extractText input "sessionID"
-    let bodyMessage = extractText input "messageID"
-    let bodyPart = extractText input "id"
-    case (bodySession, bodyMessage, bodyPart) of
-        (Just s, Just m, Just p) ->
-            when (s /= sid || m /= msgId || p /= partId) $ throwError $ badRequestError "ID mismatch between path and body"
-        (Nothing, _, _) -> throwError $ badRequestError "Missing required field: sessionID"
-        (_, Nothing, _) -> throwError $ badRequestError "Missing required field: messageID"
-        (_, _, Nothing) -> throwError $ badRequestError "Missing required field: id"
+    -- Note: We use path parameters as the source of truth.
+    -- Body IDs (sessionID, messageID, id) are ignored if present - the path defines what to update.
     result <- liftIO $ Storage.readMaybe (stStorage st) key
     case result of
         Nothing -> throwError notFoundError
@@ -1660,8 +1602,9 @@ completeMessage st sid msgId parentMsgId providerId modelId agentName startTime 
 
 -- * File Handlers
 
-fileListHandler :: Maybe Text -> Text -> Handler [FileNode]
-fileListHandler mDir path = liftIO $ do
+fileListHandler :: Maybe Text -> NonEmptyPath -> Handler [FileNode]
+fileListHandler mDir pathParam = liftIO $ do
+    let path = unNonEmptyPath pathParam
     fullPath <- resolvePath mDir path
     exists <- doesDirectoryExist fullPath
     if not exists
@@ -1730,28 +1673,52 @@ vcsHandler st = do
 
 permissionHandler :: AppState -> Maybe Text -> Handler [Value]
 permissionHandler st _mDir = liftIO $ do
-    RequestStore.listRequests (stStorage st) "permission"
+    -- List all permissions and filter out approved/rejected ones
+    -- (those have a "status" field, pending ones don't)
+    allPermissions <- RequestStore.listRequests (stStorage st) "permission"
+    pure $ filter isPending allPermissions
+  where
+    isPending :: Value -> Bool
+    isPending (Object obj) = not $ KM.member "status" obj
+    isPending _ = False
 
 questionHandler :: AppState -> Maybe Text -> Handler [Value]
 questionHandler st _mDir = liftIO $ do
-    RequestStore.listRequests (stStorage st) "question"
+    -- List all questions and filter out replied/rejected ones
+    -- (those have a "status" field, pending ones don't)
+    allQuestions <- RequestStore.listRequests (stStorage st) "question"
+    pure $ filter isPending allQuestions
+  where
+    isPending :: Value -> Bool
+    isPending (Object obj) = not $ KM.member "status" obj
+    isPending _ = False
 
--- | Generic handler for request responses (question/permission reply/reject)
-requestResponseHandler :: Text -> Text -> Text -> Text -> AppState -> Text -> Maybe Text -> Value -> Handler Bool
-requestResponseHandler requestType responseKey status eventName st rid _mDir input = do
+questionReplyHandler :: AppState -> Text -> Maybe Text -> QuestionReplyInput -> Handler Bool
+questionReplyHandler st rid _mDir input = do
     _ <- V.validateRequestId rid
-    _ <- V.requireJsonObject input
     liftIO $ do
-        let payload = object ["requestID" .= rid, K.fromText responseKey .= input, "status" .= status]
-        RequestStore.writeRequest (stStorage st) requestType rid payload
-        Bus.publish (stBus st) eventName payload
+        let payload =
+                object
+                    [ "requestID" .= rid
+                    , "reply" .= qriAnswers input
+                    , "status" .= ("replied" :: Text)
+                    ]
+        RequestStore.writeRequest (stStorage st) "question" rid payload
+        Bus.publish (stBus st) "question.replied" payload
         return True
 
-questionReplyHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-questionReplyHandler = requestResponseHandler "question" "reply" "replied" "question.replied"
-
-questionRejectHandler :: AppState -> Text -> Maybe Text -> Value -> Handler Bool
-questionRejectHandler = requestResponseHandler "question" "reject" "rejected" "question.rejected"
+questionRejectHandler :: AppState -> Text -> Maybe Text -> Handler Bool
+questionRejectHandler st rid _mDir = do
+    _ <- V.validateRequestId rid
+    liftIO $ do
+        let payload =
+                object
+                    [ "requestID" .= rid
+                    , "status" .= ("rejected" :: Text)
+                    ]
+        RequestStore.writeRequest (stStorage st) "question" rid payload
+        Bus.publish (stBus st) "question.rejected" payload
+        return True
 
 permissionReplyHandler :: AppState -> Text -> Maybe Text -> PermissionReplyInput -> Handler Bool
 permissionReplyHandler st rid _mDir input = do
@@ -1819,7 +1786,7 @@ fileStatusHandler st mDir mPath = liftIO $ do
 
 tuiAppendPromptHandler :: AppState -> Maybe Text -> AppendPromptInput -> Handler Bool
 tuiAppendPromptHandler st _mDir input = liftIO $ do
-    let text = fromMaybe "" (apiText input <|> apiPrompt input)
+    let text = apiText input
     prompt <- TuiStore.appendPrompt (stStorage st) text
     let payload = object ["prompt" .= prompt]
     Bus.publish (stBus st) "tui.append-prompt" payload
@@ -1892,20 +1859,6 @@ tuiSelectSessionHandler st _mDir input = liftIO $ do
     Bus.publish (stBus st) "tui.select-session" (object ["payload" .= payload])
     return True
 
-tuiControlNextHandler :: AppState -> Maybe Text -> ControlNextInput -> Handler Bool
-tuiControlNextHandler st _mDir _input = liftIO $ do
-    let payload = object ["control" .= ("next" :: Text)]
-    TuiStore.setLast (stStorage st) payload
-    Bus.publish (stBus st) "tui.control.next" payload
-    return True
-
-tuiControlResponseHandler :: AppState -> Maybe Text -> ControlResponseInput -> Handler Bool
-tuiControlResponseHandler st _mDir _input = liftIO $ do
-    let payload = object ["control" .= ("response" :: Text)]
-    TuiStore.setLast (stStorage st) payload
-    Bus.publish (stBus st) "tui.control.response" payload
-    return True
-
 instanceDisposeHandler :: AppState -> Handler Bool
 instanceDisposeHandler st = liftIO $ do
     for_ (stProxy st) Proxy.stop
@@ -1920,13 +1873,11 @@ globalDisposeHandler = instanceDisposeHandler
 eventHandler :: AppState -> Tagged Handler Application
 eventHandler = Event.eventHandler
 
-logHandler :: AppState -> Maybe Text -> Value -> Handler Bool
-logHandler st _mDir input = do
-    _ <- V.requireJsonObject input
-    liftIO $ do
-        let lg = Log.withNS (stLogger st) "client"
-        Log.logMsg lg Katip.InfoS $ "log " <> T.pack (show input)
-        return True
+logHandler :: AppState -> Maybe Text -> LogInput -> Handler Bool
+logHandler st _mDir input = liftIO $ do
+    let lg = Log.withNS (stLogger st) "client"
+    Log.logMsg lg Katip.InfoS $ "log " <> liService input <> " [" <> liLevel input <> "] " <> liMessage input
+    return True
 
 skillHandler :: AppState -> Maybe Text -> Handler [Skill.SkillInfo]
 skillHandler st mDir = liftIO $ do
@@ -1959,10 +1910,10 @@ experimentalWorktreeGetHandler _st _mDir = liftIO $ do
     -- Return empty list - worktree listing not yet implemented
     return []
 
-experimentalWorktreePostHandler :: AppState -> Value -> Handler Api.Worktree
+experimentalWorktreePostHandler :: AppState -> WorktreeCreateInput -> Handler Api.Worktree
 experimentalWorktreePostHandler st input = liftIO $ do
     -- Extract name from input (optional, we generate one if not provided)
-    let inputName = extractText input "name"
+    let inputName = wciName input
     -- Generate a unique name if not provided
     let wtName = fromMaybe "worktree-1" inputName
     -- Generate branch name from worktree name
@@ -1971,7 +1922,7 @@ experimentalWorktreePostHandler st input = liftIO $ do
     let wtDirectory = unpack (stDirectory st) <> "/.opencode/worktrees/" <> unpack wtName
     -- Store worktree info
     let worktreeInfo = Api.Worktree wtName wtBranch (pack wtDirectory)
-    _ <- Worktree.setInfo (stStorage st) input
+    _ <- Worktree.setInfo (stStorage st) (Data.Aeson.toJSON input)
     return worktreeInfo
 
 experimentalWorktreeResetHandler :: AppState -> Maybe Text -> Handler Bool
@@ -2011,18 +1962,15 @@ ptyListHandler st = liftIO $ do
     sessions <- Pty.list (stPtyManager st)
     return $ map Data.Aeson.toJSON sessions
 
-ptyCreateHandler :: AppState -> Value -> Handler Value
-ptyCreateHandler st input = do
-    _ <- V.requireJsonObject input
-    liftIO $ do
-        let ptyInput = PtyParse.parseInput input
-        result <- Pty.create (stPtyManager st) ptyInput
-        case result of
-            Left err -> return $ errorResponse err
-            Right info -> do
-                -- Publish event
-                Bus.publish (stBus st) "pty.created" (object ["info" .= info])
-                return $ Data.Aeson.toJSON info
+ptyCreateHandler :: AppState -> PtyT.CreatePtyInput -> Handler Value
+ptyCreateHandler st input = liftIO $ do
+    result <- Pty.create (stPtyManager st) input
+    case result of
+        Left err -> return $ errorResponse err
+        Right info -> do
+            -- Publish event
+            Bus.publish (stBus st) "pty.created" (object ["info" .= info])
+            return $ Data.Aeson.toJSON info
 
 ptyGetHandler :: AppState -> Text -> Handler Value
 ptyGetHandler st ptyId = do
@@ -2051,29 +1999,35 @@ ptyUpdateHandler st ptyId input = do
                     return $ Data.Aeson.toJSON info
 
 ptyDeleteHandler :: AppState -> Text -> Handler Bool
-ptyDeleteHandler st ptyId = liftIO $ do
-    success <- Pty.remove (stPtyManager st) ptyId
-    when success $
-        Bus.publish (stBus st) "pty.deleted" (object ["id" .= ptyId])
-    return success
+ptyDeleteHandler st ptyId = do
+    _ <- V.validatePtyId ptyId
+    liftIO $ do
+        success <- Pty.remove (stPtyManager st) ptyId
+        when success $
+            Bus.publish (stBus st) "pty.deleted" (object ["id" .= ptyId])
+        return success
 
 -- | Commit sandbox changes to real filesystem
 ptyCommitHandler :: AppState -> Text -> Handler Value
-ptyCommitHandler st ptyId = liftIO $ do
-    result <- Pty.commitChanges (stPtyManager st) ptyId
-    case result of
-        Left err -> return $ errorResponse err
-        Right () -> do
-            Bus.publish (stBus st) "pty.committed" (object ["id" .= ptyId])
-            return $ object ["success" .= True, "id" .= ptyId]
+ptyCommitHandler st ptyId = do
+    _ <- V.validatePtyId ptyId
+    liftIO $ do
+        result <- Pty.commitChanges (stPtyManager st) ptyId
+        case result of
+            Left err -> return $ errorResponse err
+            Right () -> do
+                Bus.publish (stBus st) "pty.committed" (object ["id" .= ptyId])
+                return $ object ["success" .= True, "id" .= ptyId]
 
 -- | Get list of changed files in sandbox
 ptyChangesHandler :: AppState -> Text -> Handler Value
-ptyChangesHandler st ptyId = liftIO $ do
-    result <- Pty.getChangedFiles (stPtyManager st) ptyId
-    case result of
-        Left err -> return $ errorResponse err
-        Right files -> return $ object ["id" .= ptyId, "changes" .= map pack files]
+ptyChangesHandler st ptyId = do
+    _ <- V.validatePtyId ptyId
+    liftIO $ do
+        result <- Pty.getChangedFiles (stPtyManager st) ptyId
+        case result of
+            Left err -> return $ errorResponse err
+            Right files -> return $ object ["id" .= ptyId, "changes" .= map pack files]
 
 -- * LLM Handlers
 
@@ -2238,8 +2192,6 @@ server st =
         :<|> tuiShowToastHandler st
         :<|> tuiPublishHandler st
         :<|> tuiSelectSessionHandler st
-        :<|> tuiControlNextHandler st
-        :<|> tuiControlResponseHandler st
         :<|> instanceDisposeHandler st
         :<|> globalDisposeHandler st
         :<|> eventHandler st

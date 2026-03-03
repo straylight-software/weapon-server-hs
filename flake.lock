@@ -67,11 +67,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1772407484,
-        "narHash": "sha256-Etz8jl3BZNW7kxJ6m806ciCwr3O//TKrD6tKaeqaElw=",
+        "lastModified": 1772564455,
+        "narHash": "sha256-0PsrVa++DD8NMHErjzAoAOO1324CxavdfBDrpxjiWzw=",
         "ref": "refs/heads/master",
-        "rev": "853fb5434765e110666fc55bfccab22476420697",
-        "revCount": 77,
+        "rev": "b80572461b75d394863893f7bce6e0c7decba480",
+        "revCount": 89,
         "type": "git",
         "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       },

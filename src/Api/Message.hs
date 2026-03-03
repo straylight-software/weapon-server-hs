@@ -48,6 +48,9 @@ module Api.Message (
     -- ** Input Types
     CreateMessageInput (..),
     ModelSelection (..),
+    PartInput (..),
+    ToolsMap (..),
+    OutputFormat (..),
 
     -- * Message Accessors
     -- $accessors
@@ -71,16 +74,18 @@ import Data.Aeson (
     Key,
     Object,
     ToJSON (..),
-    Value,
+    Value (..),
     object,
     withObject,
     (.:),
     (.:?),
     (.=),
  )
+import Data.Aeson.KeyMap qualified as KM
 import Data.Aeson.Types (Parser)
 import Data.Text (Text)
 import GHC.Generics (Generic)
+import Json.Strict (withStrictObject, (.:!?))
 import Servant (
     Capture,
     Delete,
@@ -598,6 +603,118 @@ instance ToJSON ModelSelection where
             ]
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- // part input //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | A validated part input for message creation.
+
+Parts must be objects with a @type@ field. This wrapper ensures type validation
+at parse time rather than accepting any JSON value.
+
+The inner value is preserved as-is for downstream processing.
+-}
+newtype PartInput = PartInput {unPartInput :: Value}
+    deriving (Eq, Show, Generic)
+
+instance ToJSON PartInput where
+    toJSON = unPartInput
+
+instance FromJSON PartInput where
+    parseJSON v =
+        withObject
+            "Part"
+            ( \obj -> do
+                -- Ensure the part has a "type" field
+                _ :: Text <- obj .: "type"
+                pure (PartInput v)
+            )
+            v
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // tools map //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | A validated tools map for message creation.
+
+Tools must be an object with string keys and boolean values. This wrapper
+ensures type validation at parse time.
+
+==== Example JSON
+@
+{
+  "web_search": true,
+  "code_execution": false
+}
+@
+-}
+newtype ToolsMap = ToolsMap {unToolsMap :: Value}
+    deriving (Eq, Show, Generic)
+
+instance ToJSON ToolsMap where
+    toJSON = unToolsMap
+
+instance FromJSON ToolsMap where
+    parseJSON v =
+        withObject
+            "Tools"
+            ( \obj -> do
+                -- Validate all values are booleans
+                mapM_ validateBoolValue (KM.toList obj)
+                pure (ToolsMap v)
+            )
+            v
+      where
+        validateBoolValue :: (Key, Value) -> Parser ()
+        validateBoolValue (_, Bool _) = pure ()
+        validateBoolValue (k, _) = fail $ "tools property " <> show k <> " must be a boolean"
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- // output format //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Output format specification for message creation.
+
+Must be an object with a @type@ field that is either "text" or "json_schema".
+For json_schema, a @schema@ field is also required.
+
+==== Example JSON (text)
+@
+{ "type": "text" }
+@
+
+==== Example JSON (json_schema)
+@
+{
+  "type": "json_schema",
+  "schema": { "type": "object", "properties": { "name": { "type": "string" } } }
+}
+@
+-}
+newtype OutputFormat = OutputFormat {unOutputFormat :: Value}
+    deriving (Eq, Show, Generic)
+
+instance ToJSON OutputFormat where
+    toJSON = unOutputFormat
+
+instance FromJSON OutputFormat where
+    parseJSON v =
+        withObject
+            "OutputFormat"
+            ( \obj -> do
+                -- Require a "type" field
+                formatType :: Text <- obj .: "type"
+                -- Validate the type is one of the allowed values
+                case formatType of
+                    "text" -> pure (OutputFormat v)
+                    "json_schema" -> do
+                        -- For json_schema, require a schema field
+                        _ :: Value <- obj .: "schema"
+                        pure (OutputFormat v)
+                    _ -> fail $ "format type must be 'text' or 'json_schema', got: " <> show formatType
+            )
+            v
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- // message input //
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -618,22 +735,56 @@ Used by @POST /session/:sessionID/message@ and @POST /session/:sessionID/prompt_
 data CreateMessageInput = CreateMessageInput
     { cmiMessageId :: Maybe Text
     -- ^ Optional message ID (generated if not provided)
-    , cmiParts :: [Value]
-    -- ^ Message content parts
+    , cmiParts :: [PartInput]
+    -- ^ Message content parts (must be objects with type field)
     , cmiModel :: Maybe ModelSelection
     -- ^ Optional model selection override
     , cmiAgent :: Maybe Text
     -- ^ Optional agent selection
+    , cmiNoReply :: Maybe Bool
+    -- ^ Optional noReply flag (not nullable)
+    , cmiTools :: Maybe ToolsMap
+    -- ^ Optional tools object (deprecated, must be object with boolean values)
+    , cmiFormat :: Maybe OutputFormat
+    -- ^ Optional output format (must be object with type field)
+    , cmiSystem :: Maybe Text
+    -- ^ Optional system prompt (not nullable)
+    , cmiVariant :: Maybe Text
+    -- ^ Optional variant (not nullable)
     }
     deriving (Eq, Show, Generic)
 
 instance FromJSON CreateMessageInput where
-    parseJSON = withObject "CreateMessageInput" $ \v ->
-        CreateMessageInput
-            <$> v .:? "messageID"
-            <*> v .: "parts"
-            <*> v .:? "model"
-            <*> v .:? "agent"
+    parseJSON = withStrictObject
+        "CreateMessageInput"
+        ["messageID", "parts", "model", "agent", "noReply", "tools", "format", "system", "variant"]
+        $ \v ->
+            CreateMessageInput
+                <$> v .:!? "messageID"
+                <*> v .: "parts"
+                <*> v .:!? "model"
+                <*> v .:!? "agent"
+                <*> v .:!? "noReply"
+                <*> v .:!? "tools"
+                <*> v .:!? "format"
+                <*> v .:!? "system"
+                <*> v .:!? "variant"
+
+instance ToJSON CreateMessageInput where
+    toJSON cmi =
+        object $
+            buildObject
+                [ "parts" .= cmiParts cmi
+                ]
+                [ optField "messageID" (cmiMessageId cmi)
+                , optField "model" (cmiModel cmi)
+                , optField "agent" (cmiAgent cmi)
+                , optField "noReply" (cmiNoReply cmi)
+                , optField "tools" (cmiTools cmi)
+                , optField "format" (cmiFormat cmi)
+                , optField "system" (cmiSystem cmi)
+                , optField "variant" (cmiVariant cmi)
+                ]
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //

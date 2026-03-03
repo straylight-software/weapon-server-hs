@@ -39,7 +39,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -147,7 +147,7 @@ rejectEmptyPathSegments :: Middleware
 rejectEmptyPathSegments app req callback
     -- Skip validation for unsupported methods - let Servant return 405
     | not (isSupportedMethod (requestMethod req)) = app req callback
-    | shouldReject =
+    | hasEmptySegment =
         callback $
             responseLBS
                 status400
@@ -155,31 +155,39 @@ rejectEmptyPathSegments app req callback
                 (LBS.fromStrict "{\"name\":\"BadRequestError\",\"data\":{\"message\":\"Invalid path: empty path segment\"}}")
     | otherwise = app req callback
   where
-    -- WAI's pathInfo includes empty segments for trailing slashes
-    -- e.g., "/session/" -> ["session", ""]
-    --       "/session" -> ["session"]
-    -- We reject paths that have a trailing empty segment on routes that expect a capture
-    segments = pathInfo req
+    -- We check rawPathInfo instead of pathInfo because some WAI test harnesses
+    -- (like haskemathesis) filter out empty segments from pathInfo.
+    -- rawPathInfo preserves the original path structure.
+    --
+    -- We detect empty segments by looking for:
+    -- - "//" (double slash in middle)
+    -- - Trailing "/" after a path that expects a capture
+    rawPath = rawPathInfo req
 
-    -- Check if the path has a trailing empty segment (from trailing slash)
-    -- Use explicit pattern matching to avoid partial 'last' (STAN-0004)
-    hasTrailingEmpty = go segments
-      where
-        go [] = False
-        go [x] = T.null x
-        go (_x : xs) = go xs
+    -- Check for double slashes (empty segment in the middle)
+    hasDoubleSlash = "//" `BS.isInfixOf` rawPath
 
-    -- Get the non-empty segments for pattern matching
-    nonEmptySegments = filter (not . T.null) segments
+    -- Check for trailing slash on capture routes
+    -- e.g., "/session/" should be rejected (missing sessionID)
+    hasTrailingSlash = "/" `BS.isSuffixOf` rawPath && BS.length rawPath > 1
 
-    -- Paths where a trailing slash indicates a missing required capture
-    shouldReject = hasTrailingEmpty && isCapturePath nonEmptySegments
+    -- Decode rawPath to check against known capture routes
+    decodedPath = TE.decodeUtf8 rawPath
+    pathWithoutTrailing = T.dropWhileEnd (== '/') decodedPath
 
-    isCapturePath :: [T.Text] -> Bool
-    isCapturePath ["session"] = True -- /session/ missing sessionID
-    isCapturePath ["pty"] = True -- /pty/ missing ptyID
-    isCapturePath ["session", _sessionId, "message"] = True -- /session/x/message/ missing messageID
-    isCapturePath _otherPaths = False
+    -- Routes where trailing slash indicates missing capture
+    -- These are routes like /session/{id}, /project/{id}, etc.
+    isCaptureRoute =
+        pathWithoutTrailing == "/session"
+            || pathWithoutTrailing == "/pty"
+            || pathWithoutTrailing == "/project"
+            || pathWithoutTrailing == "/auth"
+            || pathWithoutTrailing == "/provider"
+            || pathWithoutTrailing == "/permission"
+            || pathWithoutTrailing == "/question"
+            || "/session/" `T.isPrefixOf` decodedPath && "/message" `T.isSuffixOf` pathWithoutTrailing
+
+    hasEmptySegment = hasDoubleSlash || (hasTrailingSlash && isCaptureRoute)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- RFC 9110 Compliance: Allow Header on 405
@@ -328,6 +336,8 @@ limitJsonDepthN :: Int -> Middleware
 limitJsonDepthN maxDepth app req callback
     -- Skip for unsupported methods - let Servant return 405
     | not (isSupportedMethod method) = app req callback
+    -- Skip if method not allowed for this route - let Servant return 405
+    | not (isMethodAllowedForRoute (pathInfo req) method) = app req callback
     | not needsBodyCheck = app req callback
     | otherwise = do
         body <- strictRequestBody req
@@ -530,10 +540,15 @@ requireContentType app req callback
         KnownLength _len -> False
     hasContentType = any (\(h, _) -> h == hContentType) (requestHeaders req)
 
--- | Check if a method is allowed for a specific route
+{- | Check if a method is allowed for a specific route
+Returns Nothing if route not found (so caller can decide what to do)
+-}
+findRouteForPath :: [T.Text] -> Maybe RouteSpec
+findRouteForPath = findMatchingRoute
+
 isMethodAllowedForRoute :: [T.Text] -> Method -> Bool
 isMethodAllowedForRoute pathSegs method =
-    case findMatchingRoute pathSegs of
+    case findRouteForPath pathSegs of
         Just spec -> method `elem` rsMethods spec
         Nothing -> True -- Route not found, let Servant handle 404
 
@@ -554,7 +569,7 @@ rejectHeadMethod app req callback
                 [ (hContentType, "application/json")
                 , (hAllow, "GET, POST, PUT, PATCH, DELETE")
                 ]
-                (errorJson "Method Not Allowed" "HEAD method is not supported")
+                (methodNotAllowedJson "HEAD method is not supported")
     | otherwise = app req callback
 
 -- | HEAD method constant
@@ -578,7 +593,7 @@ rejectUnsupportedMethods app req callback
                 [ (hContentType, "application/json")
                 , (hAllow, "GET, POST, PUT, PATCH, DELETE")
                 ]
-                (errorJson "Method Not Allowed" $ "Method not supported: " <> LBS.fromStrict method)
+                (methodNotAllowedJson $ "Method not supported: " <> LBS.fromStrict method)
     | otherwise = app req callback
   where
     method = requestMethod req
@@ -600,7 +615,7 @@ rejectMethodMismatch app req callback
                 [ (hContentType, "application/json")
                 , (hAllow, BS.intercalate ", " (rsMethods spec))
                 ]
-                (errorJson "Method Not Allowed" "This endpoint does not support the requested method")
+                (methodNotAllowedJson "This endpoint does not support the requested method")
     | otherwise = app req callback
   where
     method = requestMethod req
@@ -615,11 +630,17 @@ Null byte injection can trick path parsing and security checks.
 This middleware rejects any path containing %00 or literal null bytes.
 
 Note: We skip validation for unsupported methods so Servant can return 405.
+Also skip if the route is not found (let Servant return 404).
+Also skip if the method isn't allowed for the specific route.
 -}
 rejectNullBytePaths :: Middleware
 rejectNullBytePaths app req callback
     -- Skip for unsupported methods - let Servant return 405
     | not (isSupportedMethod method) = app req callback
+    -- Skip if route not found - let Servant return 404/405
+    | isNothing (findRouteForPath (pathInfo req)) = app req callback
+    -- Skip if method not allowed for this route - let Servant return 405
+    | not (isMethodAllowedForRoute (pathInfo req) method) = app req callback
     | hasNullByte =
         callback $
             responseLBS
@@ -655,57 +676,55 @@ rejectNullBytePaths app req callback
         | c >= 65 && c <= 90 = c + 32
         | otherwise = c
 
-{- | Middleware to reject double-encoded paths.
+{- | Middleware to reject double-encoded path traversal attacks.
 
 Double URL encoding like %252e%252e%252f (which decodes to %2e%2e%2f, then to ../)
 can be used for path traversal attacks that bypass single-decode checks.
 
-This middleware detects %25XX patterns (encoded percent signs followed by hex).
+We only detect DANGEROUS double-encoded patterns, not all %25XX sequences:
+- %252e or %252E = double-encoded '.' (path traversal)
+- %252f or %252F = double-encoded '/' (path separator)
+- %255c or %255C = double-encoded '\' (Windows path separator)
+- %2500 = double-encoded null byte (already caught by rejectNullBytePaths)
+
+Random strings containing '%' that get URL-encoded to %25XX are NOT attacks.
+For example, a session ID like "%99test" becomes "%2599test" which is valid.
 
 Note: We skip validation for unsupported methods so Servant can return 405.
+Also skip if the method isn't allowed for the specific route.
 -}
 rejectDoubleEncodedPaths :: Middleware
 rejectDoubleEncodedPaths app req callback
     -- Skip for unsupported methods - let Servant return 405
     | not (isSupportedMethod method) = app req callback
-    | hasDoubleEncoding =
+    -- Skip if method not allowed for this route - let Servant return 405
+    | not (isMethodAllowedForRoute (pathInfo req) method) = app req callback
+    | hasDoubleEncodedAttack =
         callback $
             responseLBS
                 status400
                 [(hContentType, "application/json")]
-                (errorJson "Invalid path" "Path contains double-encoded characters")
+                (errorJson "Invalid path" "Path contains double-encoded path traversal characters")
     | otherwise = app req callback
   where
     method = requestMethod req
     rawPath = rawPathInfo req
 
-    -- Check for %25 followed by two hex digits (double-encoded percent)
-    -- %25 = encoded '%', so %252e = encoded '%2e' = encoded '.'
-    hasDoubleEncoding = detectDoubleEncoding rawPath
+    -- Dangerous double-encoded patterns (case-insensitive)
+    -- %252e = '.' (0x2e), %252f = '/' (0x2f), %255c = '\' (0x5c), %2500 = null (0x00)
+    dangerousPatterns :: [BS.ByteString]
+    dangerousPatterns =
+        [ "%252e" -- double-encoded dot
+        , "%252E"
+        , "%252f" -- double-encoded forward slash
+        , "%252F"
+        , "%255c" -- double-encoded backslash
+        , "%255C"
+        , "%2500" -- double-encoded null
+        ]
 
-    detectDoubleEncoding :: BS.ByteString -> Bool
-    detectDoubleEncoding bs
-        | BS.length bs < 6 = False
-        | otherwise =
-            let (first3, rest) = BS.splitAt 3 bs
-             in if first3 == "%25" && BS.length rest >= 2
-                    then
-                        let (hex, _) = BS.splitAt 2 rest
-                         in isHexPair hex || detectDoubleEncoding (BS.drop 1 bs)
-                    else detectDoubleEncoding (BS.drop 1 bs)
-
-    isHexPair :: BS.ByteString -> Bool
-    isHexPair bs = case BS.unpack bs of
-        [c1, c2] -> isHexDigit c1 && isHexDigit c2
-        [] -> False
-        [_single] -> False
-        _threeOrMore -> False
-
-    isHexDigit :: Word8 -> Bool
-    isHexDigit c =
-        (c >= 48 && c <= 57) -- 0-9
-            || (c >= 65 && c <= 70) -- A-F
-            || (c >= 97 && c <= 102) -- a-f
+    hasDoubleEncodedAttack :: Bool
+    hasDoubleEncodedAttack = any (`BS.isInfixOf` rawPath) dangerousPatterns
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Route Specifications
@@ -753,9 +772,11 @@ Common params like 'directory' are allowed on most routes
 routeSpecs :: [RouteSpec]
 routeSpecs =
     let dir = Set.singleton "directory"
+        dirLimit = Set.fromList ["directory", "limit"]
         dirRoots = Set.fromList ["directory", "roots", "limit", "start", "search"]
         dirPath = Set.fromList ["directory", "path"]
         dirMessageId = Set.fromList ["directory", "messageID"]
+        experimentalSessionParams = Set.fromList ["directory", "roots", "start", "cursor", "search", "limit", "archived"]
         -- Find endpoints don't accept directory param (DoS prevention)
         findTextParams = Set.fromList ["query", "pattern"]
         findFileParams = Set.fromList ["query", "dirs", "type", "limit"]
@@ -772,7 +793,7 @@ routeSpecs =
         , -- Project
           RouteSpec [Literal "project"] [methodGet] (Map.fromList [(methodGet, dir)])
         , RouteSpec [Literal "project", Literal "current"] [methodGet] (Map.fromList [(methodGet, dir)])
-        , RouteSpec [Literal "project", Capture] [methodGet, methodPatch] (Map.fromList [(methodGet, dir), (methodPatch, dir)])
+        , RouteSpec [Literal "project", Capture] [methodPatch] (Map.fromList [(methodPatch, dir)])
         , -- Provider
           RouteSpec [Literal "provider"] [methodGet] (Map.fromList [(methodGet, dir)])
         , RouteSpec [Literal "provider", Literal "auth"] [methodGet] (Map.fromList [(methodGet, dir)])
@@ -780,7 +801,7 @@ routeSpecs =
         , RouteSpec [Literal "provider", Capture, Literal "oauth", Literal "authorize"] [methodPost] (Map.fromList [(methodPost, dir)])
         , RouteSpec [Literal "provider", Capture, Literal "oauth", Literal "callback"] [methodPost] (Map.fromList [(methodPost, Set.fromList ["directory", "code", "state"])])
         , -- Auth
-          RouteSpec [Literal "auth", Capture] [methodPost, methodPut, methodDelete] (Map.fromList [(methodPost, Set.empty), (methodPut, Set.empty), (methodDelete, Set.empty)])
+          RouteSpec [Literal "auth", Capture] [methodPut, methodDelete] (Map.fromList [(methodPut, Set.empty), (methodDelete, Set.empty)])
         , -- Session
           RouteSpec [Literal "session"] [methodGet, methodPost] (Map.fromList [(methodGet, dirRoots), (methodPost, dir)])
         , RouteSpec [Literal "session", Literal "status"] [methodGet] (Map.fromList [(methodGet, dir)])
@@ -797,10 +818,10 @@ routeSpecs =
         , RouteSpec [Literal "session", Capture, Literal "shell"] [methodPost] (Map.fromList [(methodPost, dir)])
         , RouteSpec [Literal "session", Capture, Literal "revert"] [methodPost] (Map.fromList [(methodPost, dir)])
         , RouteSpec [Literal "session", Capture, Literal "unrevert"] [methodPost] (Map.fromList [(methodPost, dir)])
-        , RouteSpec [Literal "session", Capture, Literal "permissions", Capture] [methodPut] (Map.fromList [(methodPut, dir)])
+        , RouteSpec [Literal "session", Capture, Literal "permissions", Capture] [methodPost] (Map.fromList [(methodPost, dir)])
         , -- Message
-          RouteSpec [Literal "session", Capture, Literal "message"] [methodGet, methodPost] (Map.fromList [(methodGet, dir), (methodPost, dir)])
-        , RouteSpec [Literal "session", Capture, Literal "message", Capture] [methodGet, methodDelete] (Map.fromList [(methodGet, dir), (methodDelete, dir)])
+          RouteSpec [Literal "session", Capture, Literal "message"] [methodGet, methodPost] (Map.fromList [(methodGet, dirLimit), (methodPost, dir)])
+        , RouteSpec [Literal "session", Capture, Literal "message", Capture] [methodGet] (Map.fromList [(methodGet, dir)])
         , RouteSpec [Literal "session", Capture, Literal "message", Capture, Literal "part", Capture] [methodDelete, methodPatch] (Map.fromList [(methodDelete, dir), (methodPatch, dir)])
         , RouteSpec [Literal "session", Capture, Literal "prompt_async"] [methodPost] (Map.fromList [(methodPost, dir)])
         , -- LSP and VCS
@@ -838,8 +859,6 @@ routeSpecs =
         , RouteSpec [Literal "tui", Literal "show-toast"] [methodPost] (Map.fromList [(methodPost, dir)])
         , RouteSpec [Literal "tui", Literal "publish"] [methodPost] (Map.fromList [(methodPost, dir)])
         , RouteSpec [Literal "tui", Literal "select-session"] [methodPost] (Map.fromList [(methodPost, dir)])
-        , RouteSpec [Literal "tui", Literal "control", Literal "next"] [methodPost] (Map.fromList [(methodPost, dir)])
-        , RouteSpec [Literal "tui", Literal "control", Literal "response"] [methodPost] (Map.fromList [(methodPost, dir)])
         , -- Lifecycle
           RouteSpec [Literal "instance", Literal "dispose"] [methodPost] (Map.fromList [(methodPost, dir)])
         , RouteSpec [Literal "event"] [methodGet] (Map.fromList [(methodGet, dir)])
@@ -851,10 +870,10 @@ routeSpecs =
         , RouteSpec [Literal "command"] [methodGet] (Map.fromList [(methodGet, dir)])
         , -- Experimental
           RouteSpec [Literal "experimental", Literal "tool", Literal "ids"] [methodGet] (Map.fromList [(methodGet, dir)])
-        , RouteSpec [Literal "experimental", Literal "tool"] [methodGet, methodPost] (Map.fromList [(methodGet, dir), (methodPost, dir)])
+        , RouteSpec [Literal "experimental", Literal "tool"] [methodGet] (Map.fromList [(methodGet, Set.fromList ["directory", "provider", "model"])])
         , RouteSpec [Literal "experimental", Literal "worktree"] [methodGet, methodPost, methodDelete] (Map.fromList [(methodGet, dir), (methodPost, dir), (methodDelete, dir)])
         , RouteSpec [Literal "experimental", Literal "worktree", Literal "reset"] [methodPost] (Map.fromList [(methodPost, dir)])
-        , RouteSpec [Literal "experimental", Literal "session"] [methodGet] (Map.fromList [(methodGet, dir)])
+        , RouteSpec [Literal "experimental", Literal "session"] [methodGet] (Map.fromList [(methodGet, experimentalSessionParams)])
         , -- Chat
           RouteSpec [Literal "chat"] [methodPost] (Map.fromList [(methodPost, dir)])
         ]
@@ -863,7 +882,12 @@ routeSpecs =
 -- Helpers
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- | Build a JSON error response body
+-- | Build a JSON error response body for 400 Bad Request
 errorJson :: LBS.ByteString -> LBS.ByteString -> LBS.ByteString
-errorJson name msg =
-    "{\"name\":\"BadRequestError\",\"data\":{\"code\":\"" <> name <> "\",\"message\":\"" <> msg <> "\"}}"
+errorJson code msg =
+    "{\"name\":\"BadRequestError\",\"data\":{\"code\":\"" <> code <> "\",\"message\":\"" <> msg <> "\"}}"
+
+-- | Build a JSON error response body for 405 Method Not Allowed
+methodNotAllowedJson :: LBS.ByteString -> LBS.ByteString
+methodNotAllowedJson msg =
+    "{\"name\":\"MethodNotAllowedError\",\"data\":{\"message\":\"" <> msg <> "\"}}"

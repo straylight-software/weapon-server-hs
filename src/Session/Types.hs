@@ -35,6 +35,10 @@ module Session.Types (
     SessionRevert (..),
     CreateSessionInput (..),
 
+    -- * Permission Types (API format)
+    ApiPermissionRule (..),
+    ApiPermissionAction (..),
+
     -- * Global Session Types
 
     {- | Types for the @\/experimental\/session@ endpoint that supports
@@ -49,7 +53,7 @@ import Data.Aeson
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import Json.Strict (withStrictObject)
+import Json.Strict (withStrictObject, (.:!?))
 
 {- | Time tracking for a session.
 
@@ -170,12 +174,12 @@ instance ToJSON SessionRevert where
                     ]
 
 instance FromJSON SessionRevert where
-    parseJSON = withObject "SessionRevert" $ \v ->
+    parseJSON = withStrictObject "SessionRevert" ["messageID", "partID", "snapshot", "diff"] $ \v ->
         SessionRevert
             <$> v .: "messageID"
-            <*> v .:? "partID"
-            <*> v .:? "snapshot"
-            <*> v .:? "diff"
+            <*> v .:!? "partID"
+            <*> v .:!? "snapshot"
+            <*> v .:!? "diff"
 
 {- | Full session information.
 
@@ -254,6 +258,68 @@ instance FromJSON Session where
             <*> v .:? "share"
             <*> v .:? "revert"
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Permission Types (API format)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | Permission action for API requests.
+
+Matches the OpenAPI PermissionAction enum.
+-}
+data ApiPermissionAction
+    = ApiAllow
+    | ApiDeny
+    | ApiAsk
+    deriving (Show, Eq, Generic)
+
+instance ToJSON ApiPermissionAction where
+    toJSON ApiAllow = String "allow"
+    toJSON ApiDeny = String "deny"
+    toJSON ApiAsk = String "ask"
+
+instance FromJSON ApiPermissionAction where
+    parseJSON = withText "ApiPermissionAction" $ \case
+        "allow" -> pure ApiAllow
+        "deny" -> pure ApiDeny
+        "ask" -> pure ApiAsk
+        other -> fail $ "Invalid permission action: " ++ show other
+
+{- | Permission rule for API requests.
+
+Matches the OpenAPI PermissionRule schema with required fields:
+- permission: tool name (e.g., "edit", "bash")
+- pattern: glob pattern for matching (e.g., "*.hs", "*")
+- action: allow/deny/ask
+-}
+data ApiPermissionRule = ApiPermissionRule
+    { aprPermission :: Text
+    -- ^ Tool name this rule applies to
+    , aprPattern :: Text
+    -- ^ Glob pattern for matching
+    , aprAction :: ApiPermissionAction
+    -- ^ Action to take when rule matches
+    }
+    deriving (Show, Eq, Generic)
+
+instance ToJSON ApiPermissionRule where
+    toJSON r =
+        object
+            [ "permission" .= aprPermission r
+            , "pattern" .= aprPattern r
+            , "action" .= aprAction r
+            ]
+
+instance FromJSON ApiPermissionRule where
+    parseJSON = withObject "ApiPermissionRule" $ \v ->
+        ApiPermissionRule
+            <$> v .: "permission"
+            <*> v .: "pattern"
+            <*> v .: "action"
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Session Input Types
+-- ═══════════════════════════════════════════════════════════════════════════
+
 {- | Input parameters for creating a new session.
 
 Both fields are optional:
@@ -266,22 +332,26 @@ data CreateSessionInput = CreateSessionInput
     -- ^ Optional custom title (default: "New session - <timestamp>")
     , csiParentID :: Maybe Text
     -- ^ Optional parent session ID for branching
+    , csiPermission :: Maybe [ApiPermissionRule]
+    -- ^ Optional permission ruleset (array of rules, not nullable)
     }
     deriving (Show, Eq, Generic)
 
 instance FromJSON CreateSessionInput where
-    -- Note: "permission" is accepted but ignored (not yet implemented)
     parseJSON = withStrictObject "CreateSessionInput" ["title", "parentID", "permission"] $ \v ->
         CreateSessionInput
-            <$> v .:? "title"
-            <*> v .:? "parentID"
+            <$> v .:!? "title"
+            <*> v .:!? "parentID"
+            <*> v .:!? "permission"
 
 instance ToJSON CreateSessionInput where
     toJSON csi =
-        object
-            [ "title" .= csiTitle csi
-            , "parentID" .= csiParentID csi
-            ]
+        object $
+            catMaybes
+                [ ("title" .=) <$> csiTitle csi
+                , ("parentID" .=) <$> csiParentID csi
+                , ("permission" .=) <$> csiPermission csi
+                ]
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Global Session Types (for /experimental/session endpoint)

@@ -38,10 +38,12 @@ module Pty.Types (
 import Data.Aeson
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
+import Data.Map.Strict (Map)
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import Json.Strict (withStrictObject)
+import Json.Strict (withStrictObject, (.:!?))
 
 -- | PTY status
 data PtyStatus
@@ -51,7 +53,7 @@ data PtyStatus
 
 instance ToJSON PtyStatus where
     toJSON PtyRunning = "running"
-    toJSON (PtyExited c) = object ["exited" .= c]
+    toJSON (PtyExited _) = "exited"
 
 -- | Public PTY info (for API responses)
 data PtyInfo = PtyInfo
@@ -90,8 +92,8 @@ data CreatePtyInput = CreatePtyInput
     -- ^ Working directory
     , cpiTitle :: Maybe Text
     -- ^ Display title
-    , cpiEnv :: Maybe [(Text, Text)]
-    -- ^ Environment variables
+    , cpiEnv :: Maybe (Map Text Text)
+    -- ^ Environment variables as object with string keys and string values
     , cpiSandbox :: Maybe Bool
     -- ^ Enable sandboxing (default: true)
     , cpiNetwork :: Maybe Bool
@@ -106,15 +108,30 @@ data CreatePtyInput = CreatePtyInput
 instance FromJSON CreatePtyInput where
     parseJSON = withStrictObject "CreatePtyInput" ["command", "args", "cwd", "title", "env", "sandbox", "network", "mounts", "sessionId", "agent"] $ \v ->
         CreatePtyInput
-            <$> v .:? "command"
-            <*> v .:? "args"
-            <*> v .:? "cwd"
-            <*> v .:? "title"
-            <*> v .:? "env"
-            <*> v .:? "sandbox"
-            <*> v .:? "network"
-            <*> v .:? "mounts"
-            <*> v .:? "sessionId"
+            <$> v .:!? "command"
+            <*> v .:!? "args"
+            <*> v .:!? "cwd"
+            <*> v .:!? "title"
+            <*> v .:!? "env"
+            <*> v .:!? "sandbox"
+            <*> v .:!? "network"
+            <*> v .:!? "mounts"
+            <*> v .:!? "sessionId"
+
+instance ToJSON CreatePtyInput where
+    toJSON cpi =
+        object $
+            catMaybes
+                [ ("command" .=) <$> cpiCommand cpi
+                , ("args" .=) <$> cpiArgs cpi
+                , ("cwd" .=) <$> cpiCwd cpi
+                , ("title" .=) <$> cpiTitle cpi
+                , ("env" .=) <$> cpiEnv cpi
+                , ("sandbox" .=) <$> cpiSandbox cpi
+                , ("network" .=) <$> cpiNetwork cpi
+                , ("mounts" .=) <$> cpiMounts cpi
+                , ("sessionId" .=) <$> cpiSessionId cpi
+                ]
 
 -- | Input for updating a PTY
 data UpdatePtyInput = UpdatePtyInput

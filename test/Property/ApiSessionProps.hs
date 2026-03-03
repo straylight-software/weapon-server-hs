@@ -27,6 +27,7 @@ import Api.Session (
     FileDiffStatus (..),
     ForkSessionInput (..),
     UpdateSessionInput (..),
+    UpdateSessionTime (..),
  )
 import Data.Aeson (decode, encode, object, (.=))
 import Data.List qualified as List
@@ -78,6 +79,10 @@ genFileDiff =
         <*> Gen.int (Range.linear 0 1000) -- fdDeletions
         <*> Gen.maybe genFileDiffStatus -- fdStatus
 
+-- | Generate a positive Double (for timestamps)
+genPositiveDouble :: Gen Double
+genPositiveDouble = Gen.double (Range.linearFrac 0 1e12)
+
 -- | Generate a SessionSummary
 genSessionSummary :: Gen SessionSummary
 genSessionSummary =
@@ -107,6 +112,12 @@ genUpdateSessionInput =
         <*> Gen.maybe genSessionSummary -- usiSummary
         <*> Gen.maybe genSessionShare -- usiShare
         <*> Gen.maybe genSessionRevert -- usiRevert
+        <*> Gen.maybe genUpdateSessionTime -- usiTime
+
+-- | Generate an UpdateSessionTime
+genUpdateSessionTime :: Gen UpdateSessionTime
+genUpdateSessionTime =
+    UpdateSessionTime <$> Gen.maybe genPositiveDouble
 
 -- | Generate a ForkSessionInput
 genForkSessionInput :: Gen ForkSessionInput

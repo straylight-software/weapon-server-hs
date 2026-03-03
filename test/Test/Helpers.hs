@@ -23,6 +23,9 @@ module Test.Helpers (
 
     -- * Common generators
     genName,
+    genSessionId,
+    genMessageId,
+    genProviderId,
     genText,
     genNonEmptyText,
 
@@ -129,6 +132,22 @@ valueToText _ = Nothing
 -- | Generate a short alphanumeric name (1-12 chars)
 genName :: Gen Text
 genName = Gen.text (Range.linear 1 12) Gen.alphaNum
+
+-- | Generate a valid session ID (must start with "ses")
+genSessionId :: Gen Text
+genSessionId = do
+    suffix <- Gen.text (Range.linear 1 12) Gen.alphaNum
+    pure $ "ses" <> suffix
+
+-- | Generate a valid message ID (must start with "msg")
+genMessageId :: Gen Text
+genMessageId = do
+    suffix <- Gen.text (Range.linear 1 12) Gen.alphaNum
+    pure $ "msg" <> suffix
+
+-- | Generate a valid provider ID (lowercase alphanumeric and hyphens only)
+genProviderId :: Gen Text
+genProviderId = Gen.text (Range.linear 1 12) (Gen.element (['a' .. 'z'] ++ ['0' .. '9'] ++ ['-']))
 
 -- | Generate alphanumeric text (1-64 chars)
 genText :: Gen Text

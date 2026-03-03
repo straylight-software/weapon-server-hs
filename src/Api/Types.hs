@@ -71,9 +71,15 @@ module Api.Types (
     ProviderAPI,
     ProviderOauthAuthorizeAPI,
     ProviderOauthCallbackAPI,
+    OAuthAuthorizeInput (..),
+    OAuthCallbackInput (..),
     AuthCreateAPI,
     AuthUpdateAPI,
     AuthDeleteAPI,
+    AuthInput (..),
+    AuthApiInput (..),
+    AuthOAuthInput (..),
+    AuthWellKnownInput (..),
 
     -- ** Agent and Configuration
     AgentAPI,
@@ -91,6 +97,7 @@ module Api.Types (
     QuestionAPI,
     QuestionReplyAPI,
     QuestionRejectAPI,
+    QuestionReplyInput (..),
 
     -- ** File Search
     FindAPI,
@@ -107,6 +114,7 @@ module Api.Types (
 
     -- ** Logging
     LogAPI,
+    LogInput (..),
 
     -- ** Skills and Formatters
     SkillAPI,
@@ -118,6 +126,7 @@ module Api.Types (
 
 import Data.Aeson (
     FromJSON (..),
+    Object,
     ToJSON (..),
     Value,
     object,
@@ -126,10 +135,14 @@ import Data.Aeson (
     (.:?),
     (.=),
  )
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types (Parser)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Formatter.Status (FormatterStatus)
 import GHC.Generics (Generic)
-import Json.Strict (withStrictObject)
+import Json.Strict (withStrictObject, (.:!?))
 import Servant (
     Capture,
     Delete,
@@ -440,20 +453,143 @@ type ProviderAPI = "provider" :> QueryParam "directory" Text :> Get '[JSON] Prov
 
 -- | @POST /provider/:providerID/oauth/authorize@ - Initiate OAuth flow.
 type ProviderOauthAuthorizeAPI =
-    "provider" :> Capture "providerID" Text :> "oauth" :> "authorize" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+    "provider" :> Capture "providerID" Text :> "oauth" :> "authorize" :> ReqBody '[JSON] OAuthAuthorizeInput :> Post '[JSON] Value
 
 -- | @POST /provider/:providerID/oauth/callback@ - Complete OAuth flow.
 type ProviderOauthCallbackAPI =
-    "provider" :> Capture "providerID" Text :> "oauth" :> "callback" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+    "provider" :> Capture "providerID" Text :> "oauth" :> "callback" :> QueryParam "directory" Text :> ReqBody '[JSON] OAuthCallbackInput :> Post '[JSON] Bool
+
+-- | Input for OAuth authorize endpoint
+newtype OAuthAuthorizeInput = OAuthAuthorizeInput
+    { oaiMethod :: Int
+    -- ^ Auth method index
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON OAuthAuthorizeInput where
+    parseJSON = withStrictObject "OAuthAuthorizeInput" ["method"] $ \v ->
+        OAuthAuthorizeInput <$> v .: "method"
+
+instance ToJSON OAuthAuthorizeInput where
+    toJSON oai = object ["method" .= oaiMethod oai]
+
+-- | Input for OAuth callback endpoint
+data OAuthCallbackInput = OAuthCallbackInput
+    { ociMethod :: !Int
+    -- ^ Auth method (0 = auto, 1 = manual code entry)
+    , ociCode :: !(Maybe Text)
+    -- ^ Authorization code (for manual code entry)
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON OAuthCallbackInput where
+    parseJSON = withStrictObject "OAuthCallbackInput" ["method", "code"] $ \v ->
+        OAuthCallbackInput
+            <$> v .: "method"
+            <*> v .:!? "code"
+
+instance ToJSON OAuthCallbackInput where
+    toJSON oci = object ["method" .= ociMethod oci, "code" .= ociCode oci]
 
 -- | @POST /auth/:providerID@ - Create provider authentication.
-type AuthCreateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type AuthCreateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] AuthInput :> Post '[JSON] Bool
 
 -- | @PUT /auth/:providerID@ - Update provider authentication.
-type AuthUpdateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] Value :> Put '[JSON] Bool
+type AuthUpdateAPI = "auth" :> Capture "providerID" Text :> ReqBody '[JSON] AuthInput :> Put '[JSON] Bool
 
 -- | @DELETE /auth/:providerID@ - Delete provider authentication.
 type AuthDeleteAPI = "auth" :> Capture "providerID" Text :> Delete '[JSON] Bool
+
+{- | Authentication input - discriminated union based on "type" field.
+
+Variants:
+* @"api"@ - API key authentication ('AuthApiInput')
+* @"oauth"@ - OAuth authentication ('AuthOAuthInput')
+* @"wellknown"@ - Well-known authentication ('AuthWellKnownInput')
+-}
+data AuthInput
+    = AuthApi !AuthApiInput
+    | AuthOAuth !AuthOAuthInput
+    | AuthWellKnown !AuthWellKnownInput
+    deriving (Show, Eq, Generic)
+
+-- | API key authentication input
+newtype AuthApiInput = AuthApiInput
+    { aaiKey :: Text
+    }
+    deriving (Show, Eq, Generic)
+
+-- | OAuth authentication input
+data AuthOAuthInput = AuthOAuthInput
+    { aoiRefresh :: Text
+    , aoiAccess :: Text
+    , aoiExpires :: Double
+    , aoiAccountId :: Maybe Text
+    , aoiEnterpriseUrl :: Maybe Text
+    }
+    deriving (Show, Eq, Generic)
+
+-- | Well-known authentication input
+data AuthWellKnownInput = AuthWellKnownInput
+    { awKey :: Text
+    , awToken :: Text
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON AuthInput where
+    parseJSON = withObject "AuthInput" $ \v -> do
+        authType <- v .: "type" :: Parser Text
+        case authType of
+            "api" -> AuthApi <$> parseApiAuth v
+            "oauth" -> AuthOAuth <$> parseOAuthAuth v
+            "wellknown" -> AuthWellKnown <$> parseWellKnownAuth v
+            other -> fail $ "Unknown auth type: " <> show other
+      where
+        parseApiAuth v = do
+            checkUnknownKeysAuth "AuthApiInput" ["type", "key"] v
+            AuthApiInput <$> v .: "key"
+
+        parseOAuthAuth v = do
+            checkUnknownKeysAuth "AuthOAuthInput" ["type", "refresh", "access", "expires", "accountId", "enterpriseUrl"] v
+            AuthOAuthInput
+                <$> v .: "refresh"
+                <*> v .: "access"
+                <*> v .: "expires"
+                <*> v .:? "accountId"
+                <*> v .:? "enterpriseUrl"
+
+        parseWellKnownAuth v = do
+            checkUnknownKeysAuth "AuthWellKnownInput" ["type", "key", "token"] v
+            AuthWellKnownInput
+                <$> v .: "key"
+                <*> v .: "token"
+
+        -- Inline check for unknown keys since we need per-variant allowed keys
+        checkUnknownKeysAuth typeName allowedKeys obj = do
+            let allowedSet = Set.fromList allowedKeys
+                actualKeys = map Key.toText (KeyMap.keys obj)
+                unknownKeys = filter (`Set.notMember` allowedSet) actualKeys
+            case unknownKeys of
+                [] -> pure ()
+                (k : _) -> fail $ typeName <> ": unknown property '" <> show k <> "'"
+
+instance ToJSON AuthInput where
+    toJSON (AuthApi input) = object ["type" .= ("api" :: Text), "key" .= aaiKey input]
+    toJSON (AuthOAuth input) =
+        object $
+            [ "type" .= ("oauth" :: Text)
+            , "refresh" .= aoiRefresh input
+            , "access" .= aoiAccess input
+            , "expires" .= aoiExpires input
+            ]
+                ++ maybe [] (\x -> ["accountId" .= x]) (aoiAccountId input)
+                ++ maybe [] (\x -> ["enterpriseUrl" .= x]) (aoiEnterpriseUrl input)
+    toJSON (AuthWellKnown input) =
+        object
+            [ "type" .= ("wellknown" :: Text)
+            , "key" .= awKey input
+            , "token" .= awToken input
+            ]
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Agent and Configuration
@@ -501,7 +637,7 @@ instance FromJSON PermissionReplyInput where
     parseJSON = withStrictObject "PermissionReplyInput" ["reply", "message"] $ \v ->
         PermissionReplyInput
             <$> v .: "reply"
-            <*> v .:? "message"
+            <*> v .:!? "message"
 
 instance ToJSON PermissionReplyInput where
     toJSON pri =
@@ -514,10 +650,26 @@ instance ToJSON PermissionReplyInput where
 type QuestionAPI = "question" :> QueryParam "directory" Text :> Get '[JSON] [Value]
 
 -- | @POST /question/:requestID/reply@ - Reply to a question.
-type QuestionReplyAPI = "question" :> Capture "requestID" Text :> "reply" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type QuestionReplyAPI = "question" :> Capture "requestID" Text :> "reply" :> QueryParam "directory" Text :> ReqBody '[JSON] QuestionReplyInput :> Post '[JSON] Bool
 
--- | @POST /question/:requestID/reject@ - Reject a question.
-type QuestionRejectAPI = "question" :> Capture "requestID" Text :> "reject" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+{- | @POST /question/:requestID/reject@ - Reject a question.
+Note: No body required per TypeScript implementation
+-}
+type QuestionRejectAPI = "question" :> Capture "requestID" Text :> "reject" :> QueryParam "directory" Text :> Post '[JSON] Bool
+
+-- | Input for question reply endpoint
+newtype QuestionReplyInput = QuestionReplyInput
+    { qriAnswers :: [[Text]]
+    -- ^ User answers in order of questions (each answer is an array of selected labels)
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON QuestionReplyInput where
+    parseJSON = withStrictObject "QuestionReplyInput" ["answers"] $ \v ->
+        QuestionReplyInput <$> v .: "answers"
+
+instance ToJSON QuestionReplyInput where
+    toJSON qri = object ["answers" .= qriAnswers qri]
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- File Search
@@ -563,7 +715,37 @@ type GlobalDisposeAPI = "global" :> "dispose" :> Post '[JSON] Bool
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- | @POST /log@ - Submit a log entry.
-type LogAPI = "log" :> QueryParam "directory" Text :> ReqBody '[JSON] Value :> Post '[JSON] Bool
+type LogAPI = "log" :> QueryParam "directory" Text :> ReqBody '[JSON] LogInput :> Post '[JSON] Bool
+
+-- | Input for app.log endpoint (strict JSON parsing)
+data LogInput = LogInput
+    { liService :: Text
+    -- ^ Service name for the log entry (required)
+    , liLevel :: Text
+    -- ^ Log level: debug, info, warn, error (required)
+    , liMessage :: Text
+    -- ^ Log message (required)
+    , liExtra :: Maybe Object
+    -- ^ Additional metadata as object (optional, not nullable, must be object type)
+    }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON LogInput where
+    parseJSON = withStrictObject "LogInput" ["service", "level", "message", "extra"] $ \v ->
+        LogInput
+            <$> v .: "service"
+            <*> v .: "level"
+            <*> v .: "message"
+            <*> v .:!? "extra"
+
+instance ToJSON LogInput where
+    toJSON li =
+        object
+            [ "service" .= liService li
+            , "level" .= liLevel li
+            , "message" .= liMessage li
+            , "extra" .= liExtra li
+            ]
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Skills and Formatters

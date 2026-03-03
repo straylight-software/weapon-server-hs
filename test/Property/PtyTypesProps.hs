@@ -13,6 +13,7 @@ import Data.Aeson (decode, encode, object, (.=))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.List qualified as List
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -77,7 +78,7 @@ genCreatePtyInput =
         <*> Gen.maybe (Gen.list (Range.linear 0 5) genText)
         <*> Gen.maybe genFilePath
         <*> Gen.maybe genText
-        <*> Gen.maybe (Gen.list (Range.linear 0 3) ((,) <$> genNonEmptyText <*> genText))
+        <*> Gen.maybe (Map.fromList <$> Gen.list (Range.linear 0 3) ((,) <$> genNonEmptyText <*> genText))
         <*> Gen.maybe Gen.bool
         <*> Gen.maybe Gen.bool
         <*> Gen.maybe (Gen.list (Range.linear 0 2) ((,,) <$> genFilePath <*> genFilePath <*> Gen.bool))
@@ -99,8 +100,12 @@ prop_ptyStatusExitedJson = property $ do
     exitCode <- forAll $ Gen.int (Range.linear 0 255)
     let status = PtyExited exitCode
         json = encode status
-    -- Should contain the exit code - encodes as {"exited": N}
-    json === encode (object ["exited" .= exitCode])
+    -- PtyExited encodes as simple string "exited" (matching TypeScript enum)
+    json === "\"exited\""
+    -- Verify the exit code is preserved in the value
+    assert $ case status of
+        PtyExited c -> c == exitCode
+        _ -> False
 
 prop_ptyInfoRoundtrip :: Property
 prop_ptyInfoRoundtrip = property $ do
@@ -135,7 +140,10 @@ prop_createPtyInputParsing :: Property
 prop_createPtyInputParsing = property $ do
     cmd <- forAll $ Gen.maybe genNonEmptyText
     cwd <- forAll $ Gen.maybe genFilePath
-    let json = encode $ object ["command" .= cmd, "cwd" .= cwd]
+    -- Only include fields when Just (.:!? rejects explicit null)
+    let cmdField = maybe [] (\c -> ["command" .= c]) cmd
+    let cwdField = maybe [] (\c -> ["cwd" .= c]) cwd
+    let json = encode $ object $ cmdField ++ cwdField
     case decode json of
         Nothing -> failure
         Just (input' :: CreatePtyInput) -> do

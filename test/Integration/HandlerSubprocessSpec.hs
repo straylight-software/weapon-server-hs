@@ -5,7 +5,8 @@ These tests must run sequentially as they create real processes.
 -}
 module Integration.HandlerSubprocessSpec (spec) where
 
-import Api
+import Api (PartInput (..))
+import Api hiding (PartInput (..))
 import Bus.Bus qualified as Bus
 import Config.Dhall qualified as Dhall
 import Control.Concurrent.STM
@@ -26,6 +27,7 @@ import Handlers
 import Katip (Severity (ErrorS))
 import Log qualified
 import Pty.Pty qualified as Pty
+import Pty.Types (CreatePtyInput (..))
 
 import Servant.Server (ServerError)
 import State
@@ -231,7 +233,7 @@ spec dhallCache exeCache = do
 
         it "pty handler lifecycle creates, lists, updates, and deletes" $ do
             result <- withIgnoreSignals $ withState dhallCache exeCache $ \st -> do
-                let input = object ["command" .= ("sleep" :: Text), "args" .= (["infinity"] :: [Text]), "sandbox" .= False]
+                let input = CreatePtyInput (Just "sleep") (Just ["infinity"]) Nothing Nothing Nothing (Just False) Nothing Nothing Nothing
                 created <- runHandlerIO (ptyCreateHandler st input)
                 case created of
                     Left err -> pure $ PtyLifecycleResult (Left err) Nothing Nothing Nothing Nothing
@@ -301,8 +303,8 @@ spec dhallCache exeCache = do
                     atomically $ modifyTVar' statusCountVar (+ 1)
 
                 -- 1. Send first message
-                let parts1 = [object ["type" .= ("text" :: Text), "text" .= ("first message" :: Text)]]
-                let input1 = CreateMessageInput Nothing parts1 Nothing Nothing
+                let parts1 = [PartInput (object ["type" .= ("text" :: Text), "text" .= ("first message" :: Text)])]
+                let input1 = CreateMessageInput Nothing parts1 Nothing Nothing Nothing Nothing Nothing Nothing Nothing
                 _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input1)
                 -- Wait for first message cycle to complete (busy + idle = 2)
                 _ <- waitForCount 2000000 statusCountVar 2
@@ -315,8 +317,8 @@ spec dhallCache exeCache = do
                 _ <- waitVar 2000000 abortVar
 
                 -- 3. Send second message
-                let parts2 = [object ["type" .= ("text" :: Text), "text" .= ("second message" :: Text)]]
-                let input2 = CreateMessageInput Nothing parts2 Nothing Nothing
+                let parts2 = [PartInput (object ["type" .= ("text" :: Text), "text" .= ("second message" :: Text)])]
+                let input2 = CreateMessageInput Nothing parts2 Nothing Nothing Nothing Nothing Nothing Nothing Nothing
                 _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input2)
                 -- Wait for second message cycle to complete (should be 4 total now)
                 _ <- waitForCount 2000000 statusCountVar 4

@@ -37,6 +37,9 @@ module Api.File (
     ContentType (..),
     FileContent (..),
 
+    -- ** Validated Query Parameters
+    NonEmptyPath (..),
+
     -- * File API Endpoints
     FileListAPI,
     FileReadAPI,
@@ -54,6 +57,7 @@ import Data.Aeson (
     (.=),
  )
 import Data.Text (Text)
+import Data.Text qualified as T
 import GHC.Generics (Generic)
 import Servant (
     Get,
@@ -63,6 +67,7 @@ import Servant (
     Required,
     type (:>),
  )
+import Web.HttpApiData (FromHttpApiData (..))
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // file type //
@@ -211,6 +216,23 @@ instance FromJSON FileContent where
             <*> v .: "content"
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- // validated query parameters //
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- | A non-empty path for file operations.
+
+According to OpenAPI spec, path must have minLength: 1.
+This type ensures validation at request parsing time.
+-}
+newtype NonEmptyPath = NonEmptyPath {unNonEmptyPath :: Text}
+    deriving (Eq, Show, Generic)
+
+instance FromHttpApiData NonEmptyPath where
+    parseUrlPiece t
+        | T.null t = Left "path must not be empty"
+        | otherwise = Right (NonEmptyPath t)
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- // api type definitions //
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -229,7 +251,7 @@ __Optional query parameters:__
 type FileListAPI =
     "file"
         :> QueryParam "directory" Text
-        :> QueryParam' '[Required] "path" Text
+        :> QueryParam' '[Required] "path" NonEmptyPath
         :> Get '[JSON] [FileNode]
 
 {- | @GET /file/content@ - Read file contents.

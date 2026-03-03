@@ -24,6 +24,7 @@ module Pty.Internal (
     toMountSpec,
 ) where
 
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import System.Exit (ExitCode (..))
@@ -82,7 +83,7 @@ resolveCreateParams defaultDir ptyId CreatePtyInput{..} =
         cwd = T.unpack $ fromMaybe (T.pack defaultDir) cpiCwd
         title = fromMaybe ("Terminal " <> T.takeEnd 4 ptyId) cpiTitle
         sessionId = fromMaybe ptyId cpiSessionId
-        baseEnv = fromMaybe [] cpiEnv
+        baseEnv = maybe [] Map.toList cpiEnv
         env = ("OPENCODE_SESSION_ID", sessionId) : baseEnv
         network = fromMaybe False cpiNetwork
      in CreateParams

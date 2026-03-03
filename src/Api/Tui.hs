@@ -50,10 +50,6 @@ module Api.Tui (
     -- ** Session Selection
     TuiSelectSessionAPI,
 
-    -- ** Control Flow
-    TuiControlNextAPI,
-    TuiControlResponseAPI,
-
     -- * Input Types (strict JSON parsing)
     AppendPromptInput (..),
     ExecuteCommandInput (..),
@@ -64,16 +60,14 @@ module Api.Tui (
     PublishToastShowProps (..),
     PublishSessionSelectProps (..),
     SelectSessionInput (..),
-    ControlNextInput (..),
-    ControlResponseInput (..),
 ) where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), (.:?))
+import Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.:?))
 import Data.Aeson qualified as A
 import Data.Aeson.Types (Parser)
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import Json.Strict (withStrictObject)
+import Json.Strict (withStrictObject, (.:!?))
 import Servant (
     JSON,
     Post,
@@ -180,75 +174,57 @@ type TuiSelectSessionAPI = "tui" :> "select-session" :> QueryParam "directory" T
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // control flow //
 -- ═══════════════════════════════════════════════════════════════════════════
-
-{- | @POST /tui/control/next@ - Handle control next event.
-
-Advances to the next step in a multi-step workflow.
--}
-type TuiControlNextAPI = "tui" :> "control" :> "next" :> QueryParam "directory" Text :> ReqBody '[JSON] ControlNextInput :> Post '[JSON] Bool
-
-{- | @POST /tui/control/response@ - Handle control response event.
-
-Provides a response for a control flow prompt (e.g., permission dialog).
--}
-type TuiControlResponseAPI = "tui" :> "control" :> "response" :> QueryParam "directory" Text :> ReqBody '[JSON] ControlResponseInput :> Post '[JSON] Bool
-
--- ═══════════════════════════════════════════════════════════════════════════
 -- // input types //
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- | Input for append-prompt endpoint
-data AppendPromptInput = AppendPromptInput
-    { apiText :: Maybe Text
-    -- ^ Text to append (primary field)
-    , apiPrompt :: Maybe Text
-    -- ^ Alternative field name for text (backwards compat)
+newtype AppendPromptInput = AppendPromptInput
+    { apiText :: Text
+    -- ^ Text to append (required)
     }
     deriving (Show, Eq, Generic)
 
 instance FromJSON AppendPromptInput where
-    parseJSON = withStrictObject "AppendPromptInput" ["text", "prompt"] $ \v ->
-        AppendPromptInput
-            <$> v .:? "text"
-            <*> v .:? "prompt"
+    parseJSON = withStrictObject "AppendPromptInput" ["text"] $ \v ->
+        AppendPromptInput <$> v .: "text"
 
 instance ToJSON AppendPromptInput where
     toJSON = A.genericToJSON A.defaultOptions{A.fieldLabelModifier = drop 3}
 
 -- | Input for execute-command endpoint
 newtype ExecuteCommandInput = ExecuteCommandInput
-    { eciCommand :: Maybe Text
-    -- ^ Command to execute
+    { eciCommand :: Text
+    -- ^ Command to execute (required)
     }
     deriving (Show, Eq, Generic)
 
 instance FromJSON ExecuteCommandInput where
     parseJSON = withStrictObject "ExecuteCommandInput" ["command"] $ \v ->
-        ExecuteCommandInput <$> v .:? "command"
+        ExecuteCommandInput <$> v .: "command"
 
 instance ToJSON ExecuteCommandInput where
     toJSON = A.genericToJSON A.defaultOptions{A.fieldLabelModifier = drop 3}
 
 -- | Input for show-toast endpoint
 data ShowToastInput = ShowToastInput
-    { stiMessage :: Maybe Text
-    -- ^ Toast message text
-    , stiVariant :: Maybe Text
-    -- ^ Toast variant: info, warning, error
+    { stiMessage :: Text
+    -- ^ Toast message text (required)
+    , stiVariant :: Text
+    -- ^ Toast variant: info, warning, error, success (required)
     , stiTitle :: Maybe Text
-    -- ^ Optional title
+    -- ^ Optional title (not nullable)
     , stiDuration :: Maybe Double
-    -- ^ Optional duration in ms (OpenAPI: number)
+    -- ^ Optional duration in ms (not nullable)
     }
     deriving (Show, Eq, Generic)
 
 instance FromJSON ShowToastInput where
     parseJSON = withStrictObject "ShowToastInput" ["message", "variant", "title", "duration"] $ \v ->
         ShowToastInput
-            <$> v .:? "message"
-            <*> v .:? "variant"
-            <*> v .:? "title"
-            <*> v .:? "duration"
+            <$> v .: "message"
+            <*> v .: "variant"
+            <*> v .:!? "title"
+            <*> v .:!? "duration"
 
 instance ToJSON ShowToastInput where
     toJSON = A.genericToJSON A.defaultOptions{A.fieldLabelModifier = drop 3}
@@ -293,7 +269,7 @@ newtype PublishSessionSelectProps = PublishSessionSelectProps
     deriving (Show, Eq, Generic)
 
 instance FromJSON PublishInput where
-    parseJSON = A.withObject "PublishInput" $ \v -> do
+    parseJSON = withStrictObject "PublishInput" ["type", "properties"] $ \v -> do
         eventType <- v A..: "type" :: Parser Text
         props <- v A..: "properties"
         case eventType of
@@ -314,21 +290,21 @@ instance ToJSON PublishInput where
         A.object ["type" A..= ("tui.session.select" :: Text), "properties" A..= props]
 
 instance FromJSON PublishPromptAppendProps where
-    parseJSON = A.withObject "PublishPromptAppendProps" $ \v ->
+    parseJSON = withStrictObject "PublishPromptAppendProps" ["text"] $ \v ->
         PublishPromptAppendProps <$> v A..: "text"
 
 instance ToJSON PublishPromptAppendProps where
     toJSON (PublishPromptAppendProps t) = A.object ["text" A..= t]
 
 instance FromJSON PublishCommandExecuteProps where
-    parseJSON = A.withObject "PublishCommandExecuteProps" $ \v ->
+    parseJSON = withStrictObject "PublishCommandExecuteProps" ["command"] $ \v ->
         PublishCommandExecuteProps <$> v A..: "command"
 
 instance ToJSON PublishCommandExecuteProps where
     toJSON (PublishCommandExecuteProps c) = A.object ["command" A..= c]
 
 instance FromJSON PublishToastShowProps where
-    parseJSON = A.withObject "PublishToastShowProps" $ \v ->
+    parseJSON = withStrictObject "PublishToastShowProps" ["title", "message", "variant", "duration"] $ \v ->
         PublishToastShowProps
             <$> v .:? "title"
             <*> v A..: "message"
@@ -343,7 +319,7 @@ instance ToJSON PublishToastShowProps where
                 ++ maybe [] (\d -> ["duration" A..= d]) dur
 
 instance FromJSON PublishSessionSelectProps where
-    parseJSON = A.withObject "PublishSessionSelectProps" $ \v ->
+    parseJSON = withStrictObject "PublishSessionSelectProps" ["sessionID"] $ \v ->
         PublishSessionSelectProps <$> v A..: "sessionID"
 
 instance ToJSON PublishSessionSelectProps where
@@ -351,34 +327,14 @@ instance ToJSON PublishSessionSelectProps where
 
 -- | Input for select-session endpoint
 newtype SelectSessionInput = SelectSessionInput
-    { ssiSessionID :: Maybe Text
-    -- ^ Session ID to select
+    { ssiSessionID :: Text
+    -- ^ Session ID to select (required)
     }
     deriving (Show, Eq, Generic)
 
 instance FromJSON SelectSessionInput where
     parseJSON = withStrictObject "SelectSessionInput" ["sessionID"] $ \v ->
-        SelectSessionInput <$> v .:? "sessionID"
+        SelectSessionInput <$> v .: "sessionID"
 
 instance ToJSON SelectSessionInput where
     toJSON = A.genericToJSON A.defaultOptions{A.fieldLabelModifier = drop 3}
-
--- | Input for control/next endpoint (currently accepts empty object)
-data ControlNextInput = ControlNextInput
-    deriving (Show, Eq, Generic)
-
-instance FromJSON ControlNextInput where
-    parseJSON = withStrictObject "ControlNextInput" [] $ \_ -> pure ControlNextInput
-
-instance ToJSON ControlNextInput where
-    toJSON _ = A.object []
-
--- | Input for control/response endpoint (currently accepts empty object)
-data ControlResponseInput = ControlResponseInput
-    deriving (Show, Eq, Generic)
-
-instance FromJSON ControlResponseInput where
-    parseJSON = withStrictObject "ControlResponseInput" [] $ \_ -> pure ControlResponseInput
-
-instance ToJSON ControlResponseInput where
-    toJSON _ = A.object []

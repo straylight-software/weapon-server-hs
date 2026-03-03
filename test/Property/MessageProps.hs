@@ -12,6 +12,7 @@ import Api (
     MessageTime (..),
     MessageTokens (..),
     ModelSelection (..),
+    PartInput (..),
     TokenCache (..),
     UserMessageInfo (..),
     messageInfoId,
@@ -136,6 +137,9 @@ genMessagePart = do
         , object ["type" .= ("image" :: Text), "url" .= content]
         ]
 
+genPartInput :: Gen PartInput
+genPartInput = PartInput <$> genMessagePart
+
 genMessage :: Gen Message
 genMessage =
     Message
@@ -152,8 +156,13 @@ genCreateMessageInput :: Gen CreateMessageInput
 genCreateMessageInput =
     CreateMessageInput
         <$> Gen.maybe genNonEmptyText
-        <*> Gen.list (Range.linear 0 5) genMessagePart
+        <*> Gen.list (Range.linear 0 5) genPartInput
         <*> Gen.maybe genModelSelection
+        <*> Gen.maybe genNonEmptyText
+        <*> Gen.maybe Gen.bool
+        <*> pure Nothing -- tools (deprecated)
+        <*> pure Nothing -- format
+        <*> Gen.maybe genNonEmptyText
         <*> Gen.maybe genNonEmptyText
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -401,19 +410,20 @@ prop_createMessageInputWithModelObject = property $ do
     providerId <- forAll genNonEmptyText
     modelId <- forAll genNonEmptyText
     agentName <- forAll $ Gen.maybe genNonEmptyText
+    let agentField = maybe [] (\a -> ["agent" .= a]) agentName
     let json =
             encode $
-                object
+                object $
                     [ "parts" .= parts
                     , "model" .= object ["providerID" .= providerId, "modelID" .= modelId]
-                    , "agent" .= agentName
                     ]
+                        ++ agentField
     case decode json of
         Nothing -> do
             annotate $ "Failed to decode CreateMessageInput: " <> BSL.unpack json
             failure
         Just cmi -> do
-            cmiParts cmi === parts
+            map unPartInput (cmiParts cmi) === parts
             case cmiModel cmi of
                 Nothing -> do
                     annotate "Model should be present"
@@ -433,7 +443,7 @@ prop_createMessageInputWithoutModel = property $ do
             annotate $ "Failed to decode CreateMessageInput: " <> BSL.unpack json
             failure
         Just cmi -> do
-            cmiParts cmi === parts
+            map unPartInput (cmiParts cmi) === parts
             cmiModel cmi === Nothing
             cmiAgent cmi === Nothing
 

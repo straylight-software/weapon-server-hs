@@ -34,6 +34,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -85,6 +105,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -107,6 +147,26 @@
               "application/json": {
                 "schema": {
                   "type": "boolean"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -171,18 +231,31 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           }
         },
         "parameters": [
           {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Provider ID (must be non-empty)"
+            "$ref": "#/components/parameters/providerID"
           }
         ],
         "requestBody": {
@@ -192,7 +265,8 @@
                 "$ref": "#/components/schemas/Auth"
               }
             }
-          }
+          },
+          "required": true
         },
         "x-codeSamples": [
           {
@@ -235,18 +309,21 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           }
         },
         "parameters": [
           {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Provider ID (must be non-empty)"
+            "$ref": "#/components/parameters/providerID"
           }
         ],
         "x-codeSamples": [
@@ -281,6 +358,26 @@
                   "items": {
                     "$ref": "#/components/schemas/Project"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -328,6 +425,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -354,9 +471,11 @@
             "name": "projectID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1F\\x7F]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Project ID (path without control characters)"
           }
         ],
         "summary": "Update project",
@@ -414,6 +533,16 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -491,6 +620,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -559,6 +708,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -590,8 +749,18 @@
                     "additionalProperties": {
                       "type": "string"
                     }
+                  },
+                  "sandbox": {
+                    "type": "boolean"
+                  },
+                  "network": {
+                    "type": "boolean"
+                  },
+                  "sessionId": {
+                    "type": "string"
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -616,13 +785,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/ptyID"
           }
         ],
         "summary": "Get PTY session",
@@ -647,6 +810,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -667,13 +850,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/ptyID"
           }
         ],
         "summary": "Update PTY session",
@@ -734,6 +911,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -785,13 +972,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/ptyID"
           }
         ],
         "summary": "Remove PTY session",
@@ -813,6 +994,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -838,13 +1039,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/ptyID"
           }
         ],
         "summary": "Connect to PTY session",
@@ -866,6 +1061,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -900,6 +1115,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Config"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -958,6 +1193,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -999,6 +1254,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -1059,6 +1324,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -1132,6 +1407,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1173,6 +1458,26 @@
                   "items": {
                     "type": "string"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1251,6 +1556,16 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -1334,13 +1649,14 @@
                 }
               }
             }
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WorktreeResetInput"
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
               }
             }
           }
@@ -1429,6 +1745,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -1496,6 +1832,26 @@
                   "items": {
                     "$ref": "#/components/schemas/Session"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1567,9 +1923,20 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -1577,7 +1944,7 @@
                 "properties": {
                   "parentID": {
                     "type": "string",
-                    "pattern": "^ses.*"
+                    "pattern": "^ses[a-zA-Z0-9_-]*$"
                   },
                   "title": {
                     "type": "string"
@@ -1585,7 +1952,8 @@
                   "permission": {
                     "$ref": "#/components/schemas/PermissionRuleset"
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -1638,6 +2006,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -1665,7 +2043,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^ses.*"
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           }
@@ -1705,6 +2083,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -1730,7 +2118,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^ses.*"
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           }
@@ -1767,6 +2155,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -1791,7 +2189,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           }
@@ -1854,6 +2253,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1873,7 +2282,8 @@
                       }
                     }
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -1903,7 +2313,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^ses.*"
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           }
@@ -1946,6 +2356,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -1972,7 +2392,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true,
             "description": "Session ID"
@@ -2013,6 +2434,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -2039,7 +2470,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true,
             "description": "Session ID"
@@ -2103,6 +2535,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -2120,7 +2562,7 @@
                   },
                   "messageID": {
                     "type": "string",
-                    "pattern": "^msg.*"
+                    "pattern": "^msg[a-zA-Z0-9_-]*$"
                   }
                 },
                 "required": [
@@ -2157,7 +2599,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^ses.*"
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           }
@@ -2200,9 +2642,40 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method Not Allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -2210,9 +2683,10 @@
                 "properties": {
                   "messageID": {
                     "type": "string",
-                    "pattern": "^msg.*"
+                    "pattern": "^msg[a-zA-Z0-9_-]*$"
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -2241,7 +2715,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           }
@@ -2278,6 +2753,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -2304,7 +2789,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           }
@@ -2341,6 +2827,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -2366,7 +2862,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^ses.*"
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           }
@@ -2403,6 +2899,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -2430,7 +2936,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^ses.*"
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true
           },
@@ -2439,7 +2945,7 @@
             "name": "messageID",
             "schema": {
               "type": "string",
-              "pattern": "^msg.*"
+              "pattern": "^msg[a-zA-Z0-9_-]*$"
             }
           }
         ],
@@ -2455,6 +2961,36 @@
                   "items": {
                     "$ref": "#/components/schemas/FileDiff"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
                 }
               }
             }
@@ -2484,7 +3020,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true,
             "description": "Session ID"
@@ -2548,9 +3085,20 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -2570,7 +3118,8 @@
                 "required": [
                   "providerID",
                   "modelID"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -2599,7 +3148,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true,
             "description": "Session ID"
@@ -2662,6 +3212,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -2686,7 +3246,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true,
             "description": "Session ID"
@@ -2765,6 +3326,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -2775,7 +3346,7 @@
                 "properties": {
                   "messageID": {
                     "type": "string",
-                    "pattern": "^msg.*"
+                    "pattern": "^msg[a-zA-Z0-9_-]*$"
                   },
                   "model": {
                     "type": "object",
@@ -2865,24 +3436,10 @@
             }
           },
           {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Session ID"
+            "$ref": "#/components/parameters/sessionID"
           },
           {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Message ID"
+            "$ref": "#/components/parameters/messageID"
           }
         ],
         "summary": "Get message",
@@ -2932,6 +3489,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -2954,34 +3521,13 @@
             }
           },
           {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Session ID"
+            "$ref": "#/components/parameters/sessionID"
           },
           {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Message ID"
+            "$ref": "#/components/parameters/messageID"
           },
           {
-            "in": "path",
-            "name": "partID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Part ID"
+            "$ref": "#/components/parameters/partID"
           }
         ],
         "description": "Delete a part from a message",
@@ -3015,6 +3561,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -3035,34 +3591,13 @@
             }
           },
           {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Session ID"
+            "$ref": "#/components/parameters/sessionID"
           },
           {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Message ID"
+            "$ref": "#/components/parameters/messageID"
           },
           {
-            "in": "path",
-            "name": "partID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Part ID"
+            "$ref": "#/components/parameters/partID"
           }
         ],
         "description": "Update a part in a message",
@@ -3093,6 +3628,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -3158,7 +3703,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true,
             "description": "Session ID"
@@ -3215,6 +3761,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -3225,7 +3781,7 @@
                 "properties": {
                   "messageID": {
                     "type": "string",
-                    "pattern": "^msg.*"
+                    "pattern": "^msg[a-zA-Z0-9_-]*$"
                   },
                   "model": {
                     "type": "object",
@@ -3319,7 +3875,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true,
             "description": "Session ID"
@@ -3398,6 +3955,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method Not Allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -3409,7 +3976,7 @@
                 "properties": {
                   "messageID": {
                     "type": "string",
-                    "pattern": "^msg.*"
+                    "pattern": "^msg[a-zA-Z0-9_-]*$"
                   },
                   "agent": {
                     "type": "string"
@@ -3495,7 +4062,8 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^ses[a-zA-Z0-9_-]*$"
             },
             "required": true,
             "description": "Session ID"
@@ -3559,6 +4127,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -3618,13 +4196,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/sessionID"
           }
         ],
         "summary": "Revert message",
@@ -3685,6 +4257,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -3695,7 +4277,7 @@
                 "properties": {
                   "messageID": {
                     "type": "string",
-                    "pattern": "^msg.*"
+                    "pattern": "^msg[a-zA-Z0-9_-]*$"
                   },
                   "partID": {
                     "type": "string",
@@ -3730,13 +4312,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/sessionID"
           }
         ],
         "summary": "Restore reverted messages",
@@ -3771,6 +4347,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -3793,22 +4379,18 @@
             }
           },
           {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/sessionID"
           },
           {
             "in": "path",
             "name": "permissionID",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_-]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Permission ID (alphanumeric, underscore, hyphen)"
           }
         ],
         "summary": "Respond to permission",
@@ -3870,6 +4452,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method Not Allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -3892,7 +4484,8 @@
                 ]
               }
             }
-          }
+          },
+          "required": true
         },
         "x-codeSamples": [
           {
@@ -3914,13 +4507,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/requestID"
           }
         ],
         "summary": "Respond to permission request",
@@ -3978,6 +4565,16 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -4044,6 +4641,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -4081,6 +4698,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -4103,13 +4740,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/requestID"
           }
         ],
         "summary": "Reply to question request",
@@ -4170,9 +4801,20 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -4188,7 +4830,8 @@
                 },
                 "required": [
                   "answers"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -4213,13 +4856,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
+            "$ref": "#/components/parameters/requestID"
           }
         ],
         "summary": "Reject question request",
@@ -4251,6 +4888,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -4558,6 +5205,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -4601,6 +5268,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -4623,14 +5310,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Provider ID"
+            "$ref": "#/components/parameters/providerID"
           }
         ],
         "summary": "OAuth authorize",
@@ -4681,9 +5361,30 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -4691,12 +5392,13 @@
                 "properties": {
                   "method": {
                     "description": "Auth method index",
-                    "type": "number"
+                    "type": "integer"
                   }
                 },
                 "required": [
                   "method"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -4721,14 +5423,7 @@
             }
           },
           {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "description": "Provider ID"
+            "$ref": "#/components/parameters/providerID"
           }
         ],
         "summary": "OAuth callback",
@@ -4779,6 +5474,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -4789,7 +5504,7 @@
                 "properties": {
                   "method": {
                     "description": "Auth method index",
-                    "type": "number"
+                    "type": "integer"
                   },
                   "code": {
                     "description": "OAuth authorization code",
@@ -4798,7 +5513,8 @@
                 },
                 "required": [
                   "method"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           },
@@ -4907,6 +5623,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -4976,6 +5712,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -5011,6 +5767,26 @@
                   "items": {
                     "$ref": "#/components/schemas/Symbol"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -5068,6 +5844,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -5134,6 +5920,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -5168,6 +5964,26 @@
                   "items": {
                     "$ref": "#/components/schemas/File"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -5241,6 +6057,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -5255,10 +6081,12 @@
                 },
                 "required": [
                   "text"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
-          }
+          },
+          "required": true
         },
         "x-codeSamples": [
           {
@@ -5289,6 +6117,26 @@
               "application/json": {
                 "schema": {
                   "type": "boolean"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -5326,6 +6174,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -5357,6 +6225,26 @@
               "application/json": {
                 "schema": {
                   "type": "boolean"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -5394,6 +6282,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -5428,6 +6336,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -5459,6 +6387,26 @@
               "application/json": {
                 "schema": {
                   "type": "boolean"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -5532,6 +6480,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -5549,7 +6507,8 @@
                 ]
               }
             }
-          }
+          },
+          "required": true
         },
         "x-codeSamples": [
           {
@@ -5609,6 +6568,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -5644,7 +6623,8 @@
                 ]
               }
             }
-          }
+          },
+          "required": true
         },
         "x-codeSamples": [
           {
@@ -5711,6 +6691,16 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
                 }
               }
             }
@@ -5818,9 +6808,20 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -5834,7 +6835,8 @@
                 },
                 "required": [
                   "sessionID"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -5843,144 +6845,6 @@
           {
             "lang": "js",
             "source": "import { createWeaponClient } from \"@weapon-ai/sdk\n\nconst client = createWeaponClient()\nawait client.tui.selectSession({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/tui/control/next": {
-      "post": {
-        "operationId": "tui.control.next",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "summary": "Submit TUI control next command",
-        "description": "Submit a TUI control next command.",
-        "responses": {
-          "200": {
-            "description": "Command accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "boolean"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "Unsupported Media Type - Content-Type must be application/json",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "name": {
-                      "type": "string"
-                    },
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createWeaponClient } from \"@weapon-ai/sdk\n\nconst client = createWeaponClient()\nawait client.tui.control.next({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/tui/control/response": {
-      "post": {
-        "operationId": "tui.control.response",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "summary": "Submit TUI response",
-        "description": "Submit a response to the TUI request queue to complete a pending request.",
-        "responses": {
-          "200": {
-            "description": "Response submitted successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "boolean"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "Unsupported Media Type - Content-Type must be application/json",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "name": {
-                      "type": "string"
-                    },
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createWeaponClient } from \"@weapon-ai/sdk\n\nconst client = createWeaponClient()\nawait client.tui.control.response({\n  ...\n})"
           }
         ]
       }
@@ -6006,6 +6870,26 @@
               "application/json": {
                 "schema": {
                   "type": "boolean"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -6040,6 +6924,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Path"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -6087,6 +6991,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -6121,6 +7045,26 @@
                   "items": {
                     "$ref": "#/components/schemas/Command"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -6194,6 +7138,16 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -6236,7 +7190,8 @@
                 ]
               }
             }
-          }
+          },
+          "required": true
         },
         "x-codeSamples": [
           {
@@ -6270,6 +7225,26 @@
                   "items": {
                     "$ref": "#/components/schemas/Agent"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -6330,6 +7305,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -6367,6 +7362,26 @@
                 }
               }
             }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
@@ -6401,6 +7416,26 @@
                   "items": {
                     "$ref": "#/components/schemas/FormatterStatus"
                   }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodNotAllowedError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -6451,6 +7486,74 @@
     }
   },
   "components": {
+    "parameters": {
+      "sessionID": {
+        "in": "path",
+        "name": "sessionID",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^ses[a-zA-Z0-9_-]*$"
+        },
+        "required": true,
+        "description": "Session ID"
+      },
+      "messageID": {
+        "in": "path",
+        "name": "messageID",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^msg[a-zA-Z0-9_-]*$"
+        },
+        "required": true,
+        "description": "Message ID"
+      },
+      "providerID": {
+        "in": "path",
+        "name": "providerID",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "required": true,
+        "description": "Provider ID (lowercase alphanumeric and hyphens only, must start with letter or digit)"
+      },
+      "ptyID": {
+        "in": "path",
+        "name": "ptyID",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^pty_.*"
+        },
+        "required": true,
+        "description": "PTY session ID"
+      },
+      "requestID": {
+        "in": "path",
+        "name": "requestID",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "required": true,
+        "description": "Request ID (alphanumeric, underscore, hyphen)"
+      },
+      "partID": {
+        "in": "path",
+        "name": "partID",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "required": true,
+        "description": "Part ID (alphanumeric, underscore, hyphen)"
+      }
+    },
     "schemas": {
       "Event.installation.updated": {
         "type": "object",
@@ -8279,7 +9382,7 @@
           },
           "sessionID": {
             "type": "string",
-            "pattern": "^ses.*"
+            "pattern": "^ses[a-zA-Z0-9_-]*$"
           },
           "permission": {
             "type": "string"
@@ -8544,7 +9647,7 @@
           },
           "sessionID": {
             "type": "string",
-            "pattern": "^ses.*"
+            "pattern": "^ses[a-zA-Z0-9_-]*$"
           },
           "questions": {
             "description": "Questions to ask",
@@ -8925,14 +10028,14 @@
               },
               "sessionID": {
                 "type": "string",
-                "pattern": "^ses.*"
+                "pattern": "^ses[a-zA-Z0-9_-]*$"
               },
               "arguments": {
                 "type": "string"
               },
               "messageID": {
                 "type": "string",
-                "pattern": "^msg.*"
+                "pattern": "^msg[a-zA-Z0-9_-]*$"
               }
             },
             "required": [
@@ -8986,7 +10089,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^ses.*"
+            "pattern": "^ses[a-zA-Z0-9_-]*$"
           },
           "slug": {
             "type": "string"
@@ -8999,7 +10102,7 @@
           },
           "parentID": {
             "type": "string",
-            "pattern": "^ses.*"
+            "pattern": "^ses[a-zA-Z0-9_-]*$"
           },
           "summary": {
             "type": "object",
@@ -11124,7 +12227,8 @@
           "refresh",
           "access",
           "expires"
-        ]
+        ],
+        "additionalProperties": false
       },
       "ApiAuth": {
         "type": "object",
@@ -11140,7 +12244,8 @@
         "required": [
           "type",
           "key"
-        ]
+        ],
+        "additionalProperties": false
       },
       "WellKnownAuth": {
         "type": "object",
@@ -11160,7 +12265,8 @@
           "type",
           "key",
           "token"
-        ]
+        ],
+        "additionalProperties": false
       },
       "Auth": {
         "anyOf": [
@@ -11570,7 +12676,8 @@
             "description": "Additional startup script to run after the project's start command",
             "type": "string"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "WorktreeRemoveInput": {
         "type": "object",

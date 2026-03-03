@@ -43,7 +43,7 @@ prop_createGet = propertyWithTempDir $ \tmpDir -> do
     title <- forAll $ Gen.maybe $ Gen.text (Range.linear 1 50) Gen.alphaNum
     session <- evalIO $ do
         ctx <- mkContext tmpDir
-        Session.create ctx ST.CreateSessionInput{ST.csiTitle = title, ST.csiParentID = Nothing}
+        Session.create ctx ST.CreateSessionInput{ST.csiTitle = title, ST.csiParentID = Nothing, ST.csiPermission = Nothing}
     case title of
         Just t -> ST.sessionTitle session === t
         Nothing -> assert $ T.isPrefixOf "New session - " (ST.sessionTitle session)
@@ -65,7 +65,7 @@ prop_deleteRemoves = propertyWithTempDir $ \tmpDir -> do
     title <- forAll $ Gen.text (Range.linear 1 50) Gen.alphaNum
     (created, afterDelete) <- evalIO $ do
         ctx <- mkContext tmpDir
-        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just title, ST.csiParentID = Nothing}
+        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just title, ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         _ <- Session.delete ctx (ST.sessionId session)
         afterGet <- Session.get ctx (ST.sessionId session)
         pure (session, afterGet)
@@ -78,7 +78,7 @@ prop_listReturnsCreated = propertyWithTempDir $ \tmpDir -> do
     count <- forAll $ Gen.int (Range.linear 1 5)
     sessions <- evalIO $ do
         ctx <- mkContext tmpDir
-        replicateM_ count $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        replicateM_ count $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         Session.list ctx Nothing Nothing Nothing Nothing Nothing
     listLength sessions === count
 
@@ -87,7 +87,7 @@ prop_listContainsCreatedId :: Property
 prop_listContainsCreatedId = propertyWithTempDir $ \tmpDir -> do
     (created, sessions) <- evalIO $ do
         ctx <- mkContext tmpDir
-        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
         pure (session, allSessions)
     let createdId = ST.sessionId created
@@ -102,7 +102,7 @@ prop_updateSummaryShareRevert = propertyWithTempDir $ \tmpDir -> do
     url <- forAll $ Gen.text (Range.linear 3 20) Gen.alphaNum
     (summary, share, revert) <- evalIO $ do
         ctx <- mkContext tmpDir
-        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         let sid = ST.sessionId session
         let s = ST.SessionSummary 1 2 (Just 3)
         let sh = ST.SessionShare url
@@ -121,9 +121,9 @@ prop_listSearchFilter :: Property
 prop_listSearchFilter = propertyWithTempDir $ \tmpDir -> do
     (matching, nonMatching) <- evalIO $ do
         ctx <- mkContext tmpDir
-        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Alpha Project", ST.csiParentID = Nothing}
-        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Beta Project", ST.csiParentID = Nothing}
-        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Gamma Task", ST.csiParentID = Nothing}
+        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Alpha Project", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
+        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Beta Project", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
+        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "Gamma Task", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         m <- Session.list ctx Nothing Nothing Nothing Nothing (Just "project")
         nm <- Session.list ctx Nothing Nothing Nothing Nothing (Just "delta")
         pure (m, nm)
@@ -136,7 +136,7 @@ prop_listLimitFilter = propertyWithTempDir $ \tmpDir -> do
     limitVal <- forAll $ Gen.int (Range.linear 1 3)
     sessions <- evalIO $ do
         ctx <- mkContext tmpDir
-        replicateM_ 5 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        replicateM_ 5 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         Session.list ctx Nothing Nothing (Just limitVal) Nothing Nothing
     assert $ listLength sessions <= limitVal
 
@@ -147,7 +147,7 @@ prop_listSortedByUpdated = propertyWithTempDir $ \tmpDir -> do
     let times = take 3 shuffled
     listed <- evalIO $ do
         ctx <- mkContext tmpDir
-        sessions <- replicateM 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        sessions <- replicateM 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         let store = Session.scStorage ctx
         let projectId = Session.scProjectID ctx
         let updatedSessions = zipWith (\s t -> s{ST.sessionTime = ST.SessionTime t t Nothing Nothing}) sessions times
@@ -179,9 +179,9 @@ prop_listRootsFilter :: Property
 prop_listRootsFilter = propertyWithTempDir $ \tmpDir -> do
     (rootCount, allCount) <- evalIO $ do
         ctx <- mkContext tmpDir
-        parent <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "parent", ST.csiParentID = Nothing}
-        replicateM_ 2 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "root", ST.csiParentID = Nothing}
-        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "child", ST.csiParentID = Just (ST.sessionId parent)}
+        parent <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "parent", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
+        replicateM_ 2 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "root", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
+        _ <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "child", ST.csiParentID = Just (ST.sessionId parent), ST.csiPermission = Nothing}
         roots <- Session.list ctx Nothing (Just True) Nothing Nothing Nothing
         allSessions <- Session.list ctx Nothing Nothing Nothing Nothing Nothing
         pure (listLength roots, listLength allSessions)
@@ -193,7 +193,7 @@ prop_listDirectoryFilter :: Property
 prop_listDirectoryFilter = propertyWithTempDir $ \tmpDir -> do
     (matchCount, nonMatchCount, allCount) <- evalIO $ do
         ctx <- mkContext tmpDir
-        replicateM_ 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        replicateM_ 3 $ Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         let dir = Session.scDirectory ctx
         matching <- Session.list ctx (Just dir) Nothing Nothing Nothing Nothing
         nonMatching <- Session.list ctx (Just "/nonexistent/path") Nothing Nothing Nothing Nothing
@@ -208,7 +208,7 @@ prop_touchUpdatesTimestamp :: Property
 prop_touchUpdatesTimestamp = propertyWithTempDir $ \tmpDir -> do
     (timeBefore, timeAfter) <- evalIO $ do
         ctx <- mkContext tmpDir
-        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing}
+        session <- Session.create ctx ST.CreateSessionInput{ST.csiTitle = Just "test", ST.csiParentID = Nothing, ST.csiPermission = Nothing}
         let sid = ST.sessionId session
         let tb = ST.stUpdated (ST.sessionTime session)
         _ <- Session.touch ctx sid

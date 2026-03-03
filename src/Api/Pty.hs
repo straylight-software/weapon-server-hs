@@ -45,6 +45,7 @@ module Api.Pty (
 
 import Data.Aeson (Value)
 import Data.Text (Text)
+import Pty.Types (CreatePtyInput)
 import Servant (
     Capture,
     Delete,
@@ -75,7 +76,7 @@ Creates a sandboxed terminal session. The request body should include:
 * @shell@ - Shell to use (optional, defaults to user's shell)
 * @rows@ / @cols@ - Terminal dimensions
 -}
-type PtyCreateAPI = "pty" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type PtyCreateAPI = "pty" :> ReqBody '[JSON] CreatePtyInput :> Post '[JSON] Value
 
 {- | @GET /pty/:ptyID@ - Get a specific PTY session.
 

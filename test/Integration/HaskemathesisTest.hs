@@ -8,32 +8,40 @@ to verify compliance with the OpenAPI specification.
 Key features:
 - Pre-seeds sessions so session endpoints can be properly tested
 - Rewrites random session IDs in requests to use pre-seeded sessions
-- Automatic streaming endpoint detection (SSE/WebSocket operations are skipped)
+- Automatic streaming endpoint detection and skipping
+- Automatic HPC coverage tracking when compiled with coverage
 -}
 module Integration.HaskemathesisTest (tests) where
 
 import Api (api)
 
 import Control.Monad (unless, when)
+import Data.Function ((&))
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Handlers (server)
 import Haskemathesis.Check.Standard (strictChecks)
-import Haskemathesis.Config (TestConfig (..), defaultStatefulChecks, defaultTestConfig)
-import Haskemathesis.Coverage.HPC (hpcAvailable)
-import Haskemathesis.Execute.Types (ApiRequest (..), ExecutorWithTimeout)
-import Haskemathesis.Execute.Wai (executeWaiWithTimeout)
-import Haskemathesis.Execute.WaiCoverage (CoverageResult (..), CoverageTracker, executeWaiTracked, newCoverageTracker)
-import Haskemathesis.Integration.Tasty (testTreeForExecutorFactoryIO, testTreeForExecutorFactoryNegativeIO)
+import Haskemathesis.Execute.Types (ApiRequest (..))
 import Haskemathesis.OpenApi.Loader (loadOpenApiFile)
-import Haskemathesis.OpenApi.Types (ResolvedOperation (..))
-import Haskemathesis.Stateful.Checks (ensureModificationPersisted)
+import Haskemathesis.Tasty (
+    AppFactory,
+    SkippedOperation (..),
+    TestResult (..),
+    forApp,
+    runTests,
+    setChecks,
+    withFull,
+    withIsolated,
+    withMaxSequenceLength,
+    withPropertyCount,
+    withRequestTransform,
+ )
 
 import Config.Dhall qualified as Dhall
 import Katip (Severity (ErrorS))
 import Log qualified
-import Middleware (rejectEmptyPathSegments, rejectInvalidContentType, requireContentType, supplyEmptyBody)
+import Middleware (addAllowHeader, rejectDoubleEncodedPaths, rejectDuplicateQueryParams, rejectEmptyPathSegments, rejectHeadMethod, rejectInvalidCharset, rejectInvalidContentType, rejectMethodMismatch, rejectNullBytePaths, rejectUnknownQueryParams, rejectUnsupportedMethods, requireContentType, supplyEmptyBody)
 import Network.Wai (Application)
 import Servant (serveWithContext)
 import Server.ErrorFormatters (errorFormattersContext)
@@ -44,29 +52,12 @@ import Storage.Storage qualified as Storage
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, getCurrentDirectory, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree)
 import Util.StorageKeys (sessionKey)
 
 -- | Path to the OpenAPI spec
 openApiSpecPath :: FilePath
 openApiSpecPath = "./sdk/openapi.json"
-
-{- | Additional endpoints to skip (beyond auto-detected streaming endpoints)
-
-Note: SSE and WebSocket endpoints are automatically skipped by haskemathesis.
-This list is for operations that fail for other reasons.
--}
-additionalSkipEndpoints :: [Text]
-additionalSkipEndpoints =
-    [ "part.update" -- Uses $ref to Part schema with anyOf that haskemathesis can't resolve
-    ]
-
--- | Filter out non-testable endpoints
-operationFilter :: ResolvedOperation -> Bool
-operationFilter op =
-    case roOperationId op of
-        Just opId -> opId `notElem` additionalSkipEndpoints
-        Nothing -> True
 
 -- | Known session ID that we pre-seed for testing
 knownSessionId :: Text
@@ -83,7 +74,7 @@ to isolate all config file access.
 
 Pre-seeds sessions so session endpoints can be properly tested.
 -}
-createTestApp :: Dhall.DhallCache -> IORef Int -> IO (Application, AppState)
+createTestApp :: Dhall.DhallCache -> IORef Int -> IO Application
 createTestApp dhallCache counter = do
     cwd <- getCurrentDirectory
     -- Get unique ID for this test instance
@@ -105,13 +96,28 @@ createTestApp dhallCache counter = do
     -- Pre-seed sessions with known IDs
     preSeedSessions state
 
-    let app =
-            rejectEmptyPathSegments $
-                rejectInvalidContentType $
-                    requireContentType $
-                        supplyEmptyBody $
-                            serveWithContext api errorFormattersContext (server state)
-    pure (app, state)
+    pure $
+        -- RFC 9110 compliance: Add Allow header to 405 responses
+        addAllowHeader $
+            -- Method validation for globally unsupported methods (HEAD, TRACE, etc.)
+            rejectHeadMethod $
+                rejectUnsupportedMethods $
+                    -- Path validation (security checks before routing)
+                    rejectNullBytePaths $
+                        rejectDoubleEncodedPaths $
+                            rejectEmptyPathSegments $
+                                -- Method/route mismatch (after path is validated)
+                                rejectMethodMismatch $
+                                    -- Query parameter validation
+                                    rejectDuplicateQueryParams $
+                                        rejectUnknownQueryParams $
+                                            -- Content-Type validation
+                                            rejectInvalidCharset $
+                                                rejectInvalidContentType $
+                                                    requireContentType $
+                                                        -- Body handling
+                                                        supplyEmptyBody $
+                                                            serveWithContext api errorFormattersContext (server state)
 
 -- | Pre-seed sessions with known IDs for testing
 preSeedSessions :: AppState -> IO ()
@@ -150,7 +156,11 @@ preSeedSessions state = do
 
 This intercepts requests to /session/{sessionID}/... and replaces the
 random sessionID with one of our known pre-seeded session IDs.
-Does NOT rewrite special paths like /session/status
+
+Does NOT rewrite:
+- Special paths like /session/status
+- Session IDs that look malicious (contain %, null bytes, etc.) - these are
+  negative tests that should reach the server to test security validation
 -}
 rewriteSessionId :: ApiRequest -> ApiRequest
 rewriteSessionId req =
@@ -160,55 +170,31 @@ rewriteSessionId req =
             -- Skip literal paths that aren't session ID captures
             ("" : "session" : "status" : _) -> req
             -- /session/{sessionID}/... (with or without trailing path)
-            ("" : "session" : _randomSid : rest) ->
-                let newPath = T.intercalate "/" ("" : "session" : knownSessionId : rest)
-                 in req{reqPath = newPath}
+            ("" : "session" : randomSid : rest)
+                -- Only rewrite if the session ID looks like a normal test ID
+                -- Skip rewriting for malicious inputs (negative tests)
+                | isSafeSessionId randomSid ->
+                    let newPath = T.intercalate "/" ("" : "session" : knownSessionId : rest)
+                     in req{reqPath = newPath}
             _otherSegments -> req
 
--- | Create a standard executor (no coverage tracking)
-createExecutor :: Application -> ExecutorWithTimeout
-createExecutor app timeout req = do
-    let req' = rewriteSessionId req
-    executeWaiWithTimeout app timeout req'
-
-{- | Create a coverage-tracking executor
-
-Uses HPC to track code coverage during test execution. This enables
-coverage-guided fuzzing where inputs that discover new code paths are
-prioritized.
-
-Note: The coverage executor ignores the timeout parameter since executeWaiTracked
-doesn't support timeouts. For coverage-guided fuzzing, we rely on the test
-framework's timeout mechanisms instead.
+{- | Check if a session ID is safe to rewrite (not a negative test input)
+Returns False for IDs containing URL-encoded chars, null bytes, etc.
 -}
-createCoverageExecutor :: CoverageTracker -> Application -> ExecutorWithTimeout
-createCoverageExecutor tracker app _timeout req = do
-    let req' = rewriteSessionId req
-    result <- executeWaiTracked tracker app req'
-    pure (crResponse result)
-
--- | Test configuration with all features enabled (except response time checks)
-testConfig :: TestConfig
-testConfig =
-    defaultTestConfig
-        { tcChecks = strictChecks -- Maximum validation (schema, status, content-type, headers, valid requests)
-        , tcPropertyCount = 100
-        , tcNegativeTesting = True -- Also generate negative tests (invalid inputs)
-        , tcStatefulTesting = True -- Test CRUD operation sequences
-        , tcStatefulChecks = defaultStatefulChecks ++ [ensureModificationPersisted] -- Verify modifications persist
-        , tcMaxSequenceLength = 10 -- Longer sequences for more complex scenarios
-        , tcOperationFilter = operationFilter
-        }
+isSafeSessionId :: T.Text -> Bool
+isSafeSessionId sid =
+    not (T.any (\c -> c == '%' || c == '\x00' || c == '/' || c == '\\') sid)
+        && not (T.null sid)
 
 {- | All haskemathesis tests
 
-Uses testTreeForExecutorFactoryIO which creates isolated executors per operation,
-automatically filters streaming endpoints, and returns which operations were skipped.
+Uses the composable builder API:
+- forApp: Test a WAI application with auto-coverage
+- withFull: Run Standard + Negative + Stateful tests
+- withIsolated: Per-operation isolation with auto-coverage
+- withRequestTransform: Session ID rewriting
 
-The factory pattern ensures each operation gets its own isolated storage directory,
-preventing file lock conflicts between concurrent tests.
-
-Coverage-guided fuzzing is enabled when HPC instrumentation is available
+Coverage is automatically enabled when HPC instrumentation is available
 (compile with coverage: True in cabal.project.local).
 -}
 tests :: Dhall.DhallCache -> IO TestTree
@@ -218,39 +204,34 @@ tests dhallCache = do
     case specResult of
         Left err -> error $ "Failed to load OpenAPI spec: " <> show err
         Right openApi -> do
-            -- Check if HPC coverage is available
-            hasCoverage <- hpcAvailable
-            when hasCoverage $
+            -- Create shared app for stateful tests
+            sharedApp <- createTestApp dhallCache counter
+
+            -- Factory returns Application - coverage is automatic!
+            let mkApp :: AppFactory
+                mkApp _op = createTestApp dhallCache counter
+
+            -- Simple, composable configuration
+            -- Note: defaultStatefulChecks already includes all 3 checks:
+            -- useAfterFree, ensureResourceAvailability, ensureModificationPersisted
+            let spec =
+                    forApp openApi sharedApp
+                        & withFull
+                        & withIsolated mkApp
+                        & withRequestTransform rewriteSessionId
+                        & setChecks strictChecks
+                        & withPropertyCount 100
+                        & withMaxSequenceLength 10
+
+            (tree, result) <- runTests spec
+
+            -- Report skipped streaming operations
+            let skipped = trSkippedOperations result
+            unless (null skipped) $
+                hPutStrLn stderr $
+                    "Auto-skipped streaming operations: " ++ show (map soLabel skipped)
+
+            when (trCoverageEnabled result) $
                 hPutStrLn stderr "Coverage-guided fuzzing enabled (HPC available)"
 
-            -- Create coverage tracker once, reuse for all operations
-            tracker <- newCoverageTracker
-
-            -- Factory creates isolated executor per operation
-            -- Each operation gets its own storage directory to prevent file lock conflicts
-            let mkExecutor :: ResolvedOperation -> IO ExecutorWithTimeout
-                mkExecutor _op = do
-                    (app, _state) <- createTestApp dhallCache counter
-                    pure $
-                        if hasCoverage
-                            then createCoverageExecutor tracker app
-                            else createExecutor app
-
-            -- Use the factory IO variants that create isolated executors per operation
-            (positiveTree, skippedStreaming) <- testTreeForExecutorFactoryIO openApi testConfig mkExecutor
-            (negativeTree, _) <- testTreeForExecutorFactoryNegativeIO openApi testConfig mkExecutor
-
-            -- Report skipped operations
-            unless (null skippedStreaming) $
-                hPutStrLn stderr $
-                    "Auto-skipped streaming operations: " ++ show skippedStreaming
-            unless (null additionalSkipEndpoints) $
-                hPutStrLn stderr $
-                    "Manually skipped operations: " ++ show additionalSkipEndpoints
-
-            pure $
-                testGroup
-                    "Haskemathesis OpenAPI Compliance"
-                    [ testGroup "OpenAPI Conformance" [positiveTree]
-                    , testGroup "OpenAPI Conformance (Negative)" [negativeTree]
-                    ]
+            pure tree

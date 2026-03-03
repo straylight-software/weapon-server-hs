@@ -60,22 +60,20 @@
 
           # Enable profiling for a package
           withProfiling =
-            pkg:
-            pkgs.haskell.lib.enableExecutableProfiling (pkgs.haskell.lib.enableLibraryProfiling pkg);
+            pkg: pkgs.haskell.lib.enableExecutableProfiling (pkgs.haskell.lib.enableLibraryProfiling pkg);
 
           hsPkgs = pkgs.haskellPackages.override {
-            overrides = self: super:
+            overrides =
+              self: _super:
               let
                 # Rebuild a haskemathesis package with profiling using our haskellPackages
                 # We call the cabal2nix expression and override src via overrideCabal
                 rebuildWithProfiling =
                   origPkg:
                   withProfiling (
-                    pkgs.haskell.lib.overrideCabal (self.callPackage origPkg.passthru.cabal2nixDeriver { }) (
-                      old: {
-                        src = origPkg.src;
-                      }
-                    )
+                    pkgs.haskell.lib.overrideCabal (self.callPackage origPkg.passthru.cabal2nixDeriver { }) (_old: {
+                      inherit (origPkg) src;
+                    })
                   );
               in
               {
