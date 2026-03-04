@@ -17,7 +17,8 @@ The TUI store manages two main pieces of state:
 * __Last__: The most recently submitted prompt (for history/recall)
 
 All operations are resilient to transient storage failures through an
-automatic retry mechanism.
+automatic retry mechanism. When a logger is provided, retry attempts and
+exhaustion are logged at appropriate levels.
 
 = Example Usage
 
@@ -27,12 +28,12 @@ import qualified Tui.Store as TuiStore
 
 example :: IO ()
 example = Storage.withStorage ".tui-state" $ \\store -> do
-    -- Build up a prompt
-    _ <- TuiStore.appendPrompt store "Hello, "
-    _ <- TuiStore.appendPrompt store "world!"
+    -- Build up a prompt (without logging)
+    _ <- TuiStore.appendPrompt Nothing store "Hello, "
+    _ <- TuiStore.appendPrompt Nothing store "world!"
 
     -- Submit and clear
-    submitted <- TuiStore.submitPrompt store
+    submitted <- TuiStore.submitPrompt Nothing store
     print submitted  -- "Hello, world!"
 @
 -}
@@ -72,6 +73,8 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Data.Aeson (Value (..), object, (.=))
 import Data.Text (Text)
+import Data.Text qualified as T
+import Log qualified
 import Storage.Storage qualified as Storage
 
 --------------------------------------------------------------------------------
@@ -165,18 +168,33 @@ Returns the default value if all attempts are exhausted.
 
 This is useful for handling transient storage failures that may resolve
 on their own (e.g., brief file locks, network blips for remote storage).
+
+When a logger is provided:
+- DEBUG: logs each failed retry attempt with remaining count
+- WARN: logs when all retries are exhausted and default is returned
 -}
-retryWithDelay :: RetryConfig -> a -> IO (Either e a) -> IO a
-retryWithDelay cfg defaultVal action = go (retryAttempts cfg)
+retryWithDelay :: (Show e) => Maybe Log.Logger -> RetryConfig -> a -> IO (Either e a) -> IO a
+retryWithDelay mLogger cfg defaultVal action = go (retryAttempts cfg)
   where
-    go 0 = pure defaultVal
+    go 0 = do
+        case mLogger of
+            Just lg -> Log.logWarn lg "All retry attempts exhausted, returning default" ()
+            Nothing -> pure ()
+        pure defaultVal
     go n = do
         result <- action
         case result of
             Right v -> pure v
-            Left _err -> do
+            Left err -> do
+                let remaining = n - 1
+                case mLogger of
+                    Just lg ->
+                        Log.logDebug lg
+                            ("Retry attempt failed (" <> T.pack (show remaining) <> " remaining): " <> T.pack (show err))
+                            ()
+                    Nothing -> pure ()
                 threadDelay (retryDelayMicros cfg)
-                go (n - 1)
+                go remaining
 
 {- | Execute a storage read with default retry configuration.
 
@@ -184,6 +202,8 @@ Wraps the storage read in exception handling and extracts the result
 using the provided extraction function.
 -}
 withRetryingRead ::
+    -- | Optional logger for retry diagnostics
+    Maybe Log.Logger ->
     -- | Default value on failure
     a ->
     -- | How to extract the result from a JSON Value
@@ -192,8 +212,8 @@ withRetryingRead ::
     -- | Storage key
     [Text] ->
     IO a
-withRetryingRead defaultVal extract storage key =
-    retryWithDelay defaultRetryConfig defaultVal $ do
+withRetryingRead mLogger defaultVal extract storage key =
+    retryWithDelay mLogger defaultRetryConfig defaultVal $ do
         result <- try @SomeException (Storage.read storage key)
         pure $ case result of
             Right val -> Right (extract val)
@@ -211,8 +231,8 @@ Returns an empty string if the prompt doesn't exist or on read failure
 This operation is resilient to transient storage failures through
 automatic retry with the default configuration.
 -}
-getPrompt :: Storage.StorageConfig -> IO Text
-getPrompt storage = withRetryingRead "" extractTextFromValue storage promptKey
+getPrompt :: Maybe Log.Logger -> Storage.StorageConfig -> IO Text
+getPrompt mLogger storage = withRetryingRead mLogger "" extractTextFromValue storage promptKey
 
 {- | Append text to the current prompt.
 
@@ -220,14 +240,14 @@ Reads the current prompt, appends the new text, writes back, and returns
 the combined result.
 
 >>> -- Assuming empty initial state
->>> appendPrompt store "Hello"
+>>> appendPrompt Nothing store "Hello"
 "Hello"
->>> appendPrompt store ", world!"
+>>> appendPrompt Nothing store ", world!"
 "Hello, world!"
 -}
-appendPrompt :: Storage.StorageConfig -> Text -> IO Text
-appendPrompt storage text = do
-    current <- getPrompt storage
+appendPrompt :: Maybe Log.Logger -> Storage.StorageConfig -> Text -> IO Text
+appendPrompt mLogger storage text = do
+    current <- getPrompt mLogger storage
     let next = combinePromptText current text
     writePrompt storage next
     pure next
@@ -252,9 +272,9 @@ This operation:
 The submitted record can be used for history or to signal other
 components that a prompt was submitted.
 -}
-submitPrompt :: Storage.StorageConfig -> IO Text
-submitPrompt storage = do
-    current <- getPrompt storage
+submitPrompt :: Maybe Log.Logger -> Storage.StorageConfig -> IO Text
+submitPrompt mLogger storage = do
+    current <- getPrompt mLogger storage
     writePrompt storage ""
     Storage.write storage submittedKey (mkSubmittedPayload current)
     pure current
@@ -276,8 +296,8 @@ setLast storage = Storage.write storage lastKey
 Returns 'Nothing' if no last value exists or on read failure
 (after retries are exhausted).
 -}
-getLast :: Storage.StorageConfig -> IO (Maybe Value)
-getLast storage = withRetryingRead Nothing Just storage lastKey
+getLast :: Maybe Log.Logger -> Storage.StorageConfig -> IO (Maybe Value)
+getLast mLogger storage = withRetryingRead mLogger Nothing Just storage lastKey
 
 --------------------------------------------------------------------------------
 -- Internal Helpers

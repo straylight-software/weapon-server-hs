@@ -138,7 +138,7 @@ import Control.Applicative ((<|>))
 import Control.Concurrent (myThreadId)
 import Util.Thread (forkLogged)
 import Control.Concurrent.STM
-import Control.Exception (AsyncException (ThreadKilled), SomeException, catch, fromException)
+import Control.Exception (AsyncException (ThreadKilled), IOException, SomeException, catch, fromException, try)
 import Control.Monad (forM, forM_, unless, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (Value (..), object, (.=))
@@ -1646,7 +1646,12 @@ fileReadHandler mDir path = do
     unless exists $
         throwError $
             notFoundErrorWithMsg "File not found"
-    bytes <- liftIO $ BS.readFile fullPath
+    -- Read file with error handling for TOCTOU races and permission errors
+    readResult <- liftIO $ try @IOException $ BS.readFile fullPath
+    bytes <- case readResult of
+        Left err -> throwError $ notFoundErrorWithMsg $
+            "Failed to read file: " <> T.pack (show err)
+        Right content -> pure content
     case (hasNull bytes, TE.decodeUtf8' bytes) of
         (True, _) -> return $ FileContent ContentTypeBinary (encodeBase64 bytes)
         (False, Left _) -> return $ FileContent ContentTypeBinary (encodeBase64 bytes)
@@ -1788,7 +1793,8 @@ fileStatusHandler st mDir mPath = liftIO $ do
 tuiAppendPromptHandler :: AppState -> Maybe Text -> AppendPromptInput -> Handler Bool
 tuiAppendPromptHandler st _mDir input = liftIO $ do
     let text = apiText input
-    prompt <- TuiStore.appendPrompt (stStorage st) text
+    let lg = Log.withNS (stLogger st) "tui.store"
+    prompt <- TuiStore.appendPrompt (Just lg) (stStorage st) text
     let payload = object ["prompt" .= prompt]
     Bus.publish (stBus st) "tui.append-prompt" payload
     return True
@@ -1802,7 +1808,8 @@ tuiOpenHandler st name _mDir = liftIO $ do
 
 tuiSubmitPromptHandler :: AppState -> Maybe Text -> Handler Bool
 tuiSubmitPromptHandler st _mDir = liftIO $ do
-    prompt <- TuiStore.submitPrompt (stStorage st)
+    let lg = Log.withNS (stLogger st) "tui.store"
+    prompt <- TuiStore.submitPrompt (Just lg) (stStorage st)
     let payload = object ["prompt" .= prompt]
     Bus.publish (stBus st) "tui.submit-prompt" payload
     return True

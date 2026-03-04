@@ -120,8 +120,8 @@ prop_appendPrompt = propertyWithTempDir $ \tmpDir -> do
     result <- evalIO $ do
         cleanDir tmpDir
         Storage.withStorage tmpDir $ \store -> do
-            _ <- TuiStore.appendPrompt store a
-            TuiStore.appendPrompt store b
+            _ <- TuiStore.appendPrompt Nothing store a
+            TuiStore.appendPrompt Nothing store b
     result === TuiStore.combinePromptText a b
 
 -- | Property: clearPrompt resets to empty
@@ -131,9 +131,9 @@ prop_clearPrompt = propertyWithTempDir $ \tmpDir -> do
     result <- evalIO $ do
         cleanDir tmpDir
         Storage.withStorage tmpDir $ \store -> do
-            _ <- TuiStore.appendPrompt store text
+            _ <- TuiStore.appendPrompt Nothing store text
             TuiStore.clearPrompt store
-            TuiStore.getPrompt store
+            TuiStore.getPrompt Nothing store
     result === ""
 
 -- | Property: submitPrompt returns current and clears
@@ -143,9 +143,9 @@ prop_submitPrompt = propertyWithTempDir $ \tmpDir -> do
     (submitted, remaining) <- evalIO $ do
         cleanDir tmpDir
         Storage.withStorage tmpDir $ \store -> do
-            _ <- TuiStore.appendPrompt store text
-            submitted <- TuiStore.submitPrompt store
-            remaining <- TuiStore.getPrompt store
+            _ <- TuiStore.appendPrompt Nothing store text
+            submitted <- TuiStore.submitPrompt Nothing store
+            remaining <- TuiStore.getPrompt Nothing store
             pure (submitted, remaining)
     submitted === text
     remaining === ""
@@ -157,8 +157,8 @@ prop_submitStoresLast = propertyWithTempDir $ \tmpDir -> do
     result <- evalIO $ do
         cleanDir tmpDir
         Storage.withStorage tmpDir $ \store -> do
-            _ <- TuiStore.appendPrompt store text
-            _ <- TuiStore.submitPrompt store
+            _ <- TuiStore.appendPrompt Nothing store text
+            _ <- TuiStore.submitPrompt Nothing store
             Storage.read store TuiStore.submittedKey
     result === TuiStore.mkSubmittedPayload text
 
@@ -170,7 +170,7 @@ prop_setLastRoundtrip = propertyWithTempDir $ \tmpDir -> do
         cleanDir tmpDir
         Storage.withStorage tmpDir $ \store -> do
             TuiStore.setLast store payload
-            TuiStore.getLast store
+            TuiStore.getLast Nothing store
     result === Just payload
 
 -- | Property: getPrompt returns empty for fresh storage
@@ -178,7 +178,7 @@ prop_getPrompt_fresh :: Property
 prop_getPrompt_fresh = propertyWithTempDir $ \tmpDir -> do
     result <- evalIO $ do
         cleanDir tmpDir
-        Storage.withStorage tmpDir TuiStore.getPrompt
+        Storage.withStorage tmpDir (TuiStore.getPrompt Nothing)
     result === ""
 
 -- | Property: getLast returns Nothing for fresh storage
@@ -186,7 +186,7 @@ prop_getLast_fresh :: Property
 prop_getLast_fresh = propertyWithTempDir $ \tmpDir -> do
     result <- evalIO $ do
         cleanDir tmpDir
-        Storage.withStorage tmpDir TuiStore.getLast
+        Storage.withStorage tmpDir (TuiStore.getLast Nothing)
     result === Nothing
 
 -- | Property: multiple appends accumulate correctly
@@ -196,8 +196,8 @@ prop_appendPrompt_accumulates = propertyWithTempDir $ \tmpDir -> do
     result <- evalIO $ do
         cleanDir tmpDir
         Storage.withStorage tmpDir $ \store -> do
-            mapM_ (TuiStore.appendPrompt store) texts
-            TuiStore.getPrompt store
+            mapM_ (TuiStore.appendPrompt Nothing store) texts
+            TuiStore.getPrompt Nothing store
     result === mconcat texts
 
 -- | Property: storage keys are non-empty lists

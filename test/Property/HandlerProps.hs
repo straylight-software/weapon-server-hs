@@ -963,7 +963,7 @@ prop_tuiHandlers dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         let input = AppendPromptInput txt
         appended <- runHandlerIO (tuiAppendPromptHandler st Nothing input)
-        prompt <- TuiStore.getPrompt (stStorage st)
+        prompt <- TuiStore.getPrompt Nothing (stStorage st)
         submitted <- runHandlerIO (tuiSubmitPromptHandler st Nothing)
         cleared <- runHandlerIO (tuiClearPromptHandler st Nothing)
         openHelp <- runHandlerIO (tuiOpenHandler st "open-help" Nothing)
@@ -974,7 +974,7 @@ prop_tuiHandlers dhallCache exeCache = property $ do
         toast <- runHandlerIO (tuiShowToastHandler st Nothing (ShowToastInput "ok" "info" Nothing Nothing))
         publish <- runHandlerIO (tuiPublishHandler st Nothing (PublishPromptAppend (PublishPromptAppendProps "test")))
         select <- runHandlerIO (tuiSelectSessionHandler st Nothing (SelectSessionInput "ses_ok"))
-        lastVal <- TuiStore.getLast (stStorage st)
+        lastVal <- TuiStore.getLast Nothing (stStorage st)
         pure
             TuiHandlersResult
                 { thrAppended = appended
