@@ -68,7 +68,7 @@ module Global.Event (
 import Control.Concurrent (myThreadId, threadDelay)
 import Util.Thread (forkLogged)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, catch)
+import Control.Exception (SomeException, catch, throwIO)
 import Control.Monad (forever)
 import Data.Aeson (Value, encode, object, (.=))
 import Data.ByteString.Builder (Builder, lazyByteString, string8)
@@ -309,8 +309,12 @@ runEventLoop logger prefix chan transformEvent logEvent send flush = do
             logSSE logger $ prefix <> ": event sent and flushed"
             loop
     loop
-        `catch` \(e :: SomeException) ->
-            logSSE logger $ prefix <> ": loop ended with: " <> T.pack (show e)
+        `catch` \(e :: SomeException) -> do
+            -- Log at ERROR level - SSE loop termination is a critical failure
+            -- that leaves connected clients in a broken state
+            logMsg logger Katip.ErrorS $ prefix <> ": event loop terminated: " <> T.pack (show e)
+            -- Re-throw so the caller (WAI/Servant) can properly close the connection
+            throwIO e
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SSE Handlers
