@@ -48,22 +48,30 @@ import System.Process (readProcessWithExitCode)
 
 import Find.Parse
 
-{- | Error thrown when a required CLI tool is not found in PATH.
+{- | Errors that can occur during search operations.
 
-This error indicates that the user needs to install a dependency
-before the search functionality can be used.
+These errors indicate either missing dependencies or process failures.
 -}
-data SearchError = MissingExecutable
-    { seName :: !String
-    -- ^ Name of the missing executable (e.g., "rg", "fd")
-    , seDescription :: !String
-    -- ^ Human-readable description with installation instructions
-    }
+data SearchError
+    = -- | Required executable not found in PATH
+      MissingExecutable
+        !String
+        -- ^ Name of the missing executable (e.g., "rg", "fd")
+        !String
+        -- ^ Human-readable description with installation instructions
+    | -- | Process exited with non-zero exit code
+      ProcessFailed
+        !String
+        -- ^ Name of the process that failed
+        !String
+        -- ^ Error message including exit code and stderr
     deriving (Eq)
 
 instance Show SearchError where
     show (MissingExecutable name desc) =
         "Required tool '" <> name <> "' not found in PATH. " <> desc
+    show (ProcessFailed name err) =
+        "Process '" <> name <> "' failed: " <> err
 
 instance Exception SearchError
 
@@ -184,8 +192,10 @@ findFileWithOptions :: FilePath -> Text -> FindFileOptions -> IO [Value]
 findFileWithOptions root pat opts = do
     requireExecutable "fd" "Install fd-find: https://github.com/sharkdp/fd"
     let args = buildFdArgs opts pat root
-    output <- runProcess "fd" args
-    pure $ processFdOutput opts output
+    result <- runProcess "fd" args
+    case result of
+        Right output -> pure $ processFdOutput opts output
+        Left err -> throwIO $ ProcessFailed "fd" err
 
 --------------------------------------------------------------------------------
 -- Pure Transformation Functions
@@ -276,13 +286,14 @@ buildFdArgs :: FindFileOptions -> Text -> FilePath -> [String]
 buildFdArgs opts pat root =
     buildFdTypeArgs opts ++ ["--glob", T.unpack pat, root]
 
--- | Run a process and return its stdout on success, empty string on failure.
-runProcess :: String -> [String] -> IO String
+-- | Run a process and return its stdout on success, or an error message on failure.
+runProcess :: String -> [String] -> IO (Either String String)
 runProcess cmd args = do
-    (code, out, _err) <- readProcessWithExitCode cmd args ""
+    (code, out, err) <- readProcessWithExitCode cmd args ""
     pure $ case code of
-        ExitSuccess -> out
-        ExitFailure _exitCode -> ""
+        ExitSuccess -> Right out
+        ExitFailure exitCode ->
+            Left $ cmd ++ " failed with exit code " ++ show exitCode ++ ": " ++ err
 
 -- | Process fd output into JSON values with limit applied.
 processFdOutput :: FindFileOptions -> String -> [Value]
@@ -296,8 +307,10 @@ runRg :: FilePath -> Text -> IO [Value]
 runRg root query = do
     requireExecutable "rg" "Install ripgrep: https://github.com/BurntSushi/ripgrep"
     let args = ["--json", "--hidden", "--glob=!.git/*", T.unpack query, root]
-    output <- runProcess "rg" args
-    pure $ processRgJsonOutput output
+    result <- runProcess "rg" args
+    case result of
+        Right output -> pure $ processRgJsonOutput output
+        Left err -> throwIO $ ProcessFailed "rg" err
 
 {- | Process ripgrep JSON output into API response format.
 Ripgrep --json outputs one JSON object per line with type field.
