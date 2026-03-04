@@ -82,6 +82,7 @@ module Bus.Bus (
 
 import Bus.Event (EventType, eventTypeToText)
 import Control.Concurrent (ThreadId, forkIO, killThread)
+import Util.Thread (forkLogged)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Control.Monad (forever, when)
@@ -229,6 +230,9 @@ The callback is invoked on a dedicated thread for each event.
 
 __Important__: Events published before this subscription are NOT received.
 
+__WARNING__: This uses an unsupervised thread - thread deaths are silent!
+Prefer 'subscribeAllLogged' for production use.
+
 ==== __Examples__
 
 >>> bus <- newBus
@@ -310,6 +314,9 @@ dupBusChan bus = atomically $ dupTChan (unBus bus)
 
 -- | Start a subscriber thread that reads from a channel and invokes the callback.
 -- Exceptions in the callback will propagate and kill the thread.
+--
+-- __WARNING__: This uses raw 'forkIO' - thread deaths are silent!
+-- Prefer 'startSubscriberThreadLogged' for production use.
 startSubscriberThread :: TChan BusEvent -> (BusEvent -> IO ()) -> IO ThreadId
 startSubscriberThread chan callback =
     forkIO $ forever $ do
@@ -319,9 +326,11 @@ startSubscriberThread chan callback =
 -- | Start a subscriber thread with error logging and recovery.
 -- If the callback throws, the error is logged and the subscriber continues
 -- receiving future events (the thread does NOT die).
+-- Uses forkLogged for outer supervision - if the forever loop itself fails
+-- (e.g., STM exception), the thread death is logged before dying.
 startSubscriberThreadLogged :: Log.Logger -> Text -> TChan BusEvent -> (BusEvent -> IO ()) -> IO ThreadId
 startSubscriberThreadLogged logger subscriberName chan callback =
-    forkIO $ forever $ do
+    forkLogged logger ("bus-subscriber-" <> subscriberName) $ forever $ do
         event <- atomically $ readTChan chan
         result <- try @SomeException (callback event)
         case result of

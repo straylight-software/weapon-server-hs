@@ -141,8 +141,8 @@ startManager config bus defaultProjectId defaultDirectory = do
             Log.logError lg ("Unexpected R2 error during config: " <> T.pack (show err)) ()
             throwIO $ userError $ "R2 initialization failed: " <> show err
 
-    -- Subscribe to all bus events
-    unsubscribe <- Bus.subscribeAll bus $ \busEvent ->
+    -- Subscribe to all bus events with supervised thread
+    unsubscribe <- Bus.subscribeAllLogged lg "telemetry-manager-subscriber" bus $ \busEvent ->
         handleEvent walDir config r2Handle sessions idGen defaultProjectId defaultDirectory busEvent
 
     pure $

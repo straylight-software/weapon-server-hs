@@ -138,8 +138,8 @@ start config bus sessionId projectId directory = do
 
     let lg = tcLogger config
 
-    -- Subscribe to all bus events
-    unsubscribe <- Bus.subscribeAll bus $ \busEvent -> do
+    -- Subscribe to all bus events with supervised thread
+    unsubscribe <- Bus.subscribeAllLogged lg "telemetry-capture-subscriber" bus $ \busEvent -> do
         let eventType = Bus.beType busEvent
             payload = Bus.beProperties busEvent
         -- Capture asynchronously (don't block bus)
