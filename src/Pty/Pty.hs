@@ -60,7 +60,7 @@ module Pty.Pty (
     getChangedFiles,
 ) where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Control.Monad (unless, void, when)
@@ -73,6 +73,9 @@ import Data.Text (Text)
 import Data.Word (Word64)
 import System.Directory (findExecutable)
 import System.Environment (lookupEnv)
+
+import Log qualified
+import Util.Thread (forkLogged)
 
 import System.Posix.Pty (Pty, closePty, readPty, resizePty, spawnWithPty, writePty)
 import System.Posix.Signals qualified as Sig
@@ -114,6 +117,8 @@ data PtyManager = PtyManager
     -- ^ Counter for generating unique IDs
     , pmDirectory :: FilePath
     -- ^ Default working directory for new sessions
+    , pmLogger :: Log.Logger
+    -- ^ Logger for supervised thread spawning
     }
 
 {- | Internal representation of a PTY session.
@@ -149,8 +154,8 @@ directory for new PTY sessions.
 
 @since 0.1.0
 -}
-newManager :: FilePath -> IO PtyManager
-newManager directory = do
+newManager :: Log.Logger -> FilePath -> IO PtyManager
+newManager logger directory = do
     sessions <- newTVarIO Map.empty
     counter <- newIORef 0
     pure
@@ -158,6 +163,7 @@ newManager directory = do
             { pmSessions = sessions
             , pmCounter = counter
             , pmDirectory = directory
+            , pmLogger = Log.withNS logger "pty"
             }
 
 {- | Generate a new unique PTY ID.
@@ -247,7 +253,7 @@ createSandboxed PtyManager{..} ptyId params input = do
             case result of
                 Left err -> pure $ Left err
                 Right (overlayDir, _) ->
-                    spawnSandboxedPty pmSessions ptyId params config overlayDir
+                    spawnSandboxedPty pmLogger pmSessions ptyId params config overlayDir
 
 {- | Build sandbox configuration from resolved parameters.
 
@@ -277,13 +283,14 @@ Creates the bwrap process, sets up the slirp4netns network if needed,
 and registers the session with the manager.
 -}
 spawnSandboxedPty ::
+    Log.Logger ->
     TVar (Map Text RealPtySession) ->
     Text ->
     CreateParams ->
     SandboxConfig ->
     FilePath ->
     IO (Either Text PtyInfo)
-spawnSandboxedPty sessions ptyId params config overlayDir = do
+spawnSandboxedPty logger sessions ptyId params config overlayDir = do
     let bwrapArgs = Sandbox.buildBwrapArgs config
 
     ptyResult <-
@@ -320,11 +327,11 @@ spawnSandboxedPty sessions ptyId params config overlayDir = do
 
             atomically $ modifyTVar' sessions (Map.insert ptyId session)
 
-            -- Start reader thread
-            void $ forkIO $ ptyReaderThread session
+            -- Start reader thread (supervised)
+            void $ forkLogged logger ("pty-reader-" <> ptyId) $ ptyReaderThread session
 
-            -- Monitor for exit
-            void $ forkIO $ exitMonitor sessions ptyId ph (Just overlayDir)
+            -- Monitor for exit (supervised)
+            void $ forkLogged logger ("pty-exit-monitor-" <> ptyId) $ exitMonitor logger sessions ptyId ph (Just overlayDir)
 
             pure $ Right info
 
@@ -376,8 +383,12 @@ createUnsandboxed PtyManager{..} ptyId params input = do
                         }
 
             atomically $ modifyTVar' pmSessions (Map.insert ptyId session)
-            void $ forkIO $ ptyReaderThread session
-            void $ forkIO $ exitMonitor pmSessions ptyId ph Nothing
+
+            -- Start reader thread (supervised)
+            void $ forkLogged pmLogger ("pty-reader-" <> ptyId) $ ptyReaderThread session
+
+            -- Monitor for exit (supervised)
+            void $ forkLogged pmLogger ("pty-exit-monitor-" <> ptyId) $ exitMonitor pmLogger pmSessions ptyId ph Nothing
 
             pure $ Right info
 
@@ -492,12 +503,13 @@ Updates the session status when the process exits and cleans up
 resources after a delay.
 -}
 exitMonitor ::
+    Log.Logger ->
     TVar (Map Text RealPtySession) ->
     Text ->
     ProcessHandle ->
     Maybe FilePath ->
     IO ()
-exitMonitor sessions ptyId ph mOverlayDir = do
+exitMonitor logger sessions ptyId ph mOverlayDir = do
     code <- waitForProcess ph
     let status = exitCodeToStatus code
 
@@ -517,10 +529,10 @@ exitMonitor sessions ptyId ph mOverlayDir = do
                 terminateProcess netPh
                 void $ tryIO $ waitForProcess netPh
 
-    -- Cleanup overlay after delay
+    -- Cleanup overlay after delay (supervised - failures should be visible)
     case mOverlayDir of
         Nothing -> pure ()
-        Just dir -> void $ forkIO $ do
+        Just dir -> void $ forkLogged logger ("pty-cleanup-" <> ptyId) $ do
             threadDelay 5000000 -- 5 seconds
             void $ tryIO $ Sandbox.destroyDir dir
 
@@ -715,7 +727,7 @@ Returns 'Nothing' if the session doesn't exist.
 @since 0.1.0
 -}
 connect :: PtyManager -> Text -> Maybe Word64 -> IO (Maybe PtyConnection)
-connect mgr ptyId cursor = withSession mgr ptyId Nothing $ \session -> do
+connect mgr@PtyManager{pmLogger} ptyId cursor = withSession mgr ptyId Nothing $ \session -> do
     buf <- readTVarIO (rpsBuffer session)
 
     let replayFrom = fromMaybe 0 cursor
@@ -730,7 +742,7 @@ connect mgr ptyId cursor = withSession mgr ptyId Nothing $ \session -> do
                 { pcSend = void . tryIO . writePty (rpsPty session)
                 , pcOnData = \handler -> do
                     unless (BS.null replayData) $ handler replayData
-                    void $ forkIO $ pollLoop session lastCursorRef runningRef handler
+                    void $ forkLogged pmLogger ("pty-ws-poll-" <> ptyId) $ pollLoop session lastCursorRef runningRef handler
                 , pcClose = writeIORef runningRef False
                 }
 

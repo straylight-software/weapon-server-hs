@@ -81,7 +81,7 @@ mkAppStateWithCachesQuiet :: Bool -> Maybe Proxy.ProxyServer -> Dhall.DhallCache
 mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir projectID directory logger = do
     bus <- Bus.newBus
     eventChan <- newBroadcastTChanIO
-    ptyManager <- Pty.newManager (Text.unpack directory)
+    ptyManager <- Pty.newManager logger (Text.unpack directory)
     promptQueue <- newTQueueIO
     activeAgents <- newTVarIO Map.empty
     idGen <- Identifier.newIdGenState
