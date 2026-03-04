@@ -438,6 +438,19 @@ stopReplicationWorker rw = do
     threadDelay 1000000
     killThread (rwThread rw)
 
+-- | Maximum consecutive failures before giving up on a batch
+maxConsecutiveFailures :: Int
+maxConsecutiveFailures = 10
+
+-- | Maximum backoff delay in seconds
+maxBackoffSeconds :: Int
+maxBackoffSeconds = 60
+
+-- | Calculate backoff delay in seconds: min(60, 2^(failures-1))
+calculateBackoffSeconds :: Int -> Int
+calculateBackoffSeconds failures =
+    min maxBackoffSeconds (2 ^ (failures - 1))
+
 -- | Main replication loop
 replicationLoop ::
     R2Handle ->
@@ -447,9 +460,12 @@ replicationLoop ::
     Int ->
     Log.Logger ->
     IO ()
-replicationLoop r2 wal sessionId stopVar pollInterval lg = loop
+replicationLoop r2 wal sessionId stopVar pollInterval lg = do
+    -- Track consecutive failures for backoff and escalation
+    failureCountVar <- newTVarIO (0 :: Int)
+    loop failureCountVar
   where
-    loop = do
+    loop failureCountVar = do
         shouldStop <- readTVarIO stopVar
         if shouldStop
             then pure ()
@@ -458,19 +474,50 @@ replicationLoop r2 wal sessionId stopVar pollInterval lg = loop
                 segments <- WAL.listUnreplicatedSegments wal
 
                 -- Upload each segment
-                mapM_ uploadOne segments
+                mapM_ (uploadOne failureCountVar) segments
 
                 -- Wait before next poll
                 threadDelay (pollInterval * 1000000)
-                loop
+                loop failureCountVar
 
-    uploadOne (path, _startSeq, _endSeq) = do
+    uploadOne failureCountVar (path, _startSeq, _endSeq) = do
         result <- uploadSegment r2 sessionId path
         case result of
             Right () -> do
+                -- Reset failure counter on success
+                atomically $ writeTVar failureCountVar 0
                 -- Update high water mark
                 -- TODO: WAL.setHighWaterMark wal endSeq
                 Log.logDebug lg ("Uploaded: " <> T.pack path) ()
             Left err -> do
-                -- Log error, will retry next poll
-                Log.logWarn lg ("Upload failed: " <> T.pack (show err)) ()
+                -- Increment failure counter
+                failureCount <- atomically $ do
+                    count <- readTVar failureCountVar
+                    let newCount = count + 1
+                    writeTVar failureCountVar newCount
+                    pure newCount
+
+                -- Log with escalating severity based on failure count
+                let errMsg = "Upload failed: " <> T.pack (show err)
+                    backoffSecs = calculateBackoffSeconds failureCount
+                    backoffMsg = " (backoff: " <> T.pack (show backoffSecs) <> "s, attempt " 
+                                 <> T.pack (show failureCount) <> "/" <> T.pack (show maxConsecutiveFailures) <> ")"
+
+                if failureCount >= maxConsecutiveFailures
+                    then do
+                        -- Give up on this batch after max failures
+                        Log.logError lg ("CRITICAL: telemetry upload failing repeatedly, giving up on batch: " <> errMsg) ()
+                        -- Reset counter so we can try fresh on next batch
+                        atomically $ writeTVar failureCountVar 0
+                    else if failureCount >= 6
+                        then do
+                            Log.logError lg ("CRITICAL: telemetry upload failing repeatedly: " <> errMsg <> backoffMsg) ()
+                            threadDelay (backoffSecs * 1000000)
+                        else if failureCount >= 3
+                            then do
+                                Log.logError lg (errMsg <> backoffMsg) ()
+                                threadDelay (backoffSecs * 1000000)
+                            else do
+                                -- 1-2 failures: WARNING
+                                Log.logWarn lg (errMsg <> backoffMsg) ()
+                                threadDelay (backoffSecs * 1000000)
