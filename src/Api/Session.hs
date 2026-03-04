@@ -501,6 +501,7 @@ newtype MessageIDParam = MessageIDParam {unMessageIDParam :: Text}
 
 instance FromHttpApiData MessageIDParam where
     parseUrlPiece t
+        | T.null t = Right (MessageIDParam t) -- Empty string treated as absent by handler
         | "msg" `T.isPrefixOf` t = Right (MessageIDParam t)
         | otherwise = Left "messageID must start with 'msg'"
 

@@ -1722,18 +1722,20 @@ findHandler st mQuery mPattern = do
     let root = unpack (stDirectory st)
     liftIO $ FindSearch.findText root searchPattern
 
-findFileHandler :: AppState -> Maybe Text -> Maybe Bool -> Maybe Text -> Maybe Int -> Handler [Value]
-findFileHandler st mQuery mDirs mType mLimit = do
+findFileHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Handler [Value]
+findFileHandler st mQuery mDirsText mType mLimitText = do
     query <- V.requireQueryParam "query" mQuery
     validType <- V.validateFileTypeEnum mType
+    dirs <- V.validateBoolParam "dirs" mDirsText
+    limit <- V.validateIntParam "limit" mLimitText
     -- Always search project directory - no user-supplied directory to prevent DoS
     let root = unpack (stDirectory st)
     liftIO $ do
         let opts =
                 FindSearch.FindFileOptions
-                    { FindSearch.ffoIncludeDirs = fromMaybe False mDirs
+                    { FindSearch.ffoIncludeDirs = fromMaybe False dirs
                     , FindSearch.ffoFileType = validType
-                    , FindSearch.ffoLimit = mLimit
+                    , FindSearch.ffoLimit = limit
                     }
         FindSearch.findFileWithOptions root query opts
 

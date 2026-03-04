@@ -683,7 +683,7 @@ type FindAPI = "find" :> QueryParam "query" Text :> QueryParam "pattern" Text :>
 {- | @GET /find/file@ - Search for files with advanced options.
 Note: directory parameter removed - always searches project directory.
 -}
-type FindFileAPI = "find" :> "file" :> QueryParam "query" Text :> QueryParam "dirs" Bool :> QueryParam "type" Text :> QueryParam "limit" Int :> Get '[JSON] [Value]
+type FindFileAPI = "find" :> "file" :> QueryParam "query" Text :> QueryParam "dirs" Text :> QueryParam "type" Text :> QueryParam "limit" Text :> Get '[JSON] [Value]
 
 {- | @GET /find/symbol@ - Search for symbols in the codebase.
 Note: directory parameter removed - always searches project directory.

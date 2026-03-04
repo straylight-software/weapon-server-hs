@@ -36,6 +36,8 @@ module Api.Validation (
     requireQueryParam,
     validateEnumParam,
     validateFileTypeEnum,
+    validateBoolParam,
+    validateIntParam,
 
     -- * Request Body Validation
     requireJsonObject,
@@ -47,7 +49,7 @@ module Api.Validation (
 ) where
 
 import Data.Aeson (FromJSON, Object, Result (..), Value (..), fromJSON)
-import Data.Char (isAlphaNum, isAsciiLower, isDigit)
+import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Servant (Handler, ServerError (..), err400, throwError)
@@ -139,9 +141,11 @@ validatePartId value
     | not (T.all isValidIdChar value) = throwValidation "Invalid partID: must contain only alphanumeric characters, underscores, and hyphens"
     | otherwise = pure value
 
--- | Check if a character is valid for IDs (alphanumeric, underscore, hyphen)
+{- | Check if a character is valid for IDs (ASCII alphanumeric, underscore, hyphen).
+Matches the OpenAPI pattern ^[a-zA-Z0-9_-]+$
+-}
 isValidIdChar :: Char -> Bool
-isValidIdChar c = isAlphaNum c || c == '_' || c == '-'
+isValidIdChar c = isAsciiUpper c || isAsciiLower c || isDigit c || c == '_' || c == '-'
 
 -- | Validate a provider ID (non-empty, lowercase alphanumeric and hyphens only, must start with letter or digit).
 validateProviderId :: Text -> Handler Text
@@ -196,6 +200,7 @@ findFileHandler st mQuery mDir mDirs mType mLimit = do
 -}
 validateEnumParam :: Text -> [Text] -> Maybe Text -> Handler (Maybe Text)
 validateEnumParam _ _ Nothing = pure Nothing
+validateEnumParam _ _ (Just "") = pure Nothing -- Treat empty string as absent
 validateEnumParam paramName allowed (Just value)
     | value `elem` allowed = pure (Just value)
     | otherwise =
@@ -212,6 +217,42 @@ Must be either "file" or "directory" if present.
 -}
 validateFileTypeEnum :: Maybe Text -> Handler (Maybe Text)
 validateFileTypeEnum = validateEnumParam "type" ["file", "directory"]
+
+{- | Validate an optional boolean query parameter.
+
+Accepts "true" or "false" (case-sensitive). Empty strings are treated as absent.
+Any other value returns a 400 error.
+-}
+validateBoolParam :: Text -> Maybe Text -> Handler (Maybe Bool)
+validateBoolParam _ Nothing = pure Nothing
+validateBoolParam _ (Just "") = pure Nothing
+validateBoolParam _ (Just "true") = pure (Just True)
+validateBoolParam _ (Just "false") = pure (Just False)
+validateBoolParam paramName (Just val) =
+    throwValidation $
+        "Error parsing query parameter "
+            <> paramName
+            <> " failed: could not parse: `"
+            <> val
+            <> "'"
+
+{- | Validate an optional integer query parameter.
+
+Empty strings are treated as absent. Non-integer values return a 400 error.
+-}
+validateIntParam :: Text -> Maybe Text -> Handler (Maybe Int)
+validateIntParam _ Nothing = pure Nothing
+validateIntParam _ (Just "") = pure Nothing
+validateIntParam paramName (Just val) =
+    case reads (T.unpack val) of
+        [(n, "")] -> pure (Just n)
+        _other ->
+            throwValidation $
+                "Error parsing query parameter "
+                    <> paramName
+                    <> " failed: could not parse: `"
+                    <> val
+                    <> "'"
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Request Body Validation

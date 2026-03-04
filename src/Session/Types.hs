@@ -374,11 +374,11 @@ data ProjectSummary = ProjectSummary
 
 instance ToJSON ProjectSummary where
     toJSON ps =
-        object
+        object $
             [ "id" .= psId ps
-            , "name" .= psName ps
             , "worktree" .= psWorktree ps
             ]
+                ++ maybe [] (\n -> ["name" .= n]) (psName ps)
 
 instance FromJSON ProjectSummary where
     parseJSON = withObject "ProjectSummary" $ \v ->
