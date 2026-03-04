@@ -593,7 +593,7 @@ data ModelSelection = ModelSelection
     deriving (Eq, Show, Generic)
 
 instance FromJSON ModelSelection where
-    parseJSON = withObject "ModelSelection" $ \v ->
+    parseJSON = withStrictObject "ModelSelection" ["providerID", "modelID"] $ \v ->
         ModelSelection
             <$> v .: "providerID"
             <*> v .: "modelID"
