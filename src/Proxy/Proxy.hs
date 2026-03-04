@@ -66,7 +66,7 @@ module Proxy.Proxy (
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.STM
-import Control.Exception (IOException, SomeException, catch, try)
+import Control.Exception (IOException, SomeException, bracket, catch, try)
 import Control.Monad (forM_)
 import Data.Aeson (Object, Value (..), decode, encode, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -376,14 +376,17 @@ tunnel host port readClient writeClient = do
     addrInfos <- Socket.getAddrInfo Nothing (Just host) (Just (show port))
     case addrInfos of
         [] -> writeClient "HTTP/1.1 502 Bad Gateway\r\n\r\n"
-        (addr : _) -> do
-            sock <- Socket.socket (Socket.addrFamily addr) Socket.Stream Socket.defaultProtocol
-            Socket.connect sock (Socket.addrAddress addr)
-            writeClient "HTTP/1.1 200 Connection Established\r\n\r\n"
-            upstreamThread <- forkIO $ pumpClientToServer sock readClient
-            pumpServerToClient sock writeClient
-            killThread upstreamThread
-            Socket.close sock
+        (addr : _) ->
+            bracket
+                (Socket.socket (Socket.addrFamily addr) Socket.Stream Socket.defaultProtocol)
+                Socket.close
+                $ \sock -> do
+                    Socket.connect sock (Socket.addrAddress addr)
+                    writeClient "HTTP/1.1 200 Connection Established\r\n\r\n"
+                    bracket
+                        (forkIO $ pumpClientToServer sock readClient)
+                        killThread
+                        (\_ -> pumpServerToClient sock writeClient)
 
 -- | Pump data from client to server.
 pumpClientToServer :: Socket.Socket -> IO ByteString -> IO ()
