@@ -110,7 +110,9 @@ import Network.HTTP.Client qualified as HC
 import Network.HTTP.Client.TLS qualified as HCT
 import Network.HTTP.Types qualified as HT
 import Provider.Types qualified as PT
-import System.IO (hClose, hGetLine, hIsEOF)
+import Control.Concurrent.Async (withAsync, wait)
+import System.Exit (ExitCode (..))
+import System.IO (hClose, hGetContents, hGetLine, hIsEOF)
 import System.Process (StdStream (..), createProcess, proc, std_err, std_in, std_out, waitForProcess)
 
 -- ============================================================================
@@ -836,7 +838,7 @@ chatStream client req onDelta = do
             ]
 
     result <- try @SomeException $ do
-        (Just hIn, Just hOut, _, ph) <-
+        (Just hIn, Just hOut, Just hErr, ph) <-
             createProcess
                 (proc "curl" curlArgs)
                     { std_in = CreatePipe
@@ -862,13 +864,19 @@ chatStream client req onDelta = do
                             for_ (extractDelta jsonPart) onDelta
                         unless ("data: [DONE]" `T.isPrefixOf` line) readLoop
 
-        readLoop
-        _ <- waitForProcess ph
-        pure ()
+        -- Drain stderr concurrently to prevent blocking
+        withAsync (hGetContents hErr) $ \stderrAsync -> do
+            readLoop
+            exitCode <- waitForProcess ph
+            stderrContent <- wait stderrAsync
+            case exitCode of
+                ExitSuccess -> pure Nothing
+                ExitFailure n -> pure $ Just $ "curl failed with exit code " <> show n <> ": " <> stderrContent
 
     case result of
         Left e -> pure $ Left $ T.pack $ show e
-        Right () -> pure $ Right ()
+        Right Nothing -> pure $ Right ()
+        Right (Just errMsg) -> pure $ Left $ T.pack errMsg
 
 -- | Make an HTTP request to OpenRouter API
 makeRequest :: Client -> Text -> LBS.ByteString -> IO (Either Text LBS.ByteString)
@@ -951,7 +959,7 @@ chatStreamWithTools client req onDelta = do
     finishReasonRef <- newIORef (Nothing :: Maybe Text)
 
     result <- try @SomeException $ do
-        (Just hIn, Just hOut, _, ph) <-
+        (Just hIn, Just hOut, Just hErr, ph) <-
             createProcess
                 (proc "curl" curlArgs)
                     { std_in = CreatePipe
@@ -981,13 +989,19 @@ chatStreamWithTools client req onDelta = do
                             for_ (extractFinishReason jsonPart) $ writeIORef finishReasonRef . Just
                         unless ("data: [DONE]" `T.isPrefixOf` line) readLoop
 
-        readLoop
-        _ <- waitForProcess ph
-        pure ()
+        -- Drain stderr concurrently to prevent blocking
+        withAsync (hGetContents hErr) $ \stderrAsync -> do
+            readLoop
+            exitCode <- waitForProcess ph
+            stderrContent <- wait stderrAsync
+            case exitCode of
+                ExitSuccess -> pure Nothing
+                ExitFailure n -> pure $ Just $ "curl failed with exit code " <> show n <> ": " <> stderrContent
 
     case result of
         Left e -> pure $ Left $ T.pack $ show e
-        Right () -> do
+        Right (Just errMsg) -> pure $ Left $ T.pack errMsg
+        Right Nothing -> do
             toolCallParts <- readIORef toolCallsRef
             finishReason <- readIORef finishReasonRef
             -- Assemble tool calls from accumulated parts
