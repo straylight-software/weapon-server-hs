@@ -41,6 +41,7 @@ module Storage.Storage (
     -- * Reading
     read,
     readMaybe,
+    readMaybeLogged,
 
     -- * Writing
     write,
@@ -73,13 +74,15 @@ module Storage.Storage (
 
 import Control.Exception (Exception, catch, throwIO)
 import Control.Monad (unless)
-import Data.Aeson (FromJSON, ToJSON, eitherDecodeFileStrict, encode, encodeFile)
+import Data.Aeson (FromJSON, ToJSON, Value (..), eitherDecodeFileStrict, encode, encodeFile, object, (.=))
 import Data.ByteString.Lazy qualified as BL
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
+import Katip (LogItem (..), PayloadSelection (..), ToObject (..))
+import Log qualified
 import System.Directory
 import System.FilePath (dropExtension, splitDirectories, takeDirectory, takeExtension, (</>))
 import System.IO (hClose, hFlush)
@@ -256,15 +259,19 @@ read cfg key = do
         | isDoesNotExistError e = throwIO (NotFoundError target)
         | otherwise = throwIO e
 
-{- | Read a JSON value from storage, returning 'Nothing' if not found or invalid.
+{- | Read a JSON value from storage, returning 'Nothing' if not found or decode fails.
 
-This is a safer alternative to 'read' that won't throw exceptions for
-missing or invalid data.
+__Warning__: This function silently swallows decode errors, returning 'Nothing'
+for both "not found" and "found but corrupted" cases. This makes it impossible
+for callers to distinguish between missing data and corrupted data.
+
+Prefer 'readMaybeLogged' which logs decode errors at ERROR level, giving
+visibility into data corruption while maintaining the 'Maybe a' return type.
 
 @
 mUser <- Storage.readMaybe cfg [\"users\", \"alice\"]
 case mUser of
-    Nothing -> putStrLn \"User not found\"
+    Nothing -> putStrLn \"User not found or corrupted\"
     Just user -> print user
 @
 -}
@@ -274,6 +281,53 @@ readMaybe cfg key =
         `catch` \(NotFoundError _) -> pure Nothing
     )
         `catch` \(StorageDecodeError _path _err) -> pure Nothing
+
+{- | Read a JSON value from storage, returning 'Nothing' if not found.
+
+Unlike 'readMaybe', this function logs decode errors at ERROR level before
+returning 'Nothing'. This provides visibility into data corruption while
+maintaining backwards compatibility with the 'Maybe a' return type.
+
+__Rationale__: "Not found" is an expected case (the key simply doesn't exist),
+but "found but corrupted" indicates a bug - either in serialization, storage,
+or external data tampering. These cases should be logged so operators can
+investigate and fix the underlying issue.
+
+@
+mUser <- Storage.readMaybeLogged logger cfg [\"users\", \"alice\"]
+case mUser of
+    Nothing -> putStrLn \"User not found\"
+    Just user -> print user
+@
+-}
+readMaybeLogged :: (FromJSON a) => Log.Logger -> StorageConfig -> [Text] -> IO (Maybe a)
+readMaybeLogged logger cfg key =
+    ( (Just <$> read cfg key)
+        `catch` \(NotFoundError _) -> pure Nothing
+    )
+        `catch` \(StorageDecodeError path err) -> do
+            -- Log decode errors at ERROR level. This indicates corrupted data which
+            -- should never happen in normal operation. Logging gives visibility so
+            -- operators can investigate the root cause (bad serialization, disk
+            -- corruption, manual file edits, etc).
+            Log.logError logger "Storage decode error: corrupted data found" $
+                DecodeErrorPayload path err
+            pure Nothing
+
+-- | Structured payload for decode error logging
+data DecodeErrorPayload = DecodeErrorPayload
+    { _depPath :: FilePath
+    , _depError :: Text
+    }
+
+instance ToObject DecodeErrorPayload where
+    toObject (DecodeErrorPayload path err) =
+        case object ["path" .= path, "error" .= err] of
+            Object o -> o
+            _ -> mempty
+
+instance LogItem DecodeErrorPayload where
+    payloadKeys _ _ = AllKeys
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Writing
