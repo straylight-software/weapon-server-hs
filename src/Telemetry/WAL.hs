@@ -60,6 +60,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Data.Word (Word64)
+import Log qualified
 import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory)
 import System.FilePath ((</>))
 import System.IO (BufferMode (..), Handle, IOMode (..), hClose, hFlush, hSetBuffering, openFile)
@@ -78,16 +79,18 @@ data WALConfig = WALConfig
     -- ^ Number of events per segment file
     , walSyncOnWrite :: Bool
     -- ^ Whether to fsync after every write (safest but slower)
+    , walLogger :: Log.Logger
+    -- ^ Logger for error reporting
     }
-    deriving (Show, Eq)
 
 -- | Default configuration (sync on every write for durability)
-defaultWALConfig :: FilePath -> WALConfig
-defaultWALConfig baseDir =
+defaultWALConfig :: FilePath -> Log.Logger -> WALConfig
+defaultWALConfig baseDir logger =
     WALConfig
         { walBaseDir = baseDir
         , walSegmentSize = 10000
         , walSyncOnWrite = True
+        , walLogger = Log.withNS logger "wal"
         }
 
 -- | Errors that can occur during WAL operations
@@ -120,6 +123,8 @@ data WALHandle = WALHandle
     -- ^ Currently open segment
     , whHighWaterMark :: IORef Word64
     -- ^ Last replicated sequence
+    , whLogger :: Log.Logger
+    -- ^ Logger for error reporting
     }
 
 -- | Open or create a WAL for a session
@@ -130,6 +135,8 @@ openWAL config sessionId = do
     -- Create session directory
     createDirectoryIfMissing True sessionDir
 
+    let logger = walLogger config
+
     -- Read or initialize sequence number
     let seqFile = sessionDir </> "seq"
     seqExists <- doesFileExist seqFile
@@ -137,7 +144,12 @@ openWAL config sessionId = do
         if seqExists
             then do
                 content <- TIO.readFile seqFile
-                pure $ maybe 0 id (readMaybe (T.unpack content))
+                case readMaybe (T.unpack content) of
+                    Just n -> pure n
+                    Nothing -> do
+                        when (not (T.null (T.strip content))) $
+                            Log.logWarn logger ("Corrupted sequence file " <> T.pack seqFile <> ", content: " <> T.take 50 content <> " - resetting to 0") ()
+                        pure 0
             else pure 0
 
     -- Read high water mark
@@ -147,7 +159,12 @@ openWAL config sessionId = do
         if hwmExists
             then do
                 content <- TIO.readFile hwmFile
-                pure $ maybe 0 id (readMaybe (T.unpack content))
+                case readMaybe (T.unpack content) of
+                    Just n -> pure n
+                    Nothing -> do
+                        when (not (T.null (T.strip content))) $
+                            Log.logWarn logger ("Corrupted high water mark file " <> T.pack hwmFile <> ", content: " <> T.take 50 content <> " - resetting to 0") ()
+                        pure 0
             else pure 0
 
     seqVar <- newTVarIO initialSeq
@@ -162,6 +179,7 @@ openWAL config sessionId = do
             , whSequence = seqVar
             , whCurrentSegment = segmentVar
             , whHighWaterMark = hwmRef
+            , whLogger = logger
             }
 
 -- | Close a WAL handle, flushing any buffered data

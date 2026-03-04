@@ -124,6 +124,8 @@ openWAL config sessionId = do
     -- Create session directory
     createDirectoryIfMissing True sessionDir
 
+    let logger = walLogger config
+
     -- Read or initialize sequence number
     let seqFile = sessionDir </> "seq"
     seqExists <- doesFileExist seqFile
@@ -131,7 +133,12 @@ openWAL config sessionId = do
         if seqExists
             then do
                 content <- TIO.readFile seqFile
-                pure $ maybe 0 id (readMaybe (T.unpack content))
+                case readMaybe (T.unpack content) of
+                    Just n -> pure n
+                    Nothing -> do
+                        when (not (T.null (T.strip content))) $
+                            Log.logWarn logger ("Corrupted sequence file " <> T.pack seqFile <> ", content: " <> T.take 50 content <> " - resetting to 0") ()
+                        pure 0
             else pure 0
 
     -- Read high water mark
@@ -141,7 +148,12 @@ openWAL config sessionId = do
         if hwmExists
             then do
                 content <- TIO.readFile hwmFile
-                pure $ maybe 0 id (readMaybe (T.unpack content))
+                case readMaybe (T.unpack content) of
+                    Just n -> pure n
+                    Nothing -> do
+                        when (not (T.null (T.strip content))) $
+                            Log.logWarn logger ("Corrupted high water mark file " <> T.pack hwmFile <> ", content: " <> T.take 50 content <> " - resetting to 0") ()
+                        pure 0
             else pure 0
 
     seqVar <- newTVarIO initialSeq
