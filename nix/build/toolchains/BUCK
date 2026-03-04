@@ -1,0 +1,83 @@
+# Generated from toolchains/BUILD.dhall
+# Generated from BUILD.dhall
+# Toolchain definitions for sensenet
+#
+# All toolchains defined in Dhall - zero handwritten starlark.
+
+load(":cxx.bzl", "llvm_toolchain")
+load(":nv.bzl", "nv_toolchain")
+load(":haskell.bzl", "haskell_toolchain")
+load(":rust.bzl", "rust_toolchain")
+load(":lean.bzl", "lean_toolchain")
+load(":purescript.bzl", "purescript_toolchain")
+load(":execution.bzl", "lre_execution_platform", "host_configuration")
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
+load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
+llvm_toolchain(
+    name = "cxx",
+    c_extra_flags = ["-std=c23", "-Wall", "-Wextra"],
+    cxx_extra_flags = ["-std=c++23", "-Wall", "-Wextra", "-fno-exceptions"],
+    link_flags = [],
+    link_style = "static",
+    visibility = ["PUBLIC"],
+)
+
+nv_toolchain(
+    name = "nv",
+    nv_archs = ["sm_90", "sm_100", "sm_120"],
+    nvidia_sdk_path = "/usr/local/cuda",
+    nvidia_sdk_include = "/usr/local/cuda/include",
+    nvidia_sdk_lib = "/usr/local/cuda/lib64",
+    visibility = ["PUBLIC"],
+)
+
+haskell_toolchain(
+    name = "haskell",
+    compiler_flags = ["-Wall", "-Werror", "-XGHC2024", "-fwrite-ide-info", "-hiedir=buck-out/hie"],
+    visibility = ["PUBLIC"],
+)
+
+rust_toolchain(
+    name = "rust",
+    default_edition = "2021",
+    rustc_flags = ["-C", "opt-level=2", "-C", "debuginfo=2"],
+    visibility = ["PUBLIC"],
+)
+
+lean_toolchain(
+    name = "lean",
+    visibility = ["PUBLIC"],
+)
+
+purescript_toolchain(
+    name = "purescript",
+    visibility = ["PUBLIC"],
+)
+
+lre_execution_platform(
+    name = "lre",
+    cpu_configuration = host_configuration.cpu,
+    os_configuration = host_configuration.os,
+    local_enabled = True,
+    remote_enabled = True,
+    visibility = ["PUBLIC"],
+)
+
+lre_execution_platform(
+    name = "local",
+    cpu_configuration = host_configuration.cpu,
+    os_configuration = host_configuration.os,
+    local_enabled = True,
+    remote_enabled = False,
+    visibility = ["PUBLIC"],
+)
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+system_genrule_toolchain(
+    name = "genrule",
+    visibility = ["PUBLIC"],
+)

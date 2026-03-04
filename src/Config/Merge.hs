@@ -34,6 +34,7 @@ module Config.Merge (
     mergeExperimental,
     mergeEnterprise,
     mergeWatcher,
+    mergeTelemetry,
 
     -- * Merge Helpers
 
@@ -115,6 +116,7 @@ mergeConfigs base override =
         , cfgThemes = mergeOptional (cfgThemes base) (cfgThemes override)
         , cfgShare = mergeOptional (cfgShare base) (cfgShare override)
         , cfgAutoUpdate = mergeOptional (cfgAutoUpdate base) (cfgAutoUpdate override)
+        , cfgTelemetry = mergeTelemetry (cfgTelemetry base) (cfgTelemetry override)
         }
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -305,4 +307,12 @@ mergeWatcher :: WatcherConfig -> WatcherConfig -> WatcherConfig
 mergeWatcher base override =
     WatcherConfig
         { watchIgnore = mergeOptional (watchIgnore base) (watchIgnore override)
+        }
+
+-- | Merge telemetry configurations.
+mergeTelemetry :: TelemetryConfig -> TelemetryConfig -> TelemetryConfig
+mergeTelemetry base override =
+    TelemetryConfig
+        { telEnabled = mergeOptional (telEnabled base) (telEnabled override)
+        , telR2 = mergeOptional (telR2 base) (telR2 override)
         }

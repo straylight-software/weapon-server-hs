@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# ghc-pkg-id - GHC wrapper that translates -package to -package-id
+#
+# GHC 9.12 with ghcWithPackages has a bug where -package NAME doesn't expose
+# packages. However, -package-id UNIT_ID works correctly.
+#
+# This wrapper intercepts -package arguments, resolves them to unit IDs using
+# ghc-pkg, and passes -package-id to the underlying GHC.
+#
+# Usage: ghc-pkg-id <ghc-path> <ghc-pkg-path> [ghc-args...]
+
+set -euo pipefail
+
+GHC="$1"
+GHC_PKG="$2"
+shift 2
+
+# Build translated args
+args=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -package)
+            # Next arg is the package name
+            if [[ $# -lt 2 ]]; then
+                echo "Error: -package requires an argument" >&2
+                exit 1
+            fi
+            pkg_name="$2"
+            # Get the unit ID for this package
+            pkg_id=$("$GHC_PKG" field "$pkg_name" id --simple-output 2>/dev/null || true)
+            if [[ -n "$pkg_id" ]]; then
+                args+=("-package-id" "$pkg_id")
+            else
+                # Fall back to -package if we can't resolve
+                args+=("-package" "$pkg_name")
+            fi
+            shift 2
+            ;;
+        -package=*)
+            # Handle -package=name form
+            pkg_name="${1#-package=}"
+            pkg_id=$("$GHC_PKG" field "$pkg_name" id --simple-output 2>/dev/null || true)
+            if [[ -n "$pkg_id" ]]; then
+                args+=("-package-id" "$pkg_id")
+            else
+                args+=("$1")
+            fi
+            shift
+            ;;
+        *)
+            args+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Execute GHC with translated arguments
+exec "$GHC" "${args[@]}"

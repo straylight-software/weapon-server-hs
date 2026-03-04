@@ -31,7 +31,7 @@ via 'newDhallCache' and stored in 'AppState'.
 
 Configuration is loaded in layers:
 
-1. Built-in defaults (from @dhall\/Defaults.dhall@)
+1. Built-in Haskell defaults ('Config.Types.defaultConfig')
 2. Global config (@~\/.config\/weapon\/weapon.dhall@)
 3. Project config (@\<project\>\/weapon.dhall@)
 
@@ -60,7 +60,6 @@ module Config.Dhall (
     -- * Paths
     globalConfigPath,
     projectConfigPath,
-    defaultsPath,
 
     -- * Merging (re-exported from Config.Merge)
     mergeConfigs,
@@ -73,10 +72,14 @@ import Config.Merge (mergeConfigs)
 import Config.Types
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (Exception, SomeException, displayException, throwIO, try)
+import Data.Aeson qualified as Aeson
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Text qualified
-import Dhall (auto, input, inputFile)
+import Data.Text.IO qualified as TIO
+import Dhall.Core (throws)
+import Dhall.Import (load)
+import Dhall.JSON (dhallToJSON)
+import Dhall.Parser (exprFromText)
 import System.Directory (doesFileExist, getHomeDirectory)
 import System.FilePath ((</>))
 
@@ -88,8 +91,6 @@ import System.FilePath ((</>))
 data ConfigError
     = ConfigParseError FilePath String
     -- ^ File exists but failed to parse (path, error message)
-    | ConfigDefaultsMissing FilePath
-    -- ^ Required defaults file is missing
     deriving (Show, Eq)
 
 instance Exception ConfigError
@@ -117,14 +118,6 @@ This is a pure function - no IO required.
 -}
 projectConfigPath :: FilePath -> FilePath
 projectConfigPath dir = dir </> "weapon.dhall"
-
-{- | Path to the default configuration shipped with the binary.
-
-This file provides sensible defaults and is loaded first in the
-configuration layering process.
--}
-defaultsPath :: FilePath
-defaultsPath = "dhall/Defaults.dhall"
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Dhall Cache
@@ -206,22 +199,21 @@ loadConfigCached cache projectDir = do
 -- Uncached Loading Functions
 -- ════════════════════════════════════════════════════════════════════════════
 
-{- | Load defaults from Dhall file (uncached).
+{- | Return the built-in default configuration.
 
-FAILS with 'ConfigDefaultsMissing' if:
-* The defaults file doesn't exist
+Previously this loaded from @dhall/Defaults.dhall@, but that caused issues
+because the Dhall schema field names don't match the Haskell record field
+names (Haskell uses prefixes like @kb@, @sc@, @tui@ while Dhall uses
+unprefixed snake_case). Rather than fix ~20 Dhall type files, we now
+use the Haskell 'defaultConfig' directly.
 
-FAILS with 'ConfigParseError' if:
-* The file fails to parse
+User config files (@~\/.config\/weapon\/weapon.dhall@ and project
+@weapon.dhall@) are still loaded and merged on top of these defaults.
 
 This function is used internally by 'loadDefaultsCached'.
 -}
 loadDefaults :: IO Config
-loadDefaults = do
-    exists <- doesFileExist defaultsPath
-    if not exists
-        then throwIO $ ConfigDefaultsMissing defaultsPath
-        else parseConfigFileStrict defaultsPath
+loadDefaults = pure defaultConfig
 
 {- | Load config from a specific Dhall file (uncached).
 
@@ -244,23 +236,34 @@ loadConfigFromFile path = do
 
 {- | Parse a config file that is known to exist.
 
+Uses a two-step process:
+1. Parse and evaluate the Dhall expression
+2. Convert to JSON and parse with FromJSON (which allows partial records)
+
+This allows user configs to only specify the fields they want to override,
+rather than requiring a full Config record.
+
 FAILS with 'ConfigParseError' if parsing fails.
 No silent fallback to defaults.
 -}
 parseConfigFileStrict :: FilePath -> IO Config
 parseConfigFileStrict path = do
-    result <- try (inputFile auto path) :: IO (Either SomeException Config)
+    result <- try parseViaJson :: IO (Either SomeException Config)
     case result of
         Left err -> throwIO $ ConfigParseError path (displayException err)
         Right cfg -> pure cfg
-
-{- | Load config with Dhall expression (for inline config).
-
-FAILS with 'ConfigParseError' if parsing fails.
--}
-_loadConfigFromText :: Data.Text.Text -> IO Config
-_loadConfigFromText expr = do
-    result <- try (input auto expr) :: IO (Either SomeException Config)
-    case result of
-        Left err -> throwIO $ ConfigParseError "<inline>" (displayException err)
-        Right cfg -> pure cfg
+  where
+    parseViaJson :: IO Config
+    parseViaJson = do
+        -- Read the file
+        content <- TIO.readFile path
+        -- Parse Dhall expression
+        expr <- throws (exprFromText path content)
+        -- Resolve imports and normalize
+        resolved <- load expr
+        -- Convert to JSON
+        json <- throws (dhallToJSON resolved)
+        -- Parse JSON with our FromJSON instance (allows missing fields)
+        case Aeson.fromJSON json of
+            Aeson.Error msg -> fail msg
+            Aeson.Success cfg -> pure cfg

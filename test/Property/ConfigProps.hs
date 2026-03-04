@@ -222,6 +222,7 @@ genConfig =
         <*> pure Nothing -- themes
         <*> Gen.maybe (Gen.element [ShareManual, ShareAuto, ShareDisabled]) -- share
         <*> Gen.maybe (Gen.element [AutoUpdateEnabled, AutoUpdateDisabled, AutoUpdateNotify]) -- autoUpdate
+        <*> pure defaultTelemetry -- telemetry
 
 -- Test tree
 tests :: TestTree

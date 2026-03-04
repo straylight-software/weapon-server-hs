@@ -44,6 +44,7 @@ import Data.Time.Clock.System (getSystemTime, systemNanoseconds, systemSeconds)
 import Log qualified
 import System.Directory (XdgDirectory (..), createDirectoryIfMissing, getXdgDirectory)
 import System.FilePath ((</>))
+import Config.Types (TelemetryConfig (..))
 import Telemetry.ParquetWAL qualified as WAL
 import Telemetry.R2 qualified as R2
 import Telemetry.Types
@@ -51,30 +52,26 @@ import Util.Identifier qualified as Identifier
 
 -- | Manager configuration
 data TelemetryManagerConfig = TelemetryManagerConfig
-    { tmcEnabled :: Bool
-    -- ^ Master enable switch
+    { tmcTelemetryConfig :: TelemetryConfig
+    -- ^ Dhall telemetry configuration (source of truth for R2 credentials)
     , tmcWALDir :: Maybe FilePath
     -- ^ Override WAL directory
     , tmcSyncOnWrite :: Bool
     -- ^ Fsync after every event
-    , tmcR2Enabled :: Bool
-    -- ^ Enable R2 replication
     , tmcR2Required :: Bool
     -- ^ FAIL if R2 is enabled but not configured (no silent degradation)
     , tmcLogger :: Log.Logger
     -- ^ Logger for telemetry subsystem
     }
 
--- | Default configuration
--- R2 is enabled by default but not required (will log warning if not configured)
-defaultManagerConfig :: Log.Logger -> TelemetryManagerConfig
-defaultManagerConfig logger =
+-- | Default configuration (telemetry enabled, R2 not required)
+defaultManagerConfig :: TelemetryConfig -> Log.Logger -> TelemetryManagerConfig
+defaultManagerConfig telConfig logger =
     TelemetryManagerConfig
-        { tmcEnabled = True
+        { tmcTelemetryConfig = telConfig
         , tmcWALDir = Nothing
         , tmcSyncOnWrite = True
-        , tmcR2Enabled = True
-        , tmcR2Required = False -- Set to True to fail if R2 not configured
+        , tmcR2Required = False
         , tmcLogger = Log.withNS logger "telemetry"
         }
 
@@ -126,38 +123,40 @@ startManager config bus defaultProjectId defaultDirectory = do
     sessions <- newTVarIO Map.empty
     idGen <- Identifier.newIdGenState
 
-    -- Initialize R2 if enabled
+    -- Initialize R2 from Dhall config
     -- FAIL if R2 is required but not configured (no silent degradation)
     let lg = tmcLogger config
+        telConfig = tmcTelemetryConfig config
+        telemetryEnabled = maybe True id (telEnabled telConfig)
+    
     mR2Handle <-
-        if tmcR2Enabled config
-            then do
-                r2Result <- R2.configFromEnv
-                case r2Result of
-                    Right r2Config -> do
-                        Log.logInfo lg "R2 replication enabled" ()
-                        Just <$> R2.newR2Handle r2Config
-                    Left R2.R2NotConfigured
-                        | tmcR2Required config -> do
-                            let msg = "R2 replication required but not configured (set WEAPON_R2_* env vars)"
-                            Log.logError lg msg ()
-                            throwIO $ userError $ T.unpack msg
-                        | otherwise -> do
-                            Log.logDebug lg "R2 not configured (set WEAPON_R2_* env vars to enable)" ()
-                            pure Nothing
-                    Left err
-                        | tmcR2Required config -> do
-                            let msg = "R2 config error: " <> T.pack (show err)
-                            Log.logError lg msg ()
-                            throwIO $ userError $ T.unpack msg
-                        | otherwise -> do
-                            Log.logWarn lg ("R2 config error: " <> T.pack (show err)) ()
-                            pure Nothing
+        if telemetryEnabled
+            then case R2.configFromDhall telConfig of
+                Right r2Config -> do
+                    Log.logInfo lg "R2 replication enabled" ()
+                    Just <$> R2.newR2Handle r2Config
+                Left R2.R2NotConfigured
+                    | tmcR2Required config -> do
+                        let msg = "R2 replication required but not configured in weapon.dhall (telemetry.r2.*)"
+                        Log.logError lg msg ()
+                        throwIO $ userError $ T.unpack msg
+                    | otherwise -> do
+                        Log.logDebug lg "R2 not configured (add telemetry.r2 to weapon.dhall)" ()
+                        pure Nothing
+                Left (R2.R2ConfigError err) -> do
+                    let msg = "R2 config error: " <> err
+                    Log.logError lg msg ()
+                    if tmcR2Required config
+                        then throwIO $ userError $ T.unpack msg
+                        else pure Nothing
+                Left err -> do
+                    Log.logWarn lg ("R2 error: " <> T.pack (show err)) ()
+                    pure Nothing
             else pure Nothing
 
     -- Subscribe to all bus events
     unsubscribe <-
-        if tmcEnabled config
+        if telemetryEnabled
             then Bus.subscribeAll bus $ \busEvent ->
                 handleEvent walDir config mR2Handle sessions idGen defaultProjectId defaultDirectory busEvent
             else pure (pure ())

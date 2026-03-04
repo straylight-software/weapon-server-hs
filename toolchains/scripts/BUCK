@@ -1,0 +1,7 @@
+# Haskell toolchain helper scripts
+
+export_file(
+    name = "ghc-pkg-id",
+    src = "ghc-pkg-id",
+    visibility = ["PUBLIC"],
+)

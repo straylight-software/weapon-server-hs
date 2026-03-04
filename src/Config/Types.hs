@@ -104,6 +104,12 @@ module Config.Types (
     SkillConfig (..),
     CommandConfig (..),
 
+    -- * Telemetry
+
+    -- | Telemetry and R2 storage configuration
+    TelemetryConfig (..),
+    R2StorageConfig (..),
+
     -- * Defaults
 
     -- | Default configuration values
@@ -116,6 +122,7 @@ module Config.Types (
     defaultExperimental,
     defaultEnterprise,
     defaultWatcher,
+    defaultTelemetry,
 ) where
 
 import Control.Applicative ((<|>))
@@ -1772,6 +1779,90 @@ instance FromJSON CommandConfig where
             <*> v .:? "subtask"
 
 -- ════════════════════════════════════════════════════════════════════════════
+--                                                                   Telemetry
+-- ════════════════════════════════════════════════════════════════════════════
+
+{- | R2 (Cloudflare) storage configuration for telemetry uploads.
+
+Contains credentials and endpoint information for uploading telemetry
+data to R2 object storage. All fields are optional in Dhall config;
+required fields are validated at runtime by Telemetry.R2.configFromDhall.
+-}
+data R2StorageConfig = R2StorageConfig
+    { r2sAccountId :: Maybe Text
+    -- ^ Cloudflare account ID
+    , r2sAccessKeyId :: Maybe Text
+    -- ^ R2 access key ID
+    , r2sSecretKey :: Maybe Text
+    -- ^ R2 secret access key
+    , r2sBucket :: Maybe Text
+    -- ^ R2 bucket name (default: weapon-telemetry)
+    , r2sPrefix :: Maybe Text
+    -- ^ Key prefix (default: telemetry)
+    , r2sEndpoint :: Maybe Text
+    -- ^ Optional custom endpoint (defaults to R2 standard endpoint)
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (FromDhall, ToDhall)
+
+instance ToJSON R2StorageConfig where
+    toJSON r =
+        object $
+            catMaybes
+                [ fmap ("accountId" .=) (r2sAccountId r)
+                , fmap ("accessKeyId" .=) (r2sAccessKeyId r)
+                , fmap ("secretKey" .=) (r2sSecretKey r)
+                , fmap ("bucket" .=) (r2sBucket r)
+                , fmap ("prefix" .=) (r2sPrefix r)
+                , fmap ("endpoint" .=) (r2sEndpoint r)
+                ]
+
+instance FromJSON R2StorageConfig where
+    parseJSON = withObject "R2StorageConfig" $ \v ->
+        R2StorageConfig
+            <$> v .:? "accountId"
+            <*> v .:? "accessKeyId"
+            <*> v .:? "secretKey"
+            <*> v .:? "bucket"
+            <*> v .:? "prefix"
+            <*> v .:? "endpoint"
+
+{- | Telemetry configuration for full-take capture.
+
+Controls whether telemetry is enabled and where data is uploaded.
+-}
+data TelemetryConfig = TelemetryConfig
+    { telEnabled :: Maybe Bool
+    -- ^ Master switch for telemetry capture (default: True)
+    , telR2 :: Maybe R2StorageConfig
+    -- ^ R2 storage configuration for uploads
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (FromDhall, ToDhall)
+
+instance ToJSON TelemetryConfig where
+    toJSON t =
+        object $
+            catMaybes
+                [ fmap ("enabled" .=) (telEnabled t)
+                , fmap ("r2" .=) (telR2 t)
+                ]
+
+instance FromJSON TelemetryConfig where
+    parseJSON = withObject "TelemetryConfig" $ \v ->
+        TelemetryConfig
+            <$> v .:? "enabled"
+            <*> v .:? "r2"
+
+-- | Default telemetry configuration (enabled by default)
+defaultTelemetry :: TelemetryConfig
+defaultTelemetry =
+    TelemetryConfig
+        { telEnabled = Just True
+        , telR2 = Nothing
+        }
+
+-- ════════════════════════════════════════════════════════════════════════════
 --                                                                 Full Config
 -- ════════════════════════════════════════════════════════════════════════════
 
@@ -1857,6 +1948,9 @@ data Config = Config
     , -- Auto-update
       cfgAutoUpdate :: Maybe AutoUpdate
     -- ^ Auto-update behavior (default: 'AutoUpdateNotify')
+    , -- Telemetry
+      cfgTelemetry :: TelemetryConfig
+    -- ^ Telemetry capture settings
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1890,6 +1984,7 @@ instance ToJSON Config where
                 , optField "themes" (cfgThemes c)
                 , optField "share" (cfgShare c)
                 , optField "autoupdate" (cfgAutoUpdate c)
+                , optField "telemetry" (Just $ cfgTelemetry c)
                 ]
       where
         optField :: (ToJSON v) => Key -> Maybe v -> Maybe Pair
@@ -1921,6 +2016,7 @@ instance FromJSON Config where
             <*> v .:? "themes"
             <*> v .:? "share"
             <*> v .:? "autoupdate"
+            <*> v .:? "telemetry" .!= defaultTelemetry
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                    Defaults
@@ -2062,4 +2158,5 @@ defaultConfig =
         , cfgThemes = Nothing
         , cfgShare = Nothing
         , cfgAutoUpdate = Just AutoUpdateNotify
+        , cfgTelemetry = defaultTelemetry
         }

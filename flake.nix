@@ -51,6 +51,9 @@
           ...
         }:
         let
+          # Build parquet-ffi (Rust library for Parquet support)
+          parquet-ffi = pkgs.callPackage ./parquet-ffi { };
+
           # Get pre-built haskemathesis packages from the flake
           # These are built with the same nixpkgs (via inputs.nixpkgs.follows)
           haskemathesisPkgs = inputs'.haskemathesis.packages;
@@ -83,7 +86,7 @@
                 haskemathesis-core = rebuildWithProfiling haskemathesisPkgs.haskemathesis-core;
                 haskemathesis = rebuildWithProfiling haskemathesisPkgs.haskemathesis;
                 haskemathesis-tasty = rebuildWithProfiling haskemathesisPkgs.haskemathesis-tasty;
-                weapon-server = self.callPackage ./default.nix { };
+                weapon-server = self.callPackage ./default.nix { inherit parquet-ffi; };
               };
           };
 

@@ -33,14 +33,23 @@ weapon-telemetry\/
           {hash}.bin
 @
 
-== Environment Variables
+== Dhall Configuration
+
+Configuration comes from @weapon.dhall@:
 
 @
-WEAPON_R2_ACCOUNT_ID     - Cloudflare account ID
-WEAPON_R2_ACCESS_KEY_ID  - R2 access key ID  
-WEAPON_R2_SECRET_KEY     - R2 secret access key
-WEAPON_R2_BUCKET         - R2 bucket name (default: weapon-telemetry)
-WEAPON_R2_PREFIX         - Key prefix (default: telemetry)
+{ telemetry =
+    { enabled = Some True
+    , r2 = Some
+        { accountId = Some "your-cloudflare-account-id"
+        , accessKeyId = Some "r2-api-token-access-key"
+        , secretKey = Some "r2-api-token-secret-key"
+        , bucket = Some "weapon-telemetry"
+        , prefix = Some "telemetry"
+        , endpoint = None Text
+        }
+    }
+}
 @
 
 @since 0.1.0
@@ -53,7 +62,6 @@ module Telemetry.R2 (
     ReplicationWorker,
 
     -- * Configuration
-    configFromEnv,
     configFromDhall,
     isConfigured,
 
@@ -68,7 +76,7 @@ module Telemetry.R2 (
     stopReplicationWorker,
 ) where
 
-import Control.Applicative ((<|>))
+
 import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (Exception, SomeException, try)
@@ -99,7 +107,7 @@ import Network.HTTP.Client (
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (Header, statusCode)
 import Log qualified
-import System.Environment (lookupEnv)
+
 import System.FilePath ((</>), takeFileName)
 import Telemetry.ParquetWAL qualified as WAL
 
@@ -144,94 +152,46 @@ data R2Handle = R2Handle
     , r2Manager :: Manager
     }
 
--- | Load R2 configuration from environment variables
-configFromEnv :: IO (Either R2Error R2Config)
-configFromEnv = do
-    mAccountId <- lookupEnv "WEAPON_R2_ACCOUNT_ID"
-    mAccessKey <- lookupEnv "WEAPON_R2_ACCESS_KEY_ID"
-    mSecretKey <- lookupEnv "WEAPON_R2_SECRET_KEY"
-    mBucket <- lookupEnv "WEAPON_R2_BUCKET"
-    mPrefix <- lookupEnv "WEAPON_R2_PREFIX"
-    mEndpoint <- lookupEnv "WEAPON_R2_ENDPOINT"
+{- | Load R2 configuration from Dhall TelemetryConfig.
 
-    case (mAccountId, mAccessKey, mSecretKey) of
-        (Just accountId, Just accessKey, Just secretKey) ->
-            pure $
-                Right
-                    R2Config
-                        { r2AccountId = T.pack accountId
-                        , r2AccessKeyId = T.pack accessKey
-                        , r2SecretAccessKey = T.pack secretKey
-                        , r2Bucket = T.pack $ maybe "weapon-telemetry" id mBucket
-                        , r2Prefix = T.pack $ maybe "telemetry" id mPrefix
-                        , r2Endpoint = T.pack <$> mEndpoint
-                        , r2Region = "auto" -- R2 always uses "auto"
-                        }
-        _ ->
-            pure $ Left R2NotConfigured
+All configuration comes from Dhall - no environment variable fallback.
+Returns R2NotConfigured if required fields are missing.
 
-{- | Load R2 configuration from Dhall TelemetryConfig with env var fallback.
+Required fields in weapon.dhall:
+  telemetry.r2.accountId
+  telemetry.r2.accessKeyId  
+  telemetry.r2.secretKey
 
-This function first checks the Dhall config for R2 settings, then falls back
-to environment variables for any missing values. This allows users to either
-configure R2 entirely via Dhall, entirely via environment variables, or use
-a combination of both.
-
-Priority (highest to lowest):
-1. Dhall config values
-2. Environment variables
-3. Default values (for bucket and prefix)
+Optional fields (with defaults):
+  telemetry.r2.bucket   (default: "weapon-telemetry")
+  telemetry.r2.prefix   (default: "telemetry")
+  telemetry.r2.endpoint (default: none, uses Cloudflare R2)
 -}
-configFromDhall :: TelemetryConfig -> IO (Either R2Error R2Config)
-configFromDhall telConfig = do
-    -- Get env vars as fallbacks
-    mEnvAccountId <- lookupEnv "WEAPON_R2_ACCOUNT_ID"
-    mEnvAccessKey <- lookupEnv "WEAPON_R2_ACCESS_KEY_ID"
-    mEnvSecretKey <- lookupEnv "WEAPON_R2_SECRET_KEY"
-    mEnvBucket <- lookupEnv "WEAPON_R2_BUCKET"
-    mEnvPrefix <- lookupEnv "WEAPON_R2_PREFIX"
-    mEnvEndpoint <- lookupEnv "WEAPON_R2_ENDPOINT"
-
-    -- Extract R2 config from Dhall (if present)
-    let mDhallR2 = telR2 telConfig
-
-    -- Helper to get value from Dhall or env, preferring Dhall
-    let getValue :: (R2StorageConfig -> Maybe Text) -> Maybe String -> Maybe Text
-        getValue dhallGetter envVal =
-            case mDhallR2 of
-                Just r2cfg -> dhallGetter r2cfg <|> (T.pack <$> envVal)
-                Nothing -> T.pack <$> envVal
-
-    let mAccountId = getValue r2sAccountId mEnvAccountId
-        mAccessKey = getValue r2sAccessKeyId mEnvAccessKey
-        mSecretKey = getValue r2sSecretKey mEnvSecretKey
-        mBucket = getValue r2sBucket mEnvBucket
-        mPrefix = getValue r2sPrefix mEnvPrefix
-        mEndpoint = getValue r2sEndpoint mEnvEndpoint
-
-    case (mAccountId, mAccessKey, mSecretKey) of
-        (Just accountId, Just accessKey, Just secretKey) ->
-            pure $
-                Right
-                    R2Config
+configFromDhall :: TelemetryConfig -> Either R2Error R2Config
+configFromDhall telConfig =
+    case telR2 telConfig of
+        Nothing -> Left R2NotConfigured
+        Just r2cfg ->
+            case (r2sAccountId r2cfg, r2sAccessKeyId r2cfg, r2sSecretKey r2cfg) of
+                (Just accountId, Just accessKey, Just secretKey) ->
+                    Right R2Config
                         { r2AccountId = accountId
                         , r2AccessKeyId = accessKey
                         , r2SecretAccessKey = secretKey
-                        , r2Bucket = maybe "weapon-telemetry" id mBucket
-                        , r2Prefix = maybe "telemetry" id mPrefix
-                        , r2Endpoint = mEndpoint
+                        , r2Bucket = maybe "weapon-telemetry" id (r2sBucket r2cfg)
+                        , r2Prefix = maybe "telemetry" id (r2sPrefix r2cfg)
+                        , r2Endpoint = r2sEndpoint r2cfg
                         , r2Region = "auto" -- R2 always uses "auto"
                         }
-        _ ->
-            pure $ Left R2NotConfigured
+                (Nothing, _, _) -> Left $ R2ConfigError "telemetry.r2.accountId is required"
+                (_, Nothing, _) -> Left $ R2ConfigError "telemetry.r2.accessKeyId is required"
+                (_, _, Nothing) -> Left $ R2ConfigError "telemetry.r2.secretKey is required"
 
--- | Check if R2 is configured
-isConfigured :: IO Bool
-isConfigured = do
-    result <- configFromEnv
-    pure $ case result of
-        Right _ -> True
-        Left _ -> False
+-- | Check if R2 is configured in a TelemetryConfig
+isConfigured :: TelemetryConfig -> Bool
+isConfigured telConfig = case configFromDhall telConfig of
+    Right _ -> True
+    Left _ -> False
 
 -- | Create a new R2 handle
 newR2Handle :: R2Config -> IO R2Handle

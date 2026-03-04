@@ -25,6 +25,7 @@ import Data.Text (Text)
 
 import Bus.Bus qualified as Bus
 import Config.Dhall qualified as Dhall
+import Config.Types (Config (..))
 import Data.Text qualified as Text
 import Formatter.Status qualified as Formatter
 import Katip qualified
@@ -91,8 +92,10 @@ mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir pr
         Log.logMsg logger Katip.InfoS $ "State: bus->eventChan forwarding: " <> Bus.beType event
         atomically $ writeTChan eventChan (toJSON event)
 
-    -- Start telemetry capture (full-take: every event goes to WAL)
-    let telemetryConfig = Telemetry.defaultManagerConfig logger
+    -- Load telemetry config from Dhall and start capture
+    dhallConfig <- Dhall.loadConfigCached dhallCache (Text.unpack directory)
+    let telConfig = cfgTelemetry dhallConfig
+        telemetryConfig = Telemetry.defaultManagerConfig telConfig logger
     telemetry <- Telemetry.startManager telemetryConfig bus projectID directory
 
     pure $

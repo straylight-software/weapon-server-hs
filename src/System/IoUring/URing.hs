@@ -128,7 +128,7 @@ initURing _capNo sqEntries _cqEntries = do
     if ret < 0
         then do
             free ptr
-            ioError $ userError "io_uring_queue_init failed"
+            ioError $ userError $ "io_uring_queue_init failed with errno " ++ show (-ret)
         else return $ URing ptr
 
 -- | Close an io_uring instance and free resources.

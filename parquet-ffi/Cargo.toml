@@ -1,0 +1,18 @@
+[package]
+name = "parquet-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C FFI bindings for writing Parquet files from Haskell"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+arrow = { version = "53", default-features = false }
+parquet = { version = "53", default-features = false, features = ["arrow", "zstd", "snap"] }
+libc = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3

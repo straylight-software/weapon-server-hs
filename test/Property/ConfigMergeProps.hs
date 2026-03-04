@@ -111,6 +111,7 @@ genConfig =
         <*> pure Nothing -- themes
         <*> pure Nothing -- share
         <*> pure Nothing -- autoUpdate
+        <*> pure defaultTelemetry -- telemetry
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                    mergeOptional Properties

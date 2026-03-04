@@ -100,6 +100,7 @@ withState dhallCache exeCache action =
                             , stDhallCache = dhallCache
                             , stExeCache = exeCache
                             , stDirCache = dirCache
+                            , stTelemetry = Nothing
                             }
                 action st
 

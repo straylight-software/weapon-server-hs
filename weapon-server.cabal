@@ -152,9 +152,8 @@ library
 
   -- // evring-wai (io_uring bindings)
   c-sources:          cbits/uring_compat.c
-  include-dirs:       cbits parquet-ffi/include
+  include-dirs:       cbits
   extra-libraries:    uring parquet_ffi
-  extra-lib-dirs:     parquet-ffi/target/release
 
   -- // agent
   -- // api
@@ -207,8 +206,10 @@ library
     , memory              >=0.18
     , data-default-class  >=0.1
     , dhall               >=1.42
+    , dhall-json          >=1.7
     , directory           >=1.3
     , filepath            >=1.4
+    , http-api-data       >=0.6
     , http-client
     , http-client-tls
     , http-types          >=0.12
@@ -288,81 +289,6 @@ executable weapon-server
     RecordWildCards
 
 -- ════════════════════════════════════════════════════════════════════════════
---                                                           // cli executable
--- ════════════════════════════════════════════════════════════════════════════
-
--- | The main weapon CLI - embeds the server library, can shell out for TUI
-executable weapon
-  main-is:            Main.hs
-  hs-source-dirs:     cli
-  default-language:   GHC2021
-  ghc-options:
-    -Wall -Wcompat -Werror -O2 -threaded -rtsopts "-with-rtsopts=-N -T"
-    -fwrite-ide-info -hiedir=.hie
-
-  if flag(production)
-    cpp-options: -DPRODUCTION
-
-  other-modules:
-    CLI.Backend
-    CLI.Commands
-    CLI.Commands.Auth
-    CLI.Commands.Models
-    CLI.Commands.Run
-    CLI.Commands.Serve
-    CLI.Commands.Session
-    CLI.Output
-    CLI.TUI
-
-  build-depends:
-    -- core
-    , base                    >=4.17 && <5
-    , text                    >=2.0
-    , bytestring              >=0.11
-    , containers              >=0.6
-    -- cli
-    , optparse-applicative    >=0.18
-    , ansi-terminal           >=1.0
-    , terminal-size           >=0.3
-    -- io
-    , directory               >=1.3
-    , filepath                >=1.4
-    , process                 >=1.6
-    , typed-process           >=0.2
-    , unix                    >=2.8
-    -- json/http (for remote mode)
-    , aeson                   >=2.0
-    , http-client             >=0.7
-    , http-client-tls         >=0.3
-    , http-types              >=0.12
-    -- servant (for serve command)
-    , servant                 >=0.20
-    , servant-server          >=0.20
-    , wai                     >=3.2
-    , wai-websockets          >=3.0
-    , websockets              >=0.12
-    -- logging
-    , katip                   >=0.8
-    -- async
-    , async                   >=2.2
-    , stm                     >=2.5
-    -- time
-    , time                    >=1.12
-    -- the server library
-    , weapon-server
-
-  default-extensions:
-    BangPatterns
-    DataKinds
-    DeriveGeneric
-    DerivingStrategies
-    LambdaCase
-    NamedFieldPuns
-    OverloadedStrings
-    RecordWildCards
-    StrictData
-
--- ════════════════════════════════════════════════════════════════════════════
 --                                                               // test suite
 -- ════════════════════════════════════════════════════════════════════════════
 
@@ -382,7 +308,6 @@ test-suite weapon-server-test
     Integration.FindSearchSpec
     Integration.HandlerSubprocessSpec
     Integration.HaskemathesisTest
-    Integration.QuietModeSpec
     Integration.StorageSpec
     Integration.ToolExecSpec
     Property.AgentAgentProps

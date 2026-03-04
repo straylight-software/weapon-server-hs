@@ -34,80 +34,80 @@ let Experimental = ./Types/Experimental.dhall
 
 let Enterprise = ./Types/Enterprise.dhall
 
-let AutoUpdate = < Enabled | Disabled | Notify >
+let Telemetry = ./Types/Telemetry.dhall
 
+let AutoUpdate = < AutoUpdateEnabled | AutoUpdateDisabled | AutoUpdateNotify >
+
+-- Config type with field names matching Haskell record (cfg prefix)
 let Config =
       { Type =
           { -- Core settings
-            model : Optional Text
-          , systemPrompt : Optional Text
-          , maxTokens : Optional Natural
-          , logLevel : Optional Enums.LogLevel
+            cfgModel : Optional Text
+          , cfgSystemPrompt : Optional Text
+          , cfgMaxTokens : Optional Integer
+          , cfgLogLevel : Optional Enums.LogLevel
           , -- Nested configs
-            keybinds : Keybinds.Type
-          , server : Server.Type
-          , tui : TUI.Type
-          , permission : Permission.Permission.Type
-          , compaction : Compaction.Type
-          , experimental : Experimental.Type
-          , enterprise : Enterprise.Type
-          , watcher : Watcher.Type
+            cfgKeybinds : Keybinds.Type
+          , cfgServer : Server.Type
+          , cfgTui : TUI.Type
+          , cfgPermission : Permission.Permission.Type
+          , cfgCompaction : Compaction.Type
+          , cfgExperimental : Experimental.Type
+          , cfgEnterprise : Enterprise.Type
+          , cfgWatcher : Watcher.Type
           , -- Map fields (name -> config)
-            agent :
+            cfgAgent :
               Optional
                 (List { mapKey : Text, mapValue : Agent.AgentConfig.Type })
-          , provider :
+          , cfgProvider :
               Optional
                 ( List
                     { mapKey : Text, mapValue : Provider.ProviderConfig.Type }
                 )
-          , mcp : Optional (List { mapKey : Text, mapValue : MCP.MCP })
-          , formatter : Optional Formatter.Formatter
-          , lsp : Optional LSP.LSP
-          , skill : Optional (List { mapKey : Text, mapValue : Skill.Type })
-          , command : Optional (List { mapKey : Text, mapValue : Command.Type })
+          , cfgMcp : Optional (List { mapKey : Text, mapValue : MCP.MCP })
+          , cfgFormatter : Optional Formatter.Formatter
+          , cfgLsp : Optional LSP.LSP
+          , cfgSkill : Optional (List { mapKey : Text, mapValue : Skill.Type })
+          , cfgCommand : Optional (List { mapKey : Text, mapValue : Command.Type })
           , -- Theme settings
-            theme : Optional Text
-          , themes :
+            cfgTheme : Optional Text
+          , cfgThemes :
               Optional (List { mapKey : Text, mapValue : Theme.Theme.Type })
           , -- Share settings
-            share : Optional Enums.ShareMode
+            cfgShare : Optional Enums.ShareMode
           , -- Auto-update
-            autoUpdate : Optional AutoUpdate
-          , -- Disabled tools
-            disabledTools : Optional (List Text)
-          , -- Instrumentation
-            instrumentation : Optional Bool
+            cfgAutoUpdate : Optional AutoUpdate
+          , -- Telemetry
+            cfgTelemetry : Telemetry.Telemetry.Type
           }
       , default =
-        { model = None Text
-        , systemPrompt = None Text
-        , maxTokens = None Natural
-        , logLevel = Some Enums.LogLevel.INFO
-        , keybinds = Keybinds.default
-        , server = Server.default
-        , tui = TUI.default
-        , permission = Permission.Permission.default
-        , compaction = Compaction.default
-        , experimental = Experimental.default
-        , enterprise = Enterprise.default
-        , watcher = Watcher.default
-        , agent =
+        { cfgModel = None Text
+        , cfgSystemPrompt = None Text
+        , cfgMaxTokens = None Integer
+        , cfgLogLevel = Some Enums.LogLevel.INFO
+        , cfgKeybinds = Keybinds.default
+        , cfgServer = Server.default
+        , cfgTui = TUI.default
+        , cfgPermission = Permission.Permission.default
+        , cfgCompaction = Compaction.default
+        , cfgExperimental = Experimental.default
+        , cfgEnterprise = Enterprise.default
+        , cfgWatcher = Watcher.default
+        , cfgAgent =
             None (List { mapKey : Text, mapValue : Agent.AgentConfig.Type })
-        , provider =
+        , cfgProvider =
             None
               (List { mapKey : Text, mapValue : Provider.ProviderConfig.Type })
-        , mcp = None (List { mapKey : Text, mapValue : MCP.MCP })
-        , formatter = None Formatter.Formatter
-        , lsp = None LSP.LSP
-        , skill = None (List { mapKey : Text, mapValue : Skill.Type })
-        , command = None (List { mapKey : Text, mapValue : Command.Type })
-        , theme = None Text
-        , themes = None (List { mapKey : Text, mapValue : Theme.Theme.Type })
-        , share = None Enums.ShareMode
-        , autoUpdate = Some AutoUpdate.Notify
-        , disabledTools = None (List Text)
-        , instrumentation = Some False
+        , cfgMcp = None (List { mapKey : Text, mapValue : MCP.MCP })
+        , cfgFormatter = None Formatter.Formatter
+        , cfgLsp = None LSP.LSP
+        , cfgSkill = None (List { mapKey : Text, mapValue : Skill.Type })
+        , cfgCommand = None (List { mapKey : Text, mapValue : Command.Type })
+        , cfgTheme = None Text
+        , cfgThemes = None (List { mapKey : Text, mapValue : Theme.Theme.Type })
+        , cfgShare = None Enums.ShareMode
+        , cfgAutoUpdate = Some AutoUpdate.AutoUpdateNotify
+        , cfgTelemetry = Telemetry.Telemetry.default
         }
       }
 
@@ -129,6 +129,7 @@ in  { -- Re-export all modules
     , Compaction
     , Experimental
     , Enterprise
+    , Telemetry
     , AutoUpdate
     , Config
     }

@@ -18,6 +18,7 @@ import Data.ByteString qualified as BS
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
+import System.IO.Unsafe (unsafePerformIO)
 import Test.Tasty
 import Test.Tasty.Hedgehog
 
@@ -49,6 +50,16 @@ import Evring.Wai.MultiCore (
     ServerSettings (..),
     defaultServerSettings,
  )
+import Log qualified
+
+-- | Null logger for testing (no output)
+{-# NOINLINE testLogger #-}
+testLogger :: Log.Logger
+testLogger = unsafePerformIO $ Log.newNullLogger "test"
+
+-- | Default server settings for testing
+testServerSettings :: ServerSettings
+testServerSettings = defaultServerSettings testLogger
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Handle Tests
@@ -180,24 +191,24 @@ prop_byteSwap16_involution = property $ do
 -- | Property: defaultServerSettings has reasonable port retry value
 prop_serverSettings_defaultPortRetry :: Property
 prop_serverSettings_defaultPortRetry = property $ do
-    serverPortRetry defaultServerSettings === 10
+    serverPortRetry testServerSettings === 10
 
 -- | Property: serverSettings fields can be modified independently
 prop_serverSettings_field_modification :: Property
 prop_serverSettings_field_modification = property $ do
     port <- forAll $ Gen.int (Range.linear 1024 65535)
     retries <- forAll $ Gen.int (Range.linear 0 20)
-    let modified = defaultServerSettings{serverPort = port, serverPortRetry = retries}
+    let modified = testServerSettings{serverPort = port, serverPortRetry = retries}
     serverPort modified === port
     serverPortRetry modified === retries
     -- Other fields unchanged
-    serverBacklog modified === serverBacklog defaultServerSettings
-    serverRingSize modified === serverRingSize defaultServerSettings
+    serverBacklog modified === serverBacklog testServerSettings
+    serverRingSize modified === serverRingSize testServerSettings
 
 -- | Property: defaultServerSettings has valid default port
 prop_serverSettings_defaultPort :: Property
 prop_serverSettings_defaultPort = property $ do
-    let port = serverPort defaultServerSettings
+    let port = serverPort testServerSettings
     assert (port > 0 && port < 65536)
 
 -- ════════════════════════════════════════════════════════════════════════════
