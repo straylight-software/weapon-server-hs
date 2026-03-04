@@ -45,15 +45,17 @@ module Telemetry.ParquetWAL (
 
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
-import Control.Exception (Exception, SomeException, catch)
+import Control.Exception (Exception, IOException, catch)
 import Control.Monad (when)
 import Data.IORef
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Data.Word (Word64)
+import Log qualified
 import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory)
 import System.FilePath ((</>))
+import System.IO.Error (isDoesNotExistError)
 import Telemetry.Parquet qualified as Parquet
 import Telemetry.Types (TelemetryEvent (..))
 import Text.Printf (printf)
@@ -67,16 +69,18 @@ data WALConfig = WALConfig
     -- ^ Number of events per segment file (row group size)
     , walSyncOnWrite :: Bool
     -- ^ Whether to flush after every write (safest but slower)
+    , walLogger :: Log.Logger
+    -- ^ Logger for error reporting
     }
-    deriving (Show, Eq)
 
 -- | Default configuration
-defaultWALConfig :: FilePath -> WALConfig
-defaultWALConfig baseDir =
+defaultWALConfig :: FilePath -> Log.Logger -> WALConfig
+defaultWALConfig baseDir logger =
     WALConfig
         { walBaseDir = baseDir
         , walSegmentSize = 10000
         , walSyncOnWrite = True
+        , walLogger = Log.withNS logger "wal"
         }
 
 -- | Errors that can occur during WAL operations
@@ -108,6 +112,8 @@ data WALHandle = WALHandle
     -- ^ Currently open segment
     , whHighWaterMark :: IORef Word64
     -- ^ Last replicated sequence
+    , whLogger :: Log.Logger
+    -- ^ Logger for error reporting
     }
 
 -- | Open or create a WAL for a session
@@ -150,6 +156,7 @@ openWAL config sessionId = do
             , whSequence = seqVar
             , whCurrentSegment = segmentVar
             , whHighWaterMark = hwmRef
+            , whLogger = walLogger config
             }
 
 -- | Close a WAL handle, flushing any buffered data
@@ -212,12 +219,19 @@ getHighWaterMark = readIORef . whHighWaterMark
 listUnreplicatedSegments :: WALHandle -> IO [(FilePath, Word64, Word64)]
 listUnreplicatedSegments wh = do
     hwm <- getHighWaterMark wh
-    files <- listDirectory (whSessionDir wh) `catch` \(_ :: SomeException) -> pure []
+    files <- listDirectory (whSessionDir wh) `catch` handleListError
     let segments = filter isSegmentFile files
         segmentInfos = map parseSegmentFile segments
         unreplicated = filter (\(_, start, _) -> start >= hwm) segmentInfos
     pure $ map (\(name, start, end) -> (whSessionDir wh </> name, start, end)) unreplicated
   where
+    handleListError :: IOException -> IO [FilePath]
+    handleListError e
+        | isDoesNotExistError e = pure []
+        | otherwise = do
+            Log.logError (whLogger wh) ("Failed to list WAL directory: " <> T.pack (show e)) ()
+            pure []
+
     isSegmentFile f = 
         length f > 8 && 
         take 10 f == replicate 10 '0' || all (`elem` ['0' .. '9']) (take 10 f)
