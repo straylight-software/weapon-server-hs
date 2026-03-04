@@ -62,6 +62,7 @@ module Skill.Skill (
 
 import Config.Config qualified as Config
 import Config.Types qualified as CT
+import Control.Exception (try, SomeException)
 import Control.Monad (foldM, forM)
 import Data.Aeson (FromJSON (..), ToJSON (..), eitherDecodeStrict, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.ByteString (ByteString)
@@ -73,6 +74,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import GHC.Generics (Generic)
+import Log qualified
 import Network.HTTP.Client (Manager, httpLbs, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Client.TLS (newTlsManager)
 import Network.HTTP.Types.Status (statusCode)
@@ -409,16 +411,16 @@ referenced skill files to the local cache.
 Note: This is kept for backwards compatibility but skills in config
 are now defined inline via Dhall.
 -}
-pullSkills :: String -> IO [FilePath]
-pullSkills url = do
+pullSkills :: Log.Logger -> String -> IO [FilePath]
+pullSkills logger url = do
     manager <- newTlsManager
     let baseUrl = normalizeBaseUrl url
-    mIndex <- fetchSkillIndex manager baseUrl
+    mIndex <- fetchSkillIndex logger manager baseUrl
     case mIndex of
         Nothing -> pure []
         Just idx -> do
             cache <- skillCacheDir
-            results <- mapM (downloadSkillEntry manager cache baseUrl) (siSkills idx)
+            results <- mapM (downloadSkillEntry logger manager cache baseUrl) (siSkills idx)
             pure (concat results)
 
 -- | Normalize a base URL to ensure it ends with a slash.
@@ -428,22 +430,35 @@ normalizeBaseUrl url
     | otherwise = url <> "/"
 
 -- | Fetch the skill index from a remote URL.
-fetchSkillIndex :: Manager -> String -> IO (Maybe SkillIndex)
-fetchSkillIndex manager baseUrl = do
+fetchSkillIndex :: Log.Logger -> Manager -> String -> IO (Maybe SkillIndex)
+fetchSkillIndex logger manager baseUrl = do
     let indexUrl = baseUrl <> "index.json"
-    indexReq <- parseRequest indexUrl
-    indexResp <- httpLbs indexReq manager
-    if statusCode (responseStatus indexResp) /= 200
-        then pure Nothing
-        else pure $ parseSkillIndex (BSL.toStrict (responseBody indexResp))
+    result <- try $ do
+        indexReq <- parseRequest indexUrl
+        httpLbs indexReq manager
+    case result of
+        Left (err :: SomeException) -> do
+            Log.logWarn logger ("Failed to fetch skill index from " <> T.pack indexUrl <> ": " <> T.pack (show err)) ()
+            pure Nothing
+        Right indexResp -> do
+            let code = statusCode (responseStatus indexResp)
+            if code /= 200
+                then do
+                    Log.logWarn logger ("Failed to fetch skill index from " <> T.pack indexUrl <> ": HTTP " <> T.pack (show code)) ()
+                    pure Nothing
+                else case parseSkillIndex (BSL.toStrict (responseBody indexResp)) of
+                    Nothing -> do
+                        Log.logWarn logger ("Failed to parse skill index from " <> T.pack indexUrl <> ": invalid JSON") ()
+                        pure Nothing
+                    Just idx -> pure (Just idx)
 
 -- | Download all files for a skill entry.
-downloadSkillEntry :: Manager -> FilePath -> String -> SkillIndexEntry -> IO [FilePath]
-downloadSkillEntry manager cache baseUrl entry = do
+downloadSkillEntry :: Log.Logger -> Manager -> FilePath -> String -> SkillIndexEntry -> IO [FilePath]
+downloadSkillEntry logger manager cache baseUrl entry = do
     let name = sieName entry
     let root = cache </> T.unpack name
     createDirectoryIfMissing True root
-    mapM_ (downloadSkillFile manager baseUrl root name) (sieFiles entry)
+    mapM_ (downloadSkillFile logger manager baseUrl root name) (sieFiles entry)
     checkSkillMdExists root
 
 -- | Check if SKILL.md exists in a directory and return the directory if so.
@@ -454,17 +469,23 @@ checkSkillMdExists root = do
     pure [root | exists]
 
 -- | Download a single skill file.
-downloadSkillFile :: Manager -> String -> FilePath -> Text -> Text -> IO ()
-downloadSkillFile manager baseUrl root name file = do
+downloadSkillFile :: Log.Logger -> Manager -> String -> FilePath -> Text -> Text -> IO ()
+downloadSkillFile logger manager baseUrl root name file = do
     let url = baseUrl <> T.unpack name <> "/" <> T.unpack file
-    req <- parseRequest url
-    resp <- httpLbs req manager
-    if statusCode (responseStatus resp) /= 200
-        then pure ()
-        else do
-            let dest = root </> T.unpack file
-            createDirectoryIfMissing True (takeDirectory dest)
-            BS.writeFile dest (BSL.toStrict (responseBody resp))
+    result <- try $ do
+        req <- parseRequest url
+        httpLbs req manager
+    case result of
+        Left (err :: SomeException) -> do
+            Log.logWarn logger ("Failed to download skill file " <> name <> "/" <> file <> ": " <> T.pack (show err)) ()
+        Right resp -> do
+            let code = statusCode (responseStatus resp)
+            if code /= 200
+                then Log.logError logger ("Failed to download skill " <> name <> "/" <> file <> ": HTTP " <> T.pack (show code)) ()
+                else do
+                    let dest = root </> T.unpack file
+                    createDirectoryIfMissing True (takeDirectory dest)
+                    BS.writeFile dest (BSL.toStrict (responseBody resp))
 
 {- | Get the skill cache directory.
 
@@ -478,5 +499,5 @@ skillCacheDir = do
     pure dir
 
 -- Silence unused warning for pullSkills (kept for potential future use)
-_unusedPullSkills :: String -> IO [FilePath]
+_unusedPullSkills :: Log.Logger -> String -> IO [FilePath]
 _unusedPullSkills = pullSkills
