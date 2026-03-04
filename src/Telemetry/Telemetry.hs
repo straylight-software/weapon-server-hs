@@ -41,7 +41,7 @@ module Telemetry.Telemetry (
 ) where
 
 import Bus.Bus qualified as Bus
-import Control.Concurrent (ThreadId, forkIO, killThread)
+import Control.Concurrent (ThreadId, killThread)
 import Control.Concurrent qualified as Concurrent
 import Control.Exception (SomeException, try)
 import Control.Monad (forever, void)
@@ -60,6 +60,7 @@ import System.FilePath ((</>))
 import Telemetry.Types
 import Telemetry.WAL qualified as WAL
 import Util.Identifier qualified as Identifier
+import Util.Thread (forkLogged)
 
 -- | Telemetry configuration
 data TelemetryConfig = TelemetryConfig
@@ -120,6 +121,7 @@ start config bus sessionId projectId directory = do
                 { WAL.walBaseDir = walDir
                 , WAL.walSegmentSize = 10000
                 , WAL.walSyncOnWrite = tcSyncOnWrite config
+                , WAL.walLogger = Log.withNS (tcLogger config) "wal"
                 }
     wal <- WAL.openWAL walConfig sessionId
 
@@ -141,7 +143,8 @@ start config bus sessionId projectId directory = do
         let eventType = Bus.beType busEvent
             payload = Bus.beProperties busEvent
         -- Capture asynchronously (don't block bus)
-        void $ forkIO $ do
+        -- forkLogged provides outer safety net; inner try/catch for finer-grained handling
+        void $ forkLogged lg "telemetry-capture" $ do
             result <- try $ captureEvent' eventType payload
             case result of
                 Left (e :: SomeException) ->
@@ -153,7 +156,7 @@ start config bus sessionId projectId directory = do
 
     -- The subscriber thread is managed by Bus.subscribeAll
     -- We just need a placeholder thread ID
-    tid <- forkIO $ forever $ Concurrent.threadDelay 1000000000
+    tid <- forkLogged lg "telemetry-placeholder" $ forever $ Concurrent.threadDelay 1000000000
     writeIORef tidRef tid
 
     pure $

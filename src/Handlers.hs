@@ -135,7 +135,8 @@ import Api
 import Bus.Bus qualified as Bus
 import Config.Config qualified as Config
 import Control.Applicative ((<|>))
-import Control.Concurrent (forkIO, myThreadId)
+import Control.Concurrent (myThreadId)
+import Util.Thread (forkLogged)
 import Control.Concurrent.STM
 import Control.Exception (AsyncException (ThreadKilled), SomeException, catch, fromException)
 import Control.Monad (forM, forM_, unless, when)
@@ -1000,7 +1001,7 @@ createMessageIO st sid input = do
 
     -- Spawn LLM streaming task
     _ <-
-        forkIO $
+        forkLogged (stLogger st) "llm-streaming-task" $
             ( do
                 -- Register this thread for abort support
                 tid <- myThreadId
@@ -1407,7 +1408,7 @@ sessionPromptAsyncHandler st sid input = do
 
 startPromptAsyncWorker :: AppState -> IO ()
 startPromptAsyncWorker st = do
-    _ <- forkIO $ promptAsyncLoop st
+    _ <- forkLogged (stLogger st) "prompt-async-worker" $ promptAsyncLoop st
     pure ()
 
 promptAsyncLoop :: AppState -> IO ()

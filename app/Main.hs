@@ -21,9 +21,8 @@ module Main where
 
 import Api
 import Bus.Bus qualified as Bus
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
-import Control.Monad (void)
 import Data.Aeson (object)
 import Data.ByteString qualified as BS
 import Data.Text qualified as T
@@ -54,7 +53,6 @@ import Network.HTTP.Types (methodOptions, status200)
 import Network.Wai (Middleware, mapResponseHeaders, requestHeaders, requestMethod, responseLBS)
 import Network.Wai.Handler.WebSockets (websocketsOr)
 import Network.WebSockets (
-    Connection,
     PendingConnection,
     acceptRequest,
     defaultConnectionOptions,
@@ -63,6 +61,7 @@ import Network.WebSockets (
     requestPath,
     sendBinaryData,
  )
+import Network.WebSockets qualified
 import Options.Applicative
 import Pty.Connect ()
 import Pty.Pty qualified as Pty
@@ -70,6 +69,7 @@ import Servant
 import Server.ErrorFormatters (errorFormattersContext)
 import State
 import Telemetry.Manager qualified as Telemetry
+import Util.Thread (forkLogged)
 import System.Directory (XdgDirectory (..), getCurrentDirectory, getXdgDirectory)
 import System.FilePath ((</>))
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
@@ -202,14 +202,19 @@ ptyWebSocketApp appState pending = do
                 Nothing -> pure ()
                 Just ptyConnection -> do
                     websocketConnection <- acceptRequest pending
-                    bridgePtyToWebSocket ptyConnection websocketConnection
+                    let wsLogger = Log.withNS (stLogger appState) "websocket"
+                    bridgePtyToWebSocket wsLogger ptyConnection websocketConnection
 
 -- | Bidirectional bridge between PTY and WebSocket.
-bridgePtyToWebSocket :: Pty.PtyConnection -> Network.WebSockets.Connection -> IO ()
-bridgePtyToWebSocket ptyConnection websocketConnection = do
+bridgePtyToWebSocket :: Log.Logger -> Pty.PtyConnection -> Network.WebSockets.Connection -> IO ()
+bridgePtyToWebSocket logger ptyConnection websocketConnection = do
     -- reader thread: pty -> websocket
-    void $ forkIO $ Pty.pcOnData ptyConnection $ \bytes -> do
-        void $ try @SomeException $ sendBinaryData websocketConnection bytes
+    -- If WebSocket send fails, close the PTY - don't continue reading into the void
+    _ <- forkLogged logger "pty-websocket-bridge" $ Pty.pcOnData ptyConnection $ \bytes -> do
+        result <- try @SomeException $ sendBinaryData websocketConnection bytes
+        case result of
+            Left _err -> Pty.pcClose ptyConnection
+            Right () -> pure ()
 
     -- writer loop: websocket -> pty
     let loop = do
@@ -273,7 +278,7 @@ main = do
         startPromptAsyncWorker appState
 
         -- heartbeat thread
-        _ <- forkIO $ heartbeatLoop appState
+        _ <- forkLogged serverLogger "heartbeat-loop" $ heartbeatLoop appState
 
         Log.logMsg serverLogger Katip.InfoS $ "storage: " <> T.pack storageDirectory
 

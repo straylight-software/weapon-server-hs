@@ -76,7 +76,7 @@ module Telemetry.R2 (
 ) where
 
 
-import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
+import Control.Concurrent (ThreadId, killThread, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (Exception, SomeException, try)
 import Crypto.Hash (SHA256 (..), hashWith)
@@ -106,6 +106,7 @@ import Network.HTTP.Client (
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (Header, statusCode)
 import Log qualified
+import Util.Thread (forkLogged)
 
 import System.FilePath ((</>), takeFileName)
 import Telemetry.ParquetWAL qualified as WAL
@@ -422,7 +423,7 @@ startReplicationWorker r2 wal sessionId pollInterval logger = do
     stopVar <- newTVarIO False
     let lg = Log.withNS logger "r2"
 
-    tid <- forkIO $ replicationLoop r2 wal sessionId stopVar pollInterval lg
+    tid <- forkLogged lg "r2-replication" $ replicationLoop r2 wal sessionId stopVar pollInterval lg
 
     pure $
         ReplicationWorker
