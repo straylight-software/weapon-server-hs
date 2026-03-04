@@ -108,12 +108,22 @@ traceSize (Trace _events size) = size
 
 {- | Serialize a trace to bytes (for golden tests / persistence).
 
-Format: Simple length-prefixed encoding.
-This is a placeholder - real implementation would use a proper format.
+NOT YET IMPLEMENTED. Will crash if called.
+
+When implementing: use Binary or Aeson for Event serialization.
+The Event type contains Handle (use packHandle\/unpackHandle),
+OperationType, Int64, ByteString, and Word64.
 -}
 serializeTrace :: Trace -> ByteString
-serializeTrace (Trace _events _size) = BS.empty -- TODO: implement
+serializeTrace _ =
+    error "serializeTrace: not implemented - see Evring.Trace module for implementation notes"
 
--- | Deserialize a trace from bytes.
+{- | Deserialize a trace from bytes.
+
+NOT YET IMPLEMENTED. Will crash if called.
+
+When implementing: must roundtrip with serializeTrace.
+-}
 deserializeTrace :: ByteString -> Either String Trace
-deserializeTrace _bs = Right emptyTrace -- TODO: implement
+deserializeTrace _ =
+    error "deserializeTrace: not implemented - see Evring.Trace module for implementation notes"
