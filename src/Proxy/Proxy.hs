@@ -67,11 +67,10 @@ module Proxy.Proxy (
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.STM
 import Control.Exception (IOException, SomeException, bracket, catch, try)
-import Control.Monad (forM_)
-import Data.Aeson (Object, Value (..), decode, encode, (.:), (.:?))
+import Control.Monad (forM_, when)
+import Data.Aeson (Object, Value (..), decode, eitherDecode, encode, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Map.Strict (Map)
-import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
@@ -94,6 +93,8 @@ import Network.Socket qualified as Socket
 import Network.Socket.ByteString qualified as SocketBS
 
 import Proxy.Types
+
+import Log qualified
 
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
 
@@ -673,19 +674,36 @@ Functions for retrieving logged data from a running proxy server.
 Reads the JSONL log file and filters entries by session ID.
 This is an O(n) operation that reads the entire log file.
 
+Decode failures are logged at DEBUG level (first 10 failures shown).
+If there are more than 10 failures, a WARN level message is logged
+with the total count.
+
 ==== __Examples__
 
 @
-logs <- 'getSessionLogs' server "session_abc123"
+logs <- 'getSessionLogs' logger server "session_abc123"
 mapM_ print logs
 @
 -}
-getSessionLogs :: ProxyServer -> Text -> IO [LogEntry]
-getSessionLogs ProxyServer{..} sessionId = do
-    content <- BS.readFile psLogFile
-    let chunks = C8.lines content
-        entries = catMaybes [decode (LBS.fromStrict l) | l <- chunks]
-    pure $ filterSessionLogs sessionId entries
+getSessionLogs :: Log.Logger -> ProxyServer -> Text -> IO [LogEntry]
+getSessionLogs logger ProxyServer{..} sessionId = do
+    result <- try @IOException $ BS.readFile psLogFile
+    case result of
+        Left _ -> pure []  -- No logs yet is OK
+        Right content -> do
+            let chunks = C8.lines content
+                parseResults = [(l, eitherDecode (LBS.fromStrict l)) | l <- chunks]
+                entries = [e | (_, Right e) <- parseResults]
+                failures = [(l, err) | (l, Left err) <- parseResults]
+
+            -- Log failures at DEBUG level (could be many)
+            forM_ (take 10 failures) $ \(line, err) ->
+                Log.logDebug logger ("Failed to decode log entry: " <> T.pack err <> " - line: " <> T.take 100 (decodeUtf8 line)) ()
+
+            when (length failures > 10) $
+                Log.logWarn logger ("Log decode failures: " <> T.pack (show (length failures)) <> " total (" <> T.pack (show (length failures - 10)) <> " not shown)") ()
+
+            pure $ filterSessionLogs sessionId entries
 
 {- | Get aggregated token usage for all sessions.
 

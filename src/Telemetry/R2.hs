@@ -78,7 +78,7 @@ module Telemetry.R2 (
 
 import Control.Concurrent (ThreadId, killThread, threadDelay)
 import Control.Concurrent.STM
-import Control.Exception (Exception, SomeException, try)
+import Control.Exception (Exception, IOException, SomeException, try)
 import Crypto.Hash (SHA256 (..), hashWith)
 import Crypto.MAC.HMAC (HMAC (..), hmac)
 import Data.Aeson (encode, object, (.=))
@@ -198,17 +198,22 @@ uploadSegment ::
     IO (Either R2Error ())
 uploadSegment h sessionId localPath = do
     -- Read segment (TODO: add zstd compression)
-    content <- BS.readFile localPath
-    -- For now, no compression - just upload raw
-    let compressed = content
+    readResult <- try @IOException $ BS.readFile localPath
+    case readResult of
+        Left err ->
+            pure $ Left $ R2NetworkError $
+                "Failed to read segment file " <> T.pack localPath <> ": " <> T.pack (show err)
+        Right content -> do
+            -- For now, no compression - just upload raw
+            let compressed = content
 
-    let key =
-            T.unpack (r2Prefix (r2Config h))
-                </> T.unpack sessionId
-                </> "events"
-                </> takeFileName localPath
+            let key =
+                    T.unpack (r2Prefix (r2Config h))
+                        </> T.unpack sessionId
+                        </> "events"
+                        </> takeFileName localPath
 
-    uploadBytes h (T.pack key) compressed "application/vnd.apache.parquet"
+            uploadBytes h (T.pack key) compressed "application/vnd.apache.parquet"
 
 -- | Upload session metadata
 uploadSessionMeta ::
