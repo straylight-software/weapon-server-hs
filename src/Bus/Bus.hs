@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
 Module      : Bus.Bus
@@ -21,19 +22,28 @@ The bus uses 'TChan' broadcast semantics:
 * Events published before subscription are not seen
 * Unsubscribe kills the listener thread
 
+== Error Handling
+
+Subscriber callbacks are wrapped in exception handlers. If a callback throws,
+the error is logged at ERROR level and the subscriber continues receiving
+future events. This prevents one misbehaving subscriber from breaking event
+delivery or silently dying.
+
 == Usage Example
 
 @
 import Bus.Bus
 import Bus.Event (EventType(..), eventTypeToText)
 import Data.Aeson (object, (.=))
+import Log qualified
 
 main :: IO ()
 main = do
+    logger <- Log.newLogger "app"
     bus <- newBus
 
-    -- Subscribe to session events
-    unsubscribe <- subscribe bus "session.created" $ \\event ->
+    -- Subscribe with error handling (recommended for production)
+    unsubscribe <- subscribeAllLogged logger "my-subscriber" bus $ \\event ->
         putStrLn $ "Session created: " ++ show (beProperties event)
 
     -- Publish an event
@@ -58,6 +68,7 @@ module Bus.Bus (
     -- * Subscriptions
     subscribe,
     subscribeAll,
+    subscribeAllLogged,
     subscribeTyped,
 
     -- * Pure Helpers
@@ -72,10 +83,13 @@ module Bus.Bus (
 import Bus.Event (EventType, eventTypeToText)
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.STM
+import Control.Exception (SomeException, try)
 import Control.Monad (forever, when)
 import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser)
 import Data.Text (Text)
+import Data.Text qualified as T
+import Log qualified
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Types
@@ -229,6 +243,24 @@ subscribeAll bus callback = do
     tid <- startSubscriberThread chan callback
     pure $ stopSubscriber tid
 
+{- | Subscribe to all events on the bus with logged error handling.
+
+Like 'subscribeAll', but if the callback throws an exception:
+
+1. The error is logged at ERROR level with event type and subscriber name
+2. The subscriber continues receiving future events (does NOT die)
+
+This prevents silent subscriber death and ensures one bad event doesn't
+break the entire subscription.
+
+@since 0.1.0
+-}
+subscribeAllLogged :: Log.Logger -> Text -> Bus -> (BusEvent -> IO ()) -> IO (IO ())
+subscribeAllLogged logger name bus callback = do
+    chan <- dupBusChan bus
+    tid <- startSubscriberThreadLogged logger name chan callback
+    pure $ stopSubscriber tid
+
 {- | Subscribe to events of a specific type (using raw 'Text').
 
 Only events matching the given type string are delivered to the callback.
@@ -277,11 +309,34 @@ dupBusChan bus = atomically $ dupTChan (unBus bus)
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- | Start a subscriber thread that reads from a channel and invokes the callback.
+-- Exceptions in the callback will propagate and kill the thread.
 startSubscriberThread :: TChan BusEvent -> (BusEvent -> IO ()) -> IO ThreadId
 startSubscriberThread chan callback =
     forkIO $ forever $ do
         event <- atomically $ readTChan chan
         callback event
+
+-- | Start a subscriber thread with error logging and recovery.
+-- If the callback throws, the error is logged and the subscriber continues
+-- receiving future events (the thread does NOT die).
+startSubscriberThreadLogged :: Log.Logger -> Text -> TChan BusEvent -> (BusEvent -> IO ()) -> IO ThreadId
+startSubscriberThreadLogged logger subscriberName chan callback =
+    forkIO $ forever $ do
+        event <- atomically $ readTChan chan
+        result <- try @SomeException (callback event)
+        case result of
+            Left e ->
+                Log.logError
+                    logger
+                    ( "Subscriber '"
+                        <> subscriberName
+                        <> "' threw exception on event '"
+                        <> beType event
+                        <> "': "
+                        <> T.pack (show e)
+                    )
+                    ()
+            Right () -> pure ()
 
 -- | Stop a subscriber by killing its thread.
 stopSubscriber :: ThreadId -> IO ()

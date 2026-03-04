@@ -88,7 +88,8 @@ mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir pr
     dirCache <- Storage.newDirCache
 
     -- Subscribe bus to also write to event channel for SSE
-    _ <- Bus.subscribeAll bus $ \event -> do
+    -- Using subscribeAllLogged ensures exceptions are logged and don't kill the forwarder
+    _ <- Bus.subscribeAllLogged (Log.withNS logger "bus") "sse-forwarder" bus $ \event -> do
         Log.logMsg logger Katip.InfoS $ "State: bus->eventChan forwarding: " <> Bus.beType event
         atomically $ writeTChan eventChan (toJSON event)
 

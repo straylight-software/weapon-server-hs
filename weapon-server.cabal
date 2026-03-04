@@ -146,6 +146,7 @@ library
     Util.Git
     Util.Identifier
     Util.StorageKeys
+    Util.Thread
     Vcs.Diff
     Vcs.Internal
     Vcs.Status

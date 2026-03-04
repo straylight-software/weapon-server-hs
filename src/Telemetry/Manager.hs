@@ -28,9 +28,9 @@ module Telemetry.Manager (
 ) where
 
 import Bus.Bus qualified as Bus
-import Control.Concurrent (forkIO)
+import Util.Thread (forkLogged)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, throwIO, try)
+import Control.Exception (throwIO)
 import Control.Monad (forM_, void)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as K
@@ -184,12 +184,9 @@ handleEvent ::
     Text ->
     Bus.BusEvent ->
     IO ()
-handleEvent walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent = void $ forkIO $ do
-    result <- try $ handleEventSync walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent
-    case result of
-        Left (e :: SomeException) ->
-            Log.logError (tmcLogger config) ("Error capturing event: " <> T.pack (show e)) ()
-        Right _ -> pure ()
+handleEvent walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent = void $
+    forkLogged (tmcLogger config) "telemetry-event-handler" $
+        handleEventSync walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent
 
 -- | Synchronous event handler
 handleEventSync ::
@@ -250,6 +247,7 @@ getOrCreateSession walDir config r2Handle sessionsVar sessionId defaultProjectId
                         { WAL.walBaseDir = walDir
                         , WAL.walSegmentSize = 10000
                         , WAL.walSyncOnWrite = tmcSyncOnWrite config
+                        , WAL.walLogger = tmcLogger config
                         }
             wal <- WAL.openWAL walConfig sessionId
 

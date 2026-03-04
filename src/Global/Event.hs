@@ -65,7 +65,8 @@ module Global.Event (
     heartbeatIntervalMicros,
 ) where
 
-import Control.Concurrent (forkIO, myThreadId, threadDelay)
+import Control.Concurrent (myThreadId, threadDelay)
+import Util.Thread (forkLogged)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch)
 import Control.Monad (forever)
@@ -262,7 +263,7 @@ startHeartbeat ::
     IO () ->
     IO ()
 startHeartbeat logger prefix mkHeartbeat send flush = do
-    _ <- forkIO $ forever $ do
+    _ <- forkLogged logger (prefix <> "-heartbeat") $ forever $ do
         threadDelay heartbeatIntervalMicros
         logSSE logger $ prefix <> ": sending heartbeat"
         heartbeatJson <- mkHeartbeat
