@@ -46,6 +46,9 @@ module Proxy.Proxy (
     start,
     stop,
 
+    -- * Errors
+    ProxyError (..),
+
     -- * Log Retrieval
     -- $logretieval
     getSessionLogs,
@@ -63,7 +66,7 @@ module Proxy.Proxy (
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, try)
+import Control.Exception (IOException, SomeException, catch, try)
 import Control.Monad (forM_)
 import Data.Aeson (Object, Value (..), decode, encode, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -72,10 +75,12 @@ import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
+import GHC.IO.Exception (IOErrorType (..))
 import Network.HTTP.Types
 import Network.Wai
-import Network.Wai.Handler.Warp (run)
+import Network.Wai.Handler.Warp qualified as Warp
 import System.Directory (createDirectoryIfMissing)
+import System.IO.Error (ioeGetErrorType)
 
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -89,6 +94,8 @@ import Network.Socket qualified as Socket
 import Network.Socket.ByteString qualified as SocketBS
 
 import Proxy.Types
+
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Proxy Server Type
@@ -125,15 +132,20 @@ data ProxyServer = ProxyServer
 Creates the log directory if it doesn't exist, initializes state,
 and starts the WAI server in a background thread.
 
+Returns 'Left' with an error if the port is already in use or cannot be bound.
+This ensures we fail loudly rather than silently degrading.
+
 ==== __Examples__
 
 @
 config <- 'defaultProxyConfig' "\/tmp\/proxy-logs"
-server <- 'start' config
--- Server is now running on port 8888
+result <- 'start' config
+case result of
+    Left (PortInUse port) -> putStrLn $ "Port " ++ show port ++ " in use"
+    Right server -> putStrLn "Server running on port 8888"
 @
 -}
-start :: ProxyConfig -> IO ProxyServer
+start :: ProxyConfig -> IO (Either ProxyError ProxyServer)
 start config = do
     -- Setup log directory
     createDirectoryIfMissing True (pcLogDir config)
@@ -145,17 +157,46 @@ start config = do
     state <- initProxyState config
 
     let logFile = pcLogDir config <> "/requests.jsonl"
+        port = pcPort config
 
-    -- Start proxy server
-    tid <- forkIO $ run (pcPort config) (proxyApp state manager logFile)
+    -- Use an MVar to communicate startup success/failure from the forked thread
+    startupResult <- newEmptyMVar
 
-    pure
-        ProxyServer
-            { psState = state
-            , psManager = manager
-            , psThread = tid
-            , psLogFile = logFile
-            }
+    -- Start proxy server with Warp settings that report bind errors
+    tid <- forkIO $ startWithErrorReporting port startupResult (proxyApp state manager logFile)
+
+    -- Wait for the server to either bind successfully or fail
+    bindResult <- takeMVar startupResult
+
+    case bindResult of
+        Left err -> do
+            -- Kill the thread (it may already be dead, but be safe)
+            killThread tid
+            pure $ Left err
+        Right () ->
+            pure $
+                Right
+                    ProxyServer
+                        { psState = state
+                        , psManager = manager
+                        , psThread = tid
+                        , psLogFile = logFile
+                        }
+
+-- | Start Warp and report success/failure via MVar
+startWithErrorReporting :: Int -> MVar (Either ProxyError ()) -> Application -> IO ()
+startWithErrorReporting port resultMVar app = do
+    let settings =
+            Warp.setPort port $
+                Warp.setBeforeMainLoop (putMVar resultMVar (Right ())) $
+                    Warp.defaultSettings
+    Warp.runSettings settings app `catch` handleBindError
+  where
+    handleBindError :: IOException -> IO ()
+    handleBindError e =
+        case ioeGetErrorType e of
+            ResourceBusy -> putMVar resultMVar (Left (PortInUse port))
+            _ -> putMVar resultMVar (Left (BindFailed port (show e)))
 
 -- | Initialize proxy state with fresh TVars.
 initProxyState :: ProxyConfig -> IO ProxyState

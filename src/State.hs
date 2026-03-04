@@ -125,12 +125,19 @@ mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir pr
             }
 
 -- | Initialize a new state with MITM proxy
+-- Fails if the proxy port is already in use
 initialState :: FilePath -> Text -> Text -> Log.Logger -> IO AppState
 initialState storageDir projectID directory logger = do
     -- Start MITM proxy for LLM traffic surveillance
     let proxyLogDir = storageDir <> "/proxy"
-    proxy <- Proxy.start (defaultProxyConfig proxyLogDir)
-    mkAppState (Just proxy) Nothing storageDir projectID directory logger
+    proxyResult <- Proxy.start (defaultProxyConfig proxyLogDir)
+    case proxyResult of
+        Left (Proxy.PortInUse port) ->
+            error $ "MITM proxy failed to start: port " <> show port <> " is already in use (another weapon instance running?)"
+        Left (Proxy.BindFailed port msg) ->
+            error $ "MITM proxy failed to start: could not bind port " <> show port <> ": " <> msg
+        Right proxy ->
+            mkAppState (Just proxy) Nothing storageDir projectID directory logger
 
 {- | Initialize state without starting the MITM proxy (for tests)
 Takes an optional home directory override for config isolation

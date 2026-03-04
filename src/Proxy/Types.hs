@@ -39,6 +39,10 @@ module Proxy.Types (
     -- $proxystate
     ProxyState (..),
 
+    -- * Errors
+    -- $errors
+    ProxyError (..),
+
     -- * Header Utilities
     -- $headers
     headersToMap,
@@ -397,3 +401,23 @@ isHopHeader h =
                , "transfer-encoding"
                , "upgrade"
                ]
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Errors
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{- $errors
+Errors that can occur when starting or running the proxy server.
+-}
+
+{- | Proxy startup errors.
+
+These errors indicate that the proxy could not be started and represent
+fatal conditions that should be reported to the user.
+-}
+data ProxyError
+    = -- | The configured port is already in use by another process
+      PortInUse !Int
+    | -- | Failed to bind to the port for another reason
+      BindFailed !Int !String
+    deriving (Eq, Show)
