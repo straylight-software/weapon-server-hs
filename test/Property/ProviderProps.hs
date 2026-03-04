@@ -21,6 +21,7 @@ import Data.Text (Text)
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
+import Log qualified
 import Provider.Provider qualified as Provider
 import Provider.Types
 import Storage.Storage qualified as Storage
@@ -247,13 +248,13 @@ prop_determineAuthMethodNone = property $ do
 prop_authPersistence :: Property
 prop_authPersistence = property $ do
     token <- forAll genNonEmptyText
-    result <- evalIO $ do
+    result <- evalIO $ Log.withNullLogger "test" $ \logger -> do
         tmpDir <- createTempDirectory "/tmp" "provider-auth"
         Storage.withStorage tmpDir $ \storage -> do
             Provider.setAuth storage "openai" token
-            auths <- Provider.authStatus storage
+            auths <- Provider.authStatus logger storage
             Provider.removeAuth storage "openai"
-            authsAfter <- Provider.authStatus storage
+            authsAfter <- Provider.authStatus logger storage
             removeDirectoryRecursive tmpDir
             pure (auths, authsAfter)
     let (before, afterAuth) = result
@@ -263,7 +264,7 @@ prop_authPersistence = property $ do
 -- | Property: authStatus handles corrupt/invalid JSON files gracefully
 prop_authStatusCorruptJson :: Property
 prop_authStatusCorruptJson = property $ do
-    result <- evalIO $ do
+    result <- evalIO $ Log.withNullLogger "test" $ \logger -> do
         tmpDir <- createTempDirectory "/tmp" "provider-corrupt"
         Storage.withStorage tmpDir $ \storage -> do
             -- Write invalid JSON to the auth file for openai
@@ -271,7 +272,7 @@ prop_authStatusCorruptJson = property $ do
             createDirectoryIfMissing True authDir
             BL.writeFile (authDir </> "openai.json") "{ invalid json }"
             -- authStatus should not throw, should return unauthenticated
-            auths <- Provider.authStatus storage
+            auths <- Provider.authStatus logger storage
             removeDirectoryRecursive tmpDir
             pure auths
     -- Should return results without throwing
@@ -284,17 +285,17 @@ prop_authStatusCorruptJson = property $ do
 prop_listConnectedStoredAuth :: Property
 prop_listConnectedStoredAuth = property $ do
     token <- forAll genNonEmptyText
-    result <- evalIO $ do
+    result <- evalIO $ Log.withNullLogger "test" $ \logger -> do
         tmpDir <- createTempDirectory "/tmp" "provider-connected"
         Storage.withStorage tmpDir $ \storage -> do
             -- Initially no stored auth
-            connectedBefore <- Provider.listConnected storage
+            connectedBefore <- Provider.listConnected logger storage
             -- Store auth for openai
             Provider.setAuth storage "openai" token
-            connectedAfter <- Provider.listConnected storage
+            connectedAfter <- Provider.listConnected logger storage
             -- Clean up
             Provider.removeAuth storage "openai"
-            connectedFinal <- Provider.listConnected storage
+            connectedFinal <- Provider.listConnected logger storage
             removeDirectoryRecursive tmpDir
             pure (connectedBefore, connectedAfter, connectedFinal)
     let (before, afterStore, afterRemove) = result
@@ -308,15 +309,15 @@ prop_listConnectedStoredAuth = property $ do
 prop_listConnectedEnvAuth :: Property
 prop_listConnectedEnvAuth = property $ do
     token <- forAll genNonEmptyText
-    result <- evalIO $ do
+    result <- evalIO $ Log.withNullLogger "test" $ \logger -> do
         tmpDir <- createTempDirectory "/tmp" "provider-env"
         Storage.withStorage tmpDir $ \storage -> do
             -- Set env var for anthropic
             setEnv "ANTHROPIC_API_KEY" (show token)
-            connected <- Provider.listConnected storage
+            connected <- Provider.listConnected logger storage
             -- Clean up env var
             unsetEnv "ANTHROPIC_API_KEY"
-            connectedAfter <- Provider.listConnected storage
+            connectedAfter <- Provider.listConnected logger storage
             removeDirectoryRecursive tmpDir
             pure (connected, connectedAfter)
     let (withEnv, withoutEnv) = result

@@ -28,16 +28,18 @@ Environment variables take precedence over stored authentication.
 @
 import qualified Provider.Provider as Provider
 import qualified Storage.Storage as Storage
+import qualified Log
 
-main = Storage.withStorage ".opencode" $ \storage -> do
+main = Log.withLogger "app" $ \logger ->
+  Storage.withStorage ".opencode" $ \storage -> do
     -- List all providers
     providers <- Provider.list
 
     -- Get API key for a provider
-    mKey <- Provider.getApiKey storage "anthropic"
+    mKey <- Provider.getApiKey logger storage "anthropic"
 
     -- Check auth status
-    auths <- Provider.authStatus storage
+    auths <- Provider.authStatus logger storage
 @
 -}
 module Provider.Provider (
@@ -84,6 +86,7 @@ import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
 import LLM.OpenRouter qualified as OpenRouter
+import Log qualified
 import System.Environment (lookupEnv)
 
 import Provider.Types
@@ -283,9 +286,9 @@ Falls back to built-in providers on API errors.
 This function performs network IO and may be slow. Consider caching
 the results if called frequently.
 -}
-listWithModels :: Storage.StorageConfig -> IO [Provider]
-listWithModels storage = do
-    mKey <- getApiKey storage "openrouter"
+listWithModels :: Log.Logger -> Storage.StorageConfig -> IO [Provider]
+listWithModels logger storage = do
+    mKey <- getApiKey logger storage "openrouter"
     case mKey of
         Nothing -> pure builtinProviders
         Just apiKey -> fetchAndUpdateOpenRouterModels apiKey
@@ -340,21 +343,24 @@ Checks for API keys in the following order:
 
 Returns 'Nothing' if no key is found in either location.
 
+Note: Storage errors (other than NotFoundError) are logged at ERROR level
+to provide visibility into potential data corruption issues.
+
 ==== Example
 
 @
-mKey <- getApiKey storage "anthropic"
+mKey <- getApiKey logger storage "anthropic"
 case mKey of
     Just key -> useKey key
     Nothing -> error "No API key configured"
 @
 -}
-getApiKey :: Storage.StorageConfig -> Text -> IO (Maybe Text)
-getApiKey storage providerID = do
+getApiKey :: Log.Logger -> Storage.StorageConfig -> Text -> IO (Maybe Text)
+getApiKey logger storage providerID = do
     envKey <- getEnvApiKey providerID
     case envKey of
         Just k -> pure (Just k)
-        Nothing -> getStoredApiKey storage providerID
+        Nothing -> getStoredApiKey logger storage providerID
 
 {- | Get API key from environment variables.
 
@@ -380,39 +386,54 @@ getEnvApiKey providerID = do
 
 Internal helper that retrieves the token from storage.
 -}
-getStoredApiKey :: Storage.StorageConfig -> Text -> IO (Maybe Text)
-getStoredApiKey storage providerID = do
-    stored <- readStoredAuth storage providerID
+getStoredApiKey :: Log.Logger -> Storage.StorageConfig -> Text -> IO (Maybe Text)
+getStoredApiKey logger storage providerID = do
+    stored <- readStoredAuth logger storage providerID
     pure $ stored >>= extractTextField "token"
 
 {- | Read stored authentication value for a provider.
 
-Internal helper that safely reads auth from storage,
-returning Nothing on any error (not found, decode error, etc.).
+Internal helper that safely reads auth from storage, returning Nothing
+on any error. Logs unexpected errors (anything other than NotFoundError)
+at ERROR level to provide visibility into potential data corruption.
+
+Note: NotFoundError is expected (user hasn't configured auth yet) and
+is not logged. Other errors (StorageDecodeError, disk failures, etc.)
+indicate bugs or data corruption and are logged so operators can investigate.
 -}
-readStoredAuth :: Storage.StorageConfig -> Text -> IO (Maybe Value)
-readStoredAuth storage providerID =
-    Control.Exception.catch
-        (Just <$> (Storage.read storage ["auth", providerID] :: IO Value))
-        (\(_ :: Control.Exception.SomeException) -> pure Nothing)
+readStoredAuth :: Log.Logger -> Storage.StorageConfig -> Text -> IO (Maybe Value)
+readStoredAuth logger storage providerID = do
+    result <- Control.Exception.try @Control.Exception.SomeException $
+        Storage.read storage ["auth", providerID]
+    case result of
+        Right val -> pure (Just val)
+        Left e -> do
+            -- NotFoundError is expected (user hasn't configured auth) - don't log
+            -- All other errors indicate bugs or data corruption - log at ERROR
+            case Control.Exception.fromException e of
+                Just (Storage.NotFoundError _) -> pure ()
+                _ -> Log.logError logger
+                    ("Failed to load auth for provider " <> providerID <> ": " <> T.pack (show e))
+                    ()
+            pure Nothing
 
 {- | Get authentication status for all providers.
 
 Returns the authentication status for each built-in provider,
 indicating whether it's authenticated and by what method.
 -}
-authStatus :: Storage.StorageConfig -> IO [ProviderAuth]
-authStatus storage = do
+authStatus :: Log.Logger -> Storage.StorageConfig -> IO [ProviderAuth]
+authStatus logger storage = do
     providers <- list
-    mapM (checkAuth storage) providers
+    mapM (checkAuth logger storage) providers
 
 {- | Check authentication status for a single provider.
 
 Internal helper that checks both stored auth and environment variables.
 -}
-checkAuth :: Storage.StorageConfig -> Provider -> IO ProviderAuth
-checkAuth storage provider = do
-    stored <- readStoredAuth storage (providerId provider)
+checkAuth :: Log.Logger -> Storage.StorageConfig -> Provider -> IO ProviderAuth
+checkAuth logger storage provider = do
+    stored <- readStoredAuth logger storage (providerId provider)
     envAuth <- anyM hasEnv (providerEnv provider)
     let storedMethod = stored >>= extractTextField "method"
     let hasAuth = isJust stored || envAuth
@@ -455,11 +476,11 @@ Returns IDs of providers that have either:
 * A valid environment variable set
 * Stored authentication credentials
 -}
-listConnected :: Storage.StorageConfig -> IO [Text]
-listConnected storage = do
+listConnected :: Log.Logger -> Storage.StorageConfig -> IO [Text]
+listConnected logger storage = do
     providers <- list
     let providerIds = map providerId providers
-    filterM (fmap isJust . getApiKey storage) providerIds
+    filterM (fmap isJust . getApiKey logger storage) providerIds
 
 {- | Store authentication credentials for a provider.
 

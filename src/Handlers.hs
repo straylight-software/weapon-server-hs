@@ -329,7 +329,7 @@ projectUpdateHandler st pid input = do
 
 providerListHandler :: AppState -> Maybe Text -> Handler ConfigProviderList
 providerListHandler st _mDir = liftIO $ do
-    providers <- Provider.listWithModels (stStorage st)
+    providers <- Provider.listWithModels (stLogger st) (stStorage st)
     -- For config.providers, we need to add "source" field per the component schema
     let providerJson = map toConfigProvider providers
 
@@ -370,11 +370,11 @@ providerAuthHandler _st = liftIO $ do
 providerHandler :: AppState -> Maybe Text -> Handler ProviderList
 providerHandler st _mDir = liftIO $ do
     -- Fetch providers with dynamically loaded models (e.g., from OpenRouter API)
-    providers <- Provider.listWithModels (stStorage st)
+    providers <- Provider.listWithModels (stLogger st) (stStorage st)
     let providerJson = map Data.Aeson.toJSON providers
 
     -- Get connected providers (those with stored auth)
-    connectedIds <- Provider.listConnected (stStorage st)
+    connectedIds <- Provider.listConnected (stLogger st) (stStorage st)
 
     -- Default model selection as a map of providerID -> modelID
     let defaultModel = case providers of
@@ -1007,7 +1007,7 @@ createMessageIO st sid input = do
                 State.registerAgent st sid tid
                 -- Always use OpenRouter as the unified LLM gateway
                 -- OpenRouter can proxy to Anthropic, OpenAI, etc. using "provider/model" format
-                mApiKey <- Provider.getApiKey (stStorage st) "openrouter"
+                mApiKey <- Provider.getApiKey (stLogger st) (stStorage st) "openrouter"
                 case mApiKey of
                     Nothing -> do
                         -- No API key - send error
@@ -2036,13 +2036,13 @@ chatHandler :: AppState -> ChatInput -> Handler Value
 chatHandler st input = liftIO $ do
     let model = fromMaybe "anthropic/claude-sonnet-4-20250514" (ciModel input)
     if "anthropic/" `T.isPrefixOf` model
-        then chatWithAnthropic (stStorage st) model (ciMessage input)
-        else chatWithOpenRouter (stStorage st) model (ciMessage input)
+        then chatWithAnthropic (stLogger st) (stStorage st) model (ciMessage input)
+        else chatWithOpenRouter (stLogger st) (stStorage st) model (ciMessage input)
 
 -- | Chat using Anthropic API
-chatWithAnthropic :: Storage.StorageConfig -> Text -> Text -> IO Value
-chatWithAnthropic storage model message = do
-    mApiKey <- Provider.getApiKey storage "anthropic"
+chatWithAnthropic :: Log.Logger -> Storage.StorageConfig -> Text -> Text -> IO Value
+chatWithAnthropic logger storage model message = do
+    mApiKey <- Provider.getApiKey logger storage "anthropic"
     case mApiKey of
         Nothing -> return $ errorResponse "No Anthropic API key configured. Set ANTHROPIC_API_KEY or add via provider auth."
         Just key -> do
@@ -2076,9 +2076,9 @@ chatWithAnthropic storage model message = do
                                 ]
 
 -- | Chat using OpenRouter API
-chatWithOpenRouter :: Storage.StorageConfig -> Text -> Text -> IO Value
-chatWithOpenRouter storage model message = do
-    mApiKey <- Provider.getApiKey storage "openrouter"
+chatWithOpenRouter :: Log.Logger -> Storage.StorageConfig -> Text -> Text -> IO Value
+chatWithOpenRouter logger storage model message = do
+    mApiKey <- Provider.getApiKey logger storage "openrouter"
     case mApiKey of
         Nothing -> return $ errorResponse "No OpenRouter API key configured. Set OPENROUTER_API_KEY or add via provider auth."
         Just key -> do
