@@ -97,12 +97,20 @@ startConnection ctx@ConnContext{..} loop clientFd clientAddr app = do
     leftoverRef <- newIORef BS.empty
 
     -- Submit first recv
-    ioRecv
+    submitted <- ioRecv
         loop
         clientFd
         (bufArray recvBuf)
         bufferSize
         (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
+    
+    -- If we couldn't submit recv (capacity exhaustion), cleanup and close
+    if submitted
+        then pure ()
+        else do
+            releaseBuffer ctxRecvPool recvBuf
+            _ <- ioClose loop clientFd closeCont
+            pure ()
 
 {- | Continuation after recv completes.
 
@@ -128,12 +136,12 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
     Failure _errno -> do
         -- Recv failed, close connection
         releaseBuffer ctxRecvPool recvBuf
-        ioClose loop clientFd closeCont
+        _ <- ioClose loop clientFd closeCont
         pure Nothing
     Success 0 -> do
         -- EOF, client closed
         releaseBuffer ctxRecvPool recvBuf
-        ioClose loop clientFd closeCont
+        _ <- ioClose loop clientFd closeCont
         pure Nothing
     Success bytesRead -> do
         -- Read data from buffer
@@ -151,13 +159,19 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
             Nothing -> do
                 -- Incomplete, save and recv more
                 writeIORef leftoverRef allData
-                ioRecv
+                submitted <- ioRecv
                     loop
                     clientFd
                     (bufArray recvBuf)
                     bufferSize
                     (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
-                pure Nothing
+                if submitted
+                    then pure Nothing
+                    else do
+                        -- Capacity exhaustion - close connection
+                        releaseBuffer ctxRecvPool recvBuf
+                        _ <- ioClose loop clientFd closeCont
+                        pure Nothing
             Just (req, newLeftover) -> do
                 writeIORef leftoverRef newLeftover
 
@@ -182,19 +196,59 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
                                 sendBuf <- acquireBuffer ctxSendPool
 
                                 -- Serialize response directly into send buffer
-                                respLen <- serializeResponseTo response (bufPtr sendBuf) (bufSize sendBuf)
+                                eRespLen <- serializeResponseTo response (bufPtr sendBuf) (bufSize sendBuf)
 
-                                -- Determine if keep-alive
-                                let keepAlive = checkKeepAlive req
+                                case eRespLen of
+                                    Left err -> do
+                                        -- Response too large - log and send error response
+                                        Log.logError ctxLogger ("Response serialization failed: " <> T.pack err) ()
+                                        -- Serialize a small error response instead
+                                        let errResp = responseLBS status500 [] "Internal Server Error: Response too large"
+                                        eErrLen <- serializeResponseTo errResp (bufPtr sendBuf) (bufSize sendBuf)
+                                        case eErrLen of
+                                            Left _ -> do
+                                                -- Even error response doesn't fit (shouldn't happen) - just close
+                                                releaseBuffer ctxSendPool sendBuf
+                                                releaseBuffer ctxRecvPool recvBuf
+                                                _ <- ioClose loop clientFd closeCont
+                                                pure Nothing
+                                            Right errLen -> do
+                                                -- Send error response and close (don't keep-alive)
+                                                submitted <- ioSend
+                                                    loop
+                                                    clientFd
+                                                    (bufPtr sendBuf)
+                                                    errLen
+                                                    (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf False)
+                                                if submitted
+                                                    then pure Nothing
+                                                    else do
+                                                        -- Couldn't submit - cleanup and close
+                                                        releaseBuffer ctxSendPool sendBuf
+                                                        releaseBuffer ctxRecvPool recvBuf
+                                                        _ <- ioClose loop clientFd closeCont
+                                                        pure Nothing
+                                    Right respLen -> do
+                                        -- Determine if keep-alive
+                                        let keepAlive = checkKeepAlive req
 
-                                -- Submit send
-                                ioSend
-                                    loop
-                                    clientFd
-                                    (bufPtr sendBuf)
-                                    respLen
-                                    (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf keepAlive)
-                                pure Nothing
+                                        -- Submit send
+                                        submitted <- ioSend
+                                            loop
+                                            clientFd
+                                            (bufPtr sendBuf)
+                                            respLen
+                                            (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf keepAlive)
+                                        if submitted
+                                            then pure Nothing
+                                            else do
+                                                -- Couldn't submit send - capacity exhaustion
+                                                -- Release buffers and close connection
+                                                Log.logError ctxLogger "Capacity exhaustion: could not submit send operation" ()
+                                                releaseBuffer ctxSendPool sendBuf
+                                                releaseBuffer ctxRecvPool recvBuf
+                                                _ <- ioClose loop clientFd closeCont
+                                                pure Nothing
 
                 -- Check for ResponseRaw (WebSocket, etc.)
                 case response of
@@ -233,7 +287,8 @@ sendCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef se
     Failure _errno -> do
         releaseBuffer ctxSendPool sendBuf
         releaseBuffer ctxRecvPool recvBuf
-        ioClose loop clientFd closeCont
+        -- Note: if close fails to submit, fd may leak but server continues
+        _ <- ioClose loop clientFd closeCont
         pure Nothing
     Success _bytesSent -> do
         releaseBuffer ctxSendPool sendBuf
@@ -241,17 +296,23 @@ sendCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef se
         if keepAlive
             then do
                 -- Keep-alive: recv next request
-                ioRecv
+                submitted <- ioRecv
                     loop
                     clientFd
                     (bufArray recvBuf)
                     bufferSize
                     (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
-                pure Nothing
+                if submitted
+                    then pure Nothing
+                    else do
+                        -- Capacity exhaustion - close connection
+                        releaseBuffer ctxRecvPool recvBuf
+                        _ <- ioClose loop clientFd closeCont
+                        pure Nothing
             else do
                 -- Close connection
                 releaseBuffer ctxRecvPool recvBuf
-                ioClose loop clientFd closeCont
+                _ <- ioClose loop clientFd closeCont
                 pure Nothing
 
 -- | Continuation after close completes
@@ -374,9 +435,10 @@ runApp lg app req = do
         )
     fromMaybe (responseLBS status500 [] "Internal Server Error") <$> readIORef responseRef
 
--- | Serialize a response directly to a buffer, returns bytes written
+-- | Serialize a response directly to a buffer
+-- Returns Right bytesWritten on success, Left errorMsg if response too large
 {-# INLINE serializeResponseTo #-}
-serializeResponseTo :: Response -> Ptr Word8 -> Int -> IO Int
+serializeResponseTo :: Response -> Ptr Word8 -> Int -> IO (Either String Int)
 serializeResponseTo resp bufPtr maxLen = do
     let (status, headers, withBody) = responseToStream resp
 
@@ -409,11 +471,11 @@ serializeResponseTo resp bufPtr maxLen = do
         !len = BS.length respBytes
 
     if len > maxLen
-        then error "Response too large for buffer"
+        then pure $ Left $ "Response too large for buffer: " <> show len <> " bytes (max " <> show maxLen <> ")"
         else do
             BSU.unsafeUseAsCStringLen respBytes $ \(src, srcLen) ->
                 copyBytes bufPtr (castPtr src) srcLen
-            pure len
+            pure $ Right len
 
 -- Note: formatHeader is imported from Evring.Wai.Internal
 
@@ -477,7 +539,8 @@ handleRawResponse ctx loop clientFd rawApp leftoverData = do
         )
 
     -- After raw handler completes, close the connection
-    ioClose loop clientFd closeCont
+    _ <- ioClose loop clientFd closeCont
+    pure ()
   where
     rawBufferSize = 16384 -- 16KB for WebSocket frames
 
@@ -561,7 +624,8 @@ handleStreamingResponse ctx loop clientFd status headers withBody = do
             pure ()
 
         -- Close connection (streaming responses don't keep-alive)
-        ioClose loop clientFd closeCont
+        _ <- ioClose loop clientFd closeCont
+        pure ()
 
     pure ()
 

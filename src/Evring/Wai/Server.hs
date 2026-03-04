@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -83,14 +84,14 @@ runServer ServerSettings{..} app = do
     listen sock serverBacklog
 
     withFdSocket sock $ \listenFd -> do
-        withLoop serverRingSize $ \loop -> do
+        withLoop serverLogger serverRingSize $ \loop -> do
             -- Allocate accept buffers (reused)
             addrBuf <- mallocBytes 128
             addrLenBuf <- mallocBytes 4
             poke (castPtr addrLenBuf :: Ptr Word32) 128
 
             -- Start accept loop
-            ioAccept
+            !_ <- ioAccept
                 loop
                 (Fd listenFd)
                 addrBuf
@@ -107,7 +108,7 @@ acceptCont :: ConnContext -> Loop -> Fd -> Ptr () -> Ptr () -> Application -> Co
 acceptCont ctx loop listenFd addrBuf addrLenBuf app = Cont $ \case
     Failure _errno -> do
         -- Accept failed, try again
-        ioAccept
+        !_ <- ioAccept
             loop
             listenFd
             addrBuf
@@ -127,7 +128,7 @@ acceptCont ctx loop listenFd addrBuf addrLenBuf app = Cont $ \case
         startConnection ctx loop clientFd clientAddr app
 
         -- Immediately submit next accept (this is the key - we don't block!)
-        ioAccept
+        !_ <- ioAccept
             loop
             listenFd
             addrBuf

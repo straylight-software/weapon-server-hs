@@ -1,5 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE UnboxedTuples #-}
 
@@ -57,9 +60,11 @@ module Evring.Wai.Loop (
 
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket)
-import Control.Monad (when)
+import Data.Aeson (ToJSON)
 import Data.IORef
 import Data.Int (Int32, Int64)
+import GHC.Generics (Generic)
+import Katip (LogItem (..), PayloadSelection (..), ToObject (..))
 import Data.Primitive (
     MutablePrimArray,
     mutablePrimArrayContents,
@@ -74,6 +79,7 @@ import Foreign.C.Types (CULLong (..))
 import GHC.Exts (RealWorld)
 import System.Posix.Types (Fd (..))
 
+import Log qualified
 import System.IoUring.Internal.FFI
 import System.IoUring.URing qualified as URing
 
@@ -93,6 +99,18 @@ type SlotId = Int
 emptySlot :: Int32
 emptySlot = -1
 
+-- | Structured payload for orphan completion errors (indicates a bug)
+data OrphanCompletionPayload = OrphanCompletionPayload
+    { ocpSlot :: !Int         -- ^ The slot index that was already freed
+    , ocpResult :: !Int64     -- ^ The io_uring completion result
+    , ocpCapacity :: !Int     -- ^ Total slot capacity (for context)
+    }
+    deriving (Show, Generic, ToJSON)
+
+instance ToObject OrphanCompletionPayload
+instance LogItem OrphanCompletionPayload where
+    payloadKeys _ _ = AllKeys
+
 -- | The event loop state
 data Loop = Loop
     { loopRing :: !URing.URing
@@ -101,11 +119,12 @@ data Loop = Loop
     , loopFreeList :: !(MutablePrimArray RealWorld Int32) -- next-free indices
     , loopCapacity :: !Int -- max slots
     , loopRunning :: !(IORef Bool) -- shutdown flag
+    , loopLogger :: !Log.Logger -- for error reporting
     }
 
 -- | Create and run with a loop
-withLoop :: Int -> (Loop -> IO a) -> IO a
-withLoop ringSize action = do
+withLoop :: Log.Logger -> Int -> (Loop -> IO a) -> IO a
+withLoop logger ringSize action = do
     let capacity = ringSize * 4 -- plenty of room for in-flight ops
     bracket (URing.initURing 0 ringSize (ringSize * 2)) URing.closeURing $ \ring -> do
         -- Initialize continuation array with Nothing
@@ -126,6 +145,7 @@ withLoop ringSize action = do
                     , loopFreeList = freeList
                     , loopCapacity = capacity
                     , loopRunning = running
+                    , loopLogger = Log.withNS logger "loop"
                     }
         action loop
   where
@@ -141,19 +161,20 @@ shutdown :: Loop -> IO ()
 shutdown Loop{..} = writeIORef loopRunning False
 
 -- | Allocate a slot and register continuation
+-- Returns Nothing if no slots available (capacity exhaustion)
 {-# INLINE allocSlot #-}
-allocSlot :: Loop -> Cont -> IO SlotId
+allocSlot :: Loop -> Cont -> IO (Maybe SlotId)
 allocSlot Loop{..} cont = do
     slot <- readIORef loopFreeHead
     if slot < 0 || slot >= loopCapacity
-        then error "Out of continuation slots"
+        then pure Nothing -- Capacity exhaustion - caller should handle gracefully
         else do
             -- Pop from freelist
             nextFree <- readPrimArray loopFreeList slot
             writeIORef loopFreeHead (fromIntegral nextFree)
             -- Store continuation
             writeArray loopConts slot (Just cont)
-            pure slot
+            pure (Just slot)
 
 -- | Free a slot back to freelist
 {-# INLINE freeSlot #-}
@@ -165,78 +186,120 @@ freeSlot Loop{..} slot = do
     writeIORef loopFreeHead slot
 
 -- | Submit accept and register continuation
+-- Returns False if operation could not be submitted (capacity exhaustion)
 {-# INLINE ioAccept #-}
-ioAccept :: Loop -> Fd -> Ptr () -> Ptr () -> Cont -> IO ()
+ioAccept :: Loop -> Fd -> Ptr () -> Ptr () -> Cont -> IO Bool
 ioAccept loop@Loop{..} (Fd fd) addrBuf addrLenBuf cont = do
-    slot <- allocSlot loop cont
-    let ringPtr = URing.uRingPtr loopRing
-    sqe <- c_io_uring_get_sqe ringPtr
-    if sqe == nullPtr
-        then do
-            -- SQ full - submit what we have and retry
-            _ <- URing.submitIO loopRing
-            sqe' <- c_io_uring_get_sqe ringPtr
-            when (sqe' == nullPtr) $ error "SQ still full after submit"
-            c_hs_uring_prep_accept sqe' fd (castPtr addrBuf) (castPtr addrLenBuf) 0
-            c_hs_uring_sqe_set_data sqe' (CULLong (fromIntegral slot))
-        else do
-            c_hs_uring_prep_accept sqe fd (castPtr addrBuf) (castPtr addrLenBuf) 0
-            c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
+    mSlot <- allocSlot loop cont
+    case mSlot of
+        Nothing -> pure False -- No slots available
+        Just slot -> do
+            let ringPtr = URing.uRingPtr loopRing
+            sqe <- c_io_uring_get_sqe ringPtr
+            if sqe == nullPtr
+                then do
+                    -- SQ full - submit what we have and retry
+                    _ <- URing.submitIO loopRing
+                    sqe' <- c_io_uring_get_sqe ringPtr
+                    if sqe' == nullPtr
+                        then do
+                            -- Still full after submit - return slot and fail gracefully
+                            freeSlot loop slot
+                            pure False
+                        else do
+                            c_hs_uring_prep_accept sqe' fd (castPtr addrBuf) (castPtr addrLenBuf) 0
+                            c_hs_uring_sqe_set_data sqe' (CULLong (fromIntegral slot))
+                            pure True
+                else do
+                    c_hs_uring_prep_accept sqe fd (castPtr addrBuf) (castPtr addrLenBuf) 0
+                    c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
+                    pure True
 
 -- | Submit recv and register continuation
+-- Returns False if operation could not be submitted (capacity exhaustion)
 {-# INLINE ioRecv #-}
-ioRecv :: Loop -> Fd -> MutablePrimArray RealWorld Word8 -> Int -> Cont -> IO ()
+ioRecv :: Loop -> Fd -> MutablePrimArray RealWorld Word8 -> Int -> Cont -> IO Bool
 ioRecv loop@Loop{..} (Fd fd) buf len cont = do
-    slot <- allocSlot loop cont
-    let ringPtr = URing.uRingPtr loopRing
-        ptr = mutablePrimArrayContents buf
-    sqe <- c_io_uring_get_sqe ringPtr
-    if sqe == nullPtr
-        then do
-            _ <- URing.submitIO loopRing
-            sqe' <- c_io_uring_get_sqe ringPtr
-            when (sqe' == nullPtr) $ error "SQ still full after submit"
-            c_hs_uring_prep_recv sqe' fd (castPtr ptr) (fromIntegral len) 0
-            c_hs_uring_sqe_set_data sqe' (CULLong (fromIntegral slot))
-        else do
-            c_hs_uring_prep_recv sqe fd (castPtr ptr) (fromIntegral len) 0
-            c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
+    mSlot <- allocSlot loop cont
+    case mSlot of
+        Nothing -> pure False -- No slots available
+        Just slot -> do
+            let ringPtr = URing.uRingPtr loopRing
+                ptr = mutablePrimArrayContents buf
+            sqe <- c_io_uring_get_sqe ringPtr
+            if sqe == nullPtr
+                then do
+                    _ <- URing.submitIO loopRing
+                    sqe' <- c_io_uring_get_sqe ringPtr
+                    if sqe' == nullPtr
+                        then do
+                            freeSlot loop slot
+                            pure False
+                        else do
+                            c_hs_uring_prep_recv sqe' fd (castPtr ptr) (fromIntegral len) 0
+                            c_hs_uring_sqe_set_data sqe' (CULLong (fromIntegral slot))
+                            pure True
+                else do
+                    c_hs_uring_prep_recv sqe fd (castPtr ptr) (fromIntegral len) 0
+                    c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
+                    pure True
 
 -- | Submit send (from pointer) and register continuation
+-- Returns False if operation could not be submitted (capacity exhaustion)
 {-# INLINE ioSend #-}
-ioSend :: Loop -> Fd -> Ptr Word8 -> Int -> Cont -> IO ()
+ioSend :: Loop -> Fd -> Ptr Word8 -> Int -> Cont -> IO Bool
 ioSend loop@Loop{..} (Fd fd) ptr len cont = do
-    slot <- allocSlot loop cont
-    let ringPtr = URing.uRingPtr loopRing
-    sqe <- c_io_uring_get_sqe ringPtr
-    if sqe == nullPtr
-        then do
-            _ <- URing.submitIO loopRing
-            sqe' <- c_io_uring_get_sqe ringPtr
-            when (sqe' == nullPtr) $ error "SQ still full after submit"
-            c_hs_uring_prep_send sqe' fd (castPtr ptr) (fromIntegral len) 0
-            c_hs_uring_sqe_set_data sqe' (CULLong (fromIntegral slot))
-        else do
-            c_hs_uring_prep_send sqe fd (castPtr ptr) (fromIntegral len) 0
-            c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
+    mSlot <- allocSlot loop cont
+    case mSlot of
+        Nothing -> pure False -- No slots available
+        Just slot -> do
+            let ringPtr = URing.uRingPtr loopRing
+            sqe <- c_io_uring_get_sqe ringPtr
+            if sqe == nullPtr
+                then do
+                    _ <- URing.submitIO loopRing
+                    sqe' <- c_io_uring_get_sqe ringPtr
+                    if sqe' == nullPtr
+                        then do
+                            freeSlot loop slot
+                            pure False
+                        else do
+                            c_hs_uring_prep_send sqe' fd (castPtr ptr) (fromIntegral len) 0
+                            c_hs_uring_sqe_set_data sqe' (CULLong (fromIntegral slot))
+                            pure True
+                else do
+                    c_hs_uring_prep_send sqe fd (castPtr ptr) (fromIntegral len) 0
+                    c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
+                    pure True
 
 -- | Submit close and register continuation
+-- Returns False if operation could not be submitted (capacity exhaustion)
+-- Note: If close fails to submit, the fd may leak. Callers should log this.
 {-# INLINE ioClose #-}
-ioClose :: Loop -> Fd -> Cont -> IO ()
+ioClose :: Loop -> Fd -> Cont -> IO Bool
 ioClose loop@Loop{..} (Fd fd) cont = do
-    slot <- allocSlot loop cont
-    let ringPtr = URing.uRingPtr loopRing
-    sqe <- c_io_uring_get_sqe ringPtr
-    if sqe == nullPtr
-        then do
-            _ <- URing.submitIO loopRing
-            sqe' <- c_io_uring_get_sqe ringPtr
-            when (sqe' == nullPtr) $ error "SQ still full after submit"
-            c_hs_uring_prep_close sqe' fd
-            c_hs_uring_sqe_set_data sqe' (CULLong (fromIntegral slot))
-        else do
-            c_hs_uring_prep_close sqe fd
-            c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
+    mSlot <- allocSlot loop cont
+    case mSlot of
+        Nothing -> pure False -- No slots available - fd may leak
+        Just slot -> do
+            let ringPtr = URing.uRingPtr loopRing
+            sqe <- c_io_uring_get_sqe ringPtr
+            if sqe == nullPtr
+                then do
+                    _ <- URing.submitIO loopRing
+                    sqe' <- c_io_uring_get_sqe ringPtr
+                    if sqe' == nullPtr
+                        then do
+                            freeSlot loop slot
+                            pure False -- fd may leak
+                        else do
+                            c_hs_uring_prep_close sqe' fd
+                            c_hs_uring_sqe_set_data sqe' (CULLong (fromIntegral slot))
+                            pure True
+                else do
+                    c_hs_uring_prep_close sqe fd
+                    c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
+                    pure True
 
 -- | Run the event loop until shutdown
 runLoop :: Loop -> IO ()
@@ -277,7 +340,17 @@ dispatch loop@Loop{..} (URing.IOCompletion (URing.IOOpId cid) (URing.IOResult re
     let slot = fromIntegral cid
     mCont <- readArray loopConts slot
     case mCont of
-        Nothing -> pure () -- orphan completion (shouldn't happen)
+        Nothing -> do
+            -- CRITICAL BUG: Completion arrived for slot that was already freed.
+            -- This indicates double-free, use-after-free, or slot ID corruption.
+            -- If you see this in logs, investigate immediately!
+            Log.logError loopLogger
+                "Orphan io_uring completion - slot already freed (BUG!)"
+                OrphanCompletionPayload
+                    { ocpSlot = slot
+                    , ocpResult = res
+                    , ocpCapacity = loopCapacity
+                    }
         Just (Cont k) -> do
             let !result =
                     if res < 0
@@ -298,28 +371,34 @@ dispatch loop@Loop{..} (URing.IOCompletion (URing.IOOpId cid) (URing.IOResult re
 
 {- | Blocking recv - submits to io_uring and waits for completion.
 MUST be called from a separate thread (not the main loop thread).
-Returns bytes read, or 0 on EOF/error.
+Returns bytes read, or 0 on EOF/error/capacity exhaustion.
 -}
 ioRecvBlocking :: Loop -> Fd -> MutablePrimArray RealWorld Word8 -> Int -> IO Int
 ioRecvBlocking loop@Loop{..} fd buf len = do
     resultVar <- newEmptyMVar
-    ioRecv loop fd buf len $ Cont $ \case
+    submitted <- ioRecv loop fd buf len $ Cont $ \case
         Success n -> putMVar resultVar (fromIntegral n) >> pure Nothing
         Failure _ -> putMVar resultVar 0 >> pure Nothing
-    -- Force submit so the main loop can see this operation
-    URing.submitIO loopRing
-    takeMVar resultVar
+    if submitted
+        then do
+            -- Force submit so the main loop can see this operation
+            URing.submitIO loopRing
+            takeMVar resultVar
+        else pure 0 -- Capacity exhaustion
 
 {- | Blocking send - submits to io_uring and waits for completion.
 MUST be called from a separate thread (not the main loop thread).
-Returns bytes sent, or 0 on error.
+Returns bytes sent, or 0 on error/capacity exhaustion.
 -}
 ioSendBlocking :: Loop -> Fd -> Ptr Word8 -> Int -> IO Int
 ioSendBlocking loop@Loop{..} fd ptr len = do
     resultVar <- newEmptyMVar
-    ioSend loop fd ptr len $ Cont $ \case
+    submitted <- ioSend loop fd ptr len $ Cont $ \case
         Success n -> putMVar resultVar (fromIntegral n) >> pure Nothing
         Failure _ -> putMVar resultVar 0 >> pure Nothing
-    -- Force submit so the main loop can see this operation
-    URing.submitIO loopRing
-    takeMVar resultVar
+    if submitted
+        then do
+            -- Force submit so the main loop can see this operation
+            URing.submitIO loopRing
+            takeMVar resultVar
+        else pure 0 -- Capacity exhaustion
