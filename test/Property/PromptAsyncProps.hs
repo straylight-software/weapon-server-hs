@@ -9,7 +9,7 @@ including payload construction, storage key generation, and status constants.
 -}
 module Property.PromptAsyncProps where
 
-import Api (CreateMessageInput (..), PartInput (..))
+import Api (CreateMessageInput (..), ModelSelection (..), PartInput (..))
 import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
@@ -41,7 +41,7 @@ prop_queuedPayloadFields = property $ do
     sid <- forAll genNonEmptyText
     reqId <- forAll genNonEmptyText
     parts <- forAll $ Gen.list (Range.linear 0 5) genPart
-    let payload = PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing (map PartInput parts) Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+    let payload = PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing (map PartInput parts) (Just (ModelSelection "anthropic" "test-model")) Nothing Nothing Nothing Nothing Nothing Nothing)
     case payload of
         Object obj -> do
             lookupText "requestID" obj === Just reqId
@@ -100,7 +100,7 @@ prop_statusValuesValid = property $ do
     msgId <- forAll genNonEmptyText
     err <- forAll genNonEmptyText
     let payloads =
-            [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing [] Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+            [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing [] (Just (ModelSelection "anthropic" "test-model")) Nothing Nothing Nothing Nothing Nothing Nothing)
             , PromptAsync.startedPayload sid reqId
             , PromptAsync.completedPayload sid reqId msgId
             , PromptAsync.failedPayload sid reqId err
@@ -123,7 +123,7 @@ prop_lifecycleOrder = property $ do
     reqId <- forAll genNonEmptyText
     msgId <- forAll genNonEmptyText
     let payloads =
-            [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing [] Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+            [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing [] (Just (ModelSelection "anthropic" "test-model")) Nothing Nothing Nothing Nothing Nothing Nothing)
             , PromptAsync.startedPayload sid reqId
             , PromptAsync.completedPayload sid reqId msgId
             ]
@@ -186,7 +186,7 @@ prop_payloadsAreObjects = property $ do
     err <- forAll genNonEmptyText
     parts <- forAll $ Gen.list (Range.linear 0 3) genPart
     let payloads =
-            [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing (map PartInput parts) Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+            [ PromptAsync.queuedPayload sid reqId (CreateMessageInput Nothing (map PartInput parts) (Just (ModelSelection "anthropic" "test-model")) Nothing Nothing Nothing Nothing Nothing Nothing)
             , PromptAsync.startedPayload sid reqId
             , PromptAsync.completedPayload sid reqId msgId
             , PromptAsync.failedPayload sid reqId err

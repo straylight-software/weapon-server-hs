@@ -304,7 +304,7 @@ spec dhallCache exeCache = do
 
                 -- 1. Send first message
                 let parts1 = [PartInput (object ["type" .= ("text" :: Text), "text" .= ("first message" :: Text)])]
-                let input1 = CreateMessageInput Nothing parts1 Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+                let input1 = CreateMessageInput Nothing parts1 (Just (ModelSelection "anthropic" "test-model")) Nothing Nothing Nothing Nothing Nothing Nothing
                 _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input1)
                 -- Wait for first message cycle to complete (busy + idle = 2)
                 _ <- waitForCount 2000000 statusCountVar 2
@@ -318,7 +318,7 @@ spec dhallCache exeCache = do
 
                 -- 3. Send second message
                 let parts2 = [PartInput (object ["type" .= ("text" :: Text), "text" .= ("second message" :: Text)])]
-                let input2 = CreateMessageInput Nothing parts2 Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+                let input2 = CreateMessageInput Nothing parts2 (Just (ModelSelection "anthropic" "test-model")) Nothing Nothing Nothing Nothing Nothing Nothing
                 _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input2)
                 -- Wait for second message cycle to complete (should be 4 total now)
                 _ <- waitForCount 2000000 statusCountVar 4

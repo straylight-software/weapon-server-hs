@@ -189,11 +189,12 @@ buildModelMap models = Map.fromList [(modelId m, m) | m <- models]
 
 {- | Built-in provider definitions.
 
-Contains the static configuration for well-known providers:
+Contains only provider metadata (ID, name, env vars). Models are loaded
+dynamically from external APIs when available, not hardcoded here.
 
 * __anthropic__ - Anthropic (Claude models)
 * __openai__ - OpenAI (GPT and o-series models)
-* __openrouter__ - OpenRouter (dynamic model loading)
+* __openrouter__ - OpenRouter (aggregator with many models)
 -}
 builtinProviders :: [Provider]
 builtinProviders =
@@ -201,27 +202,7 @@ builtinProviders =
         { providerId = "anthropic"
         , providerName = "Anthropic"
         , providerEnv = ["ANTHROPIC_API_KEY"]
-        , providerModels =
-            Map.fromList
-                [
-                    ( "claude-sonnet-4-20250514"
-                    , (defaultModel "claude-sonnet-4-20250514" "Claude Sonnet 4" "2025-05-14" (ModelLimit 200000 Nothing 16384))
-                        { modelReasoning = True
-                        , modelFamily = Just "claude"
-                        , modelCost = Just $ ModelCost 3.0 15.0 (Just 0.3) (Just 3.75) Nothing
-                        , modelModalities = Just $ ModelModalities ["text", "image", "pdf"] ["text"]
-                        }
-                    )
-                ,
-                    ( "claude-opus-4-20250514"
-                    , (defaultModel "claude-opus-4-20250514" "Claude Opus 4" "2025-05-14" (ModelLimit 200000 Nothing 32000))
-                        { modelReasoning = True
-                        , modelFamily = Just "claude"
-                        , modelCost = Just $ ModelCost 15.0 75.0 (Just 1.5) (Just 18.75) Nothing
-                        , modelModalities = Just $ ModelModalities ["text", "image", "pdf"] ["text"]
-                        }
-                    )
-                ]
+        , providerModels = Map.empty
         , providerApi = Nothing
         , providerNpm = Nothing
         }
@@ -229,27 +210,7 @@ builtinProviders =
         { providerId = "openai"
         , providerName = "OpenAI"
         , providerEnv = ["OPENAI_API_KEY"]
-        , providerModels =
-            Map.fromList
-                [
-                    ( "gpt-4o"
-                    , (defaultModel "gpt-4o" "GPT-4o" "2024-05-13" (ModelLimit 128000 Nothing 16384))
-                        { modelFamily = Just "gpt"
-                        , modelCost = Just $ ModelCost 2.5 10.0 Nothing Nothing Nothing
-                        , modelModalities = Just $ ModelModalities ["text", "image"] ["text"]
-                        }
-                    )
-                ,
-                    ( "o3"
-                    , (defaultModel "o3" "o3" "2025-01-01" (ModelLimit 200000 Nothing 100000))
-                        { modelReasoning = True
-                        , modelTemperature = False
-                        , modelFamily = Just "o"
-                        , modelCost = Just $ ModelCost 10.0 40.0 Nothing Nothing Nothing
-                        , modelModalities = Just $ ModelModalities ["text", "image"] ["text"]
-                        }
-                    )
-                ]
+        , providerModels = Map.empty
         , providerApi = Nothing
         , providerNpm = Nothing
         }
@@ -257,7 +218,7 @@ builtinProviders =
         { providerId = "openrouter"
         , providerName = "OpenRouter"
         , providerEnv = ["OPENROUTER_API_KEY"]
-        , providerModels = Map.empty -- Loaded dynamically
+        , providerModels = Map.empty
         , providerApi = Nothing
         , providerNpm = Nothing
         }

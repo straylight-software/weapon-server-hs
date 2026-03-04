@@ -35,23 +35,15 @@ spec = do
             ids `shouldContain` ["openai"]
             ids `shouldContain` ["openrouter"]
 
-        it "has anthropic with models" $ do
+        it "providers have empty models (loaded dynamically)" $ do
+            let providers = Provider.builtinProviders
+            mapM_ (\p -> Map.null (providerModels p) `shouldBe` True) providers
+
+        it "providers have env vars configured" $ do
             let mProvider = Provider.findProvider "anthropic" Provider.builtinProviders
             case mProvider of
                 Nothing -> expectationFailure "Expected to find anthropic provider"
-                Just p -> Map.null (providerModels p) `shouldBe` False
-
-        it "has openai with models" $ do
-            let mProvider = Provider.findProvider "openai" Provider.builtinProviders
-            case mProvider of
-                Nothing -> expectationFailure "Expected to find openai provider"
-                Just p -> Map.null (providerModels p) `shouldBe` False
-
-        it "has openrouter with empty models (dynamic)" $ do
-            let mProvider = Provider.findProvider "openrouter" Provider.builtinProviders
-            case mProvider of
-                Nothing -> expectationFailure "Expected to find openrouter provider"
-                Just p -> Map.null (providerModels p) `shouldBe` True
+                Just p -> providerEnv p `shouldContain` ["ANTHROPIC_API_KEY"]
 
     describe "Provider.list" $ do
         it "returns all builtin providers" $ do
@@ -76,18 +68,12 @@ spec = do
             result `shouldBe` Nothing
 
     describe "Provider.getModel" $ do
-        it "returns model for known provider and model ID" $ do
-            result <- Provider.getModel "anthropic" "claude-sonnet-4-20250514"
-            case result of
-                Nothing -> expectationFailure "Expected to find claude-sonnet-4-20250514"
-                Just model -> modelId model `shouldBe` "claude-sonnet-4-20250514"
-
-        it "returns Nothing for unknown provider" $ do
-            result <- Provider.getModel "unknown" "claude-sonnet-4-20250514"
+        it "returns Nothing for provider with no models loaded" $ do
+            result <- Provider.getModel "anthropic" "any-model"
             result `shouldBe` Nothing
 
-        it "returns Nothing for unknown model" $ do
-            result <- Provider.getModel "anthropic" "unknown-model"
+        it "returns Nothing for unknown provider" $ do
+            result <- Provider.getModel "unknown" "any-model"
             result `shouldBe` Nothing
 
     describe "Provider.findProvider (pure)" $ do
@@ -102,15 +88,18 @@ spec = do
             result `shouldBe` Nothing
 
     describe "Provider.findModel (pure)" $ do
-        it "finds existing model" $ do
-            let mProvider = Provider.findProvider "anthropic" Provider.builtinProviders
+        it "finds model after updateProviderModels" $ do
+            let newModel = defaultModel "test-model" "Test Model" "2024-01-01" (ModelLimit 128000 Nothing 4096)
+            let newModels = Map.singleton "test-model" newModel
+            let updated = Provider.updateProviderModels "anthropic" newModels Provider.builtinProviders
+            let mProvider = Provider.findProvider "anthropic" updated
             case mProvider of
                 Nothing -> expectationFailure "Expected to find anthropic"
                 Just p -> do
-                    let mModel = Provider.findModel "claude-sonnet-4-20250514" p
+                    let mModel = Provider.findModel "test-model" p
                     case mModel of
-                        Nothing -> expectationFailure "Expected to find claude-sonnet-4-20250514"
-                        Just m -> modelId m `shouldBe` "claude-sonnet-4-20250514"
+                        Nothing -> expectationFailure "Expected to find test-model"
+                        Just m -> modelId m `shouldBe` "test-model"
 
         it "returns Nothing for missing model" $ do
             let mProvider = Provider.findProvider "anthropic" Provider.builtinProviders

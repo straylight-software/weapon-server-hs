@@ -80,7 +80,7 @@ module Server.ErrorFormatters (
 import Data.Aeson (Value, encode, object, (.=))
 import Data.Aeson.Types (Pair)
 import Data.ByteString.Lazy (ByteString)
-import Data.Text (Text)
+import Data.Text (Text, pack)
 import Network.HTTP.Types (hContentType)
 import Network.HTTP.Types qualified as HTTP
 import Network.Wai (Request)
@@ -109,16 +109,18 @@ errorFormattersContext = jsonErrorFormatters :. EmptyContext
 
 {- | Custom error formatters that return JSON instead of plain text.
 
-Currently overrides:
+Overrides all Servant error formatters to ensure consistent JSON responses:
 
 * 'notFoundErrorFormatter' - Returns JSON for 404 errors
-
-Other error types use Servant's default formatters.
+* 'bodyParserErrorFormatter' - Returns JSON for request body parsing errors
+* 'urlParseErrorFormatter' - Returns JSON for URL/query parameter parsing errors
 -}
 jsonErrorFormatters :: ErrorFormatters
 jsonErrorFormatters =
     defaultErrorFormatters
         { notFoundErrorFormatter = notFoundJson
+        , bodyParserErrorFormatter = bodyParserJson
+        , urlParseErrorFormatter = urlParseJson
         }
 
 {- | Format 404 Not Found errors as JSON.
@@ -137,6 +139,28 @@ notFoundJson _req =
     err404
         { errHeaders = jsonContentType
         , errBody = notFoundBody
+        }
+
+{- | Format request body parsing errors as JSON.
+
+Handles errors from malformed JSON bodies, missing required fields, etc.
+-}
+bodyParserJson :: ErrorFormatter
+bodyParserJson _typeRep _req msg =
+    err400
+        { errHeaders = jsonContentType
+        , errBody = badRequestBody (pack msg)
+        }
+
+{- | Format URL/query parameter parsing errors as JSON.
+
+Handles errors from invalid query parameters, missing required params, etc.
+-}
+urlParseJson :: ErrorFormatter
+urlParseJson _typeRep _req msg =
+    err400
+        { errHeaders = jsonContentType
+        , errBody = badRequestBody (pack msg)
         }
 
 {- | Format 400 Bad Request errors as JSON.

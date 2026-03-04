@@ -810,11 +810,11 @@ createMessageIO st sid input = do
     let t = realToFrac (utcTimeToPOSIXSeconds now) * 1000
     let msgTime = MessageTime t Nothing -- created, no completed yet
 
-    -- Major #5: Extract model and agent from input with defaults
-    -- Model is now a {providerID, modelID} object
+    -- Major #5: Extract model and agent from input
+    -- Model is already validated by the handler, but provide a safe fallback
     let (providerId, modelId) = case cmiModel input of
             Just ms -> (msProviderID ms, msModelID ms)
-            Nothing -> ("anthropic", "claude-opus-4-20250514")
+            Nothing -> ("unknown", "unknown")
     -- For OpenRouter, modelId already contains the full path (e.g., "moonshotai/kimi-k2.5")
     -- For other providers, we need to prefix with providerId
     let fullModelId = if providerId == "openrouter" then modelId else providerId <> "/" <> modelId
@@ -2009,11 +2009,14 @@ ptyChangesHandler st ptyId = do
 
 -- | Simple chat completion handler for testing LLM integration
 chatHandler :: AppState -> ChatInput -> Handler Value
-chatHandler st input = liftIO $ do
-    let model = fromMaybe "anthropic/claude-sonnet-4-20250514" (ciModel input)
-    if "anthropic/" `T.isPrefixOf` model
-        then chatWithAnthropic (stStorage st) model (ciMessage input)
-        else chatWithOpenRouter (stStorage st) model (ciMessage input)
+chatHandler st input = do
+    model <- case ciModel input of
+        Just m -> pure m
+        Nothing -> throwError $ badRequestError "Model is required (e.g. \"anthropic/claude-sonnet-4-20250514\")"
+    liftIO $
+        if "anthropic/" `T.isPrefixOf` model
+            then chatWithAnthropic (stStorage st) model (ciMessage input)
+            else chatWithOpenRouter (stStorage st) model (ciMessage input)
 
 -- | Chat using Anthropic API
 chatWithAnthropic :: Storage.StorageConfig -> Text -> Text -> IO Value

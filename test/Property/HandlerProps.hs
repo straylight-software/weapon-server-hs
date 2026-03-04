@@ -61,6 +61,12 @@ import Util.Identifier qualified as Identifier
 import Util.StorageKeys (todoKey)
 import Vcs.Diff (VcsError)
 
+{- | A test model selection to use in tests that require a model.
+The actual LLM is never called in these tests.
+-}
+testModel :: Maybe ModelSelection
+testModel = Just (ModelSelection "anthropic" "test-model")
+
 data ProjectHandlersResult = ProjectHandlersResult
     { phrListed :: !(Either ServerError [Project])
     , phrCurrent :: !(Either ServerError Project)
@@ -571,7 +577,7 @@ prop_sessionMessageHandlers dhallCache exeCache = property $ do
             unsubStatus <- Bus.subscribe (stBus st) "session.status" $ \_event ->
                 atomically $ modifyTVar' statusVar (+ 1)
             let parts = [PartInput (object ["id" .= ("part_1" :: Text), "type" .= ("text" :: Text), "text" .= msg])]
-            let input = CreateMessageInput Nothing parts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+            let input = CreateMessageInput Nothing parts testModel Nothing Nothing Nothing Nothing Nothing Nothing
             created <- runHandlerIO (sessionMessageCreateHandler st "session" input)
             -- Wait for at least 2 session.status events (busy + idle)
             _ <- waitForCount 2000000 statusVar 2
@@ -611,7 +617,7 @@ prop_sessionMessageCreatePublishesEvents dhallCache exeCache = property $ do
             reader <- atomically $ dupTChan (stEventChan st)
 
             let parts = [PartInput (object ["id" .= ("part_1" :: Text), "type" .= ("text" :: Text), "text" .= msg])]
-            let input = CreateMessageInput (Just "msg_test") parts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+            let input = CreateMessageInput (Just "msg_test") parts testModel Nothing Nothing Nothing Nothing Nothing Nothing
             _ <- runHandlerIO (sessionMessageCreateHandler st "session_test" input)
 
             -- Read events until we see 2 session.status events (busy + idle)
@@ -675,7 +681,7 @@ prop_sessionMessagesOrderedCorrectly dhallCache exeCache = property $ do
             unsubStatus <- Bus.subscribe (stBus st) "session.status" $ \_event ->
                 atomically $ modifyTVar' statusVar (+ 1)
             let parts = [PartInput (object ["type" .= ("text" :: Text), "text" .= msg])]
-            let input = CreateMessageInput Nothing parts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+            let input = CreateMessageInput Nothing parts testModel Nothing Nothing Nothing Nothing Nothing Nothing
             _ <- runHandlerIO (sessionMessageCreateHandler st "session_order_test" input)
             -- Wait for background work to complete (busy + idle)
             _ <- waitForCount 2000000 statusVar 2
@@ -722,7 +728,7 @@ prop_sameTimestampUserBeforeAssistant dhallCache exeCache = property $ do
             unsubStatus <- Bus.subscribe (stBus st) "session.status" $ \_event ->
                 atomically $ modifyTVar' statusVar (+ 1)
             let parts = [PartInput (object ["type" .= ("text" :: Text), "text" .= ("test" :: Text)])]
-            let input = CreateMessageInput Nothing parts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+            let input = CreateMessageInput Nothing parts testModel Nothing Nothing Nothing Nothing Nothing Nothing
             _ <- runHandlerIO (sessionMessageCreateHandler st sessionId input)
             -- Wait for background work to complete (busy + idle)
             _ <- waitForCount 2000000 statusVar 2
@@ -786,7 +792,7 @@ prop_messageEventsForwardedToEventChan dhallCache exeCache = property $ do
 
             -- Create a message
             let parts = [PartInput (object ["id" .= ("part_1" :: Text), "type" .= ("text" :: Text), "text" .= msg])]
-            let input = CreateMessageInput (Just "msg_sse") parts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+            let input = CreateMessageInput (Just "msg_sse") parts testModel Nothing Nothing Nothing Nothing Nothing Nothing
             _ <- runHandlerIO (sessionMessageCreateHandler st "session_sse" input)
 
             -- Read events from the TChan until we see 2 session.status events
@@ -842,7 +848,7 @@ prop_sessionStatusEventsPublished dhallCache exeCache = property $ do
                 atomically $ modifyTVar' statusEvents (event :)
 
             let parts = [PartInput (object ["id" .= ("part_1" :: Text), "type" .= ("text" :: Text), "text" .= msg])]
-            let input = CreateMessageInput (Just "msg_status") parts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+            let input = CreateMessageInput (Just "msg_status") parts testModel Nothing Nothing Nothing Nothing Nothing Nothing
             _ <- runHandlerIO (sessionMessageCreateHandler st "session_status_test" input)
 
             -- Wait for at least 2 status events (busy + idle) via the same var
@@ -868,7 +874,7 @@ prop_sessionMessagePartHandlers dhallCache exeCache = property $ do
                 atomically $ modifyTVar' statusVar (+ 1)
             let pid = "part_1" :: Text
             let parts = [PartInput (object ["id" .= pid, "type" .= ("text" :: Text), "text" .= txt])]
-            let input = CreateMessageInput Nothing parts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+            let input = CreateMessageInput Nothing parts testModel Nothing Nothing Nothing Nothing Nothing Nothing
             _ <- runHandlerIO (sessionMessageCreateHandler st "session" input)
             -- Wait for background work to complete (busy + idle)
             _ <- waitForCount 2000000 statusVar 2
@@ -1128,7 +1134,7 @@ prop_chatHandlerAnthropicMissing dhallCache exeCache = property $ do
     msg <- forAll genText
     result <- evalIO $ withStateWith dhallCache exeCache $ \st ->
         withEnv "ANTHROPIC_API_KEY" Nothing $
-            runHandlerIO (chatHandler st (ChatInput msg Nothing))
+            runHandlerIO (chatHandler st (ChatInput msg (Just "anthropic/claude-sonnet-4-20250514")))
     case result of
         Left _err -> failure
         Right val -> lookupText "error" val === Just "No Anthropic API key configured. Set ANTHROPIC_API_KEY or add via provider auth."
@@ -1147,7 +1153,7 @@ prop_promptAsyncIndex :: CachedProperty
 prop_promptAsyncIndex dhallCache exeCache = property $ do
     result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
         let parts = [PartInput (object ["type" .= ("text" :: Text), "text" .= ("hi" :: Text)])]
-        let input = CreateMessageInput Nothing parts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+        let input = CreateMessageInput Nothing parts testModel Nothing Nothing Nothing Nothing Nothing Nothing
         -- Get index before (may not exist, so default to empty list)
         idsBefore <-
             Control.Exception.catch
