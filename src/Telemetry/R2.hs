@@ -197,7 +197,7 @@ uploadSegment ::
     -- ^ Local segment path
     IO (Either R2Error ())
 uploadSegment h sessionId localPath = do
-    -- Read segment (TODO: add zstd compression)
+    -- TODO[b7r6]: add zstd compression for segment uploads
     readResult <- try @IOException $ BS.readFile localPath
     case readResult of
         Left err ->
@@ -492,8 +492,10 @@ replicationLoop r2 wal sessionId stopVar pollInterval lg = do
             Right () -> do
                 -- Reset failure counter on success
                 atomically $ writeTVar failureCountVar 0
-                -- Update high water mark
-                -- TODO: WAL.setHighWaterMark wal endSeq
+                -- TODO[b7r6]: HIGH PRIORITY - Implement WAL.setHighWaterMark
+                -- Without this, segments may be re-uploaded after restart since we
+                -- don't track which segments have been successfully replicated.
+                -- WAL.setHighWaterMark wal endSeq
                 Log.logDebug lg ("Uploaded: " <> T.pack path) ()
             Left err -> do
                 -- Increment failure counter

@@ -771,7 +771,7 @@ sessionPermissionHandler st sid pid _mDir input = do
         Bus.publish (stBus st) "permission.replied" (object ["sessionID" .= sid, "permissionID" .= pid, "response" .= priResponse input])
         return True
 
--- * Message Handlers (still in-memory for now, TODO: port to storage)
+-- * Message Handlers (still in-memory for now, TODO[b7r6]: port to storage)
 
 sessionMessageListHandler :: AppState -> Text -> Maybe Int -> Handler [Message]
 sessionMessageListHandler st sid _mLimit = do
@@ -781,6 +781,8 @@ sessionMessageListHandler st sid _mLimit = do
         -- Secondary sort by role priority ensures user messages come before assistant messages
         -- when they have the same timestamp (which happens when created together)
         let key = ["message", sid]
+        -- NOTE: Catching NotFoundError and returning [] is intentional - a session
+        -- with no messages yet should return an empty list, not an error.
         messages <-
             (Storage.list (stStorage st) key >>= mapM (Storage.read (stStorage st)))
                 `catch` \(Storage.NotFoundError _) -> return []
@@ -1314,6 +1316,8 @@ sessionMessageGetHandler st sid msgId = do
     _ <- V.validateSessionId sid
     _ <- V.validateMessageId msgId
     let key = ["message", sid, msgId]
+    -- NOTE: Catching NotFoundError and returning Nothing is intentional -
+    -- we then throw our own notFoundError with proper HTTP semantics.
     result <-
         liftIO $
             (Just <$> Storage.read (stStorage st) key)
@@ -1520,6 +1524,8 @@ toolResultToMessage trm =
     OpenRouter.toolResultChatMessage (OpenRouter.trmToolCallId trm) (truncateToolOutputForLLM $ OpenRouter.trmContent trm)
 
 -- | Load conversation history from storage (Critical #2)
+-- NOTE: Catching NotFoundError and returning [] is intentional - a session
+-- with no messages yet should return an empty list for conversation context.
 loadConversationHistory :: AppState -> Text -> IO [Message]
 loadConversationHistory st sid = do
     let key = ["message", sid]

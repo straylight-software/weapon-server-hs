@@ -232,8 +232,15 @@ createSandboxed ::
 createSandboxed PtyManager{..} ptyId params input = do
     -- Get user environment for sandbox
     preferredShell <- getPreferredShell
-    home <- fromMaybe "/tmp" <$> lookupEnv "HOME"
-    user <- fromMaybe "nobody" <$> lookupEnv "USER"
+    mHome <- lookupEnv "HOME"
+    mUser <- lookupEnv "USER"
+    let home = fromMaybe "/tmp" mHome
+        user = fromMaybe "nobody" mUser
+    -- Warn on suspicious fallback defaults that may cause unexpected behavior
+    when (mHome == Nothing) $
+        Log.logWarn pmLogger "HOME not set, falling back to /tmp - PTY session may behave unexpectedly" ()
+    when (mUser == Nothing) $
+        Log.logWarn pmLogger "USER not set, falling back to 'nobody' - PTY session may behave unexpectedly" ()
 
     -- Build sandbox config with actual user values
     let config = buildSandboxConfig params input preferredShell home user
@@ -527,6 +534,7 @@ exitMonitor logger sessions ptyId ph mOverlayDir = do
             Nothing -> pure ()
             Just netPh -> do
                 terminateProcess netPh
+                -- TODO[b7r6]: consider logging cleanup failures at DEBUG
                 void $ tryIO $ waitForProcess netPh
 
     -- Cleanup overlay after delay (supervised - failures should be visible)
@@ -534,6 +542,7 @@ exitMonitor logger sessions ptyId ph mOverlayDir = do
         Nothing -> pure ()
         Just dir -> void $ forkLogged logger ("pty-cleanup-" <> ptyId) $ do
             threadDelay 5000000 -- 5 seconds
+            -- TODO[b7r6]: consider logging cleanup failures at DEBUG
             void $ tryIO $ Sandbox.destroyDir dir
 
 -- ============================================================================
@@ -631,6 +640,7 @@ Closes the PTY, terminates processes, and removes the overlay directory.
 cleanupSession :: RealPtySession -> IO ()
 cleanupSession session = do
     -- Close the PTY first to signal EOF to the process
+    -- TODO[b7r6]: consider logging cleanup failures at DEBUG
     void $ tryIO $ closePty (rpsPty session)
 
     -- Terminate the process
@@ -641,6 +651,7 @@ cleanupSession session = do
         Nothing -> pure ()
         Just netPh -> do
             terminateProcess netPh
+            -- TODO[b7r6]: consider logging cleanup failures at DEBUG
             void $ tryIO $ waitForProcess netPh
 
     -- Wait briefly for process to exit (poll a few times)
@@ -649,6 +660,7 @@ cleanupSession session = do
     -- Clean up overlay directory
     case rpsOverlayDir session of
         Nothing -> pure ()
+        -- TODO[b7r6]: consider logging cleanup failures at DEBUG
         Just dir -> void $ tryIO $ Sandbox.destroyDir dir
 
 {- | Poll for process exit with limited attempts, then SIGKILL.

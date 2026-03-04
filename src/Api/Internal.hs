@@ -57,6 +57,8 @@ toJSON foo = object $
 optFields :: (KeyValue e kv) => [(Key, Maybe a)] -> [kv]
 optFields [] = []
 optFields ((_, Nothing) : rest) = optFields rest
+-- NOTE: This error is a programmer error detector - it fires when the API is misused.
+-- The correct pattern is optField "key" maybeVal, not ("key", toJSON <$> maybeVal).
 optFields ((_, Just _) : _) = error "optFields: use optField for Maybe values with toJSON"
 {-# INLINE optFields #-}
 

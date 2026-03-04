@@ -108,7 +108,7 @@ traceSize (Trace _events size) = size
 
 {- | Serialize a trace to bytes (for golden tests / persistence).
 
-NOT YET IMPLEMENTED. Will crash if called.
+TODO[b7r6]: NOT YET IMPLEMENTED. Will crash if called.
 
 When implementing: use Binary or Aeson for Event serialization.
 The Event type contains Handle (use packHandle\/unpackHandle),
@@ -120,7 +120,7 @@ serializeTrace _ =
 
 {- | Deserialize a trace from bytes.
 
-NOT YET IMPLEMENTED. Will crash if called.
+TODO[b7r6]: NOT YET IMPLEMENTED. Will crash if called.
 
 When implementing: must roundtrip with serializeTrace.
 -}

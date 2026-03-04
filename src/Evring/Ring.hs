@@ -209,14 +209,14 @@ runGenerateTraced config machine = do
 
 {- | Submit operations to the ring.
 
-TODO: Implement with actual io_uring via System.IoUring
+TODO[b7r6]: Implement with actual io_uring via System.IoUring
 -}
 submitOperations :: [Operation] -> IO ()
 submitOperations _ops = return () -- Placeholder
 
 {- | Wait for a completion event.
 
-TODO: Implement with actual io_uring via System.IoUring
+TODO[b7r6]: Implement with actual io_uring via System.IoUring
 -}
 awaitCompletion :: IO Event
 awaitCompletion = return emptyEvent -- Placeholder

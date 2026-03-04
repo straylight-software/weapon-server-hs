@@ -129,6 +129,9 @@ start config bus sessionId projectId directory = do
     idGen <- Identifier.newIdGenState
 
     -- Create handle (thread will be filled in)
+    -- NOTE: This error is a deferred initialization pattern - the IORef is immediately
+    -- populated after creation. If this error ever fires, it indicates a bug in the
+    -- initialization sequence, not a runtime condition.
     tidRef <- newIORef (error "TelemetryHandle not initialized")
     unsubRef <- newIORef (pure ())
 
@@ -237,7 +240,7 @@ extractMeta (Object obj) =
     EventMeta
         { emModel = getTextField "modelID" obj
         , emAgent = getTextField "agent" obj
-        , emTokensIn = Nothing -- TODO: extract from usage
+        , emTokensIn = Nothing -- TODO[b7r6]: extract from usage
         , emTokensOut = Nothing
         , emLatencyMs = Nothing
         , emTotalLatencyMs = Nothing

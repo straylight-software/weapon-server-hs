@@ -470,7 +470,7 @@ keepAliveLoop ctx clientFd settings app stateRef serverStateRef lg = do
     serverState <- readIORef serverStateRef
     let bufferSize = evringBufferSize settings
         maxRequests = evringMaxRequestsPerConnection settings
-        _headerTimeoutUs = evringRequestHeaderTimeout settings * 1000000 -- TODO: use io_uring timeout
+        _headerTimeoutUs = evringRequestHeaderTimeout settings * 1000000 -- TODO[b7r6]: use io_uring timeout
 
     -- Check if we're shutting down or hit max requests - close connection immediately
     if ssShuttingDown serverState || connRequestCount state >= maxRequests
@@ -733,7 +733,7 @@ parseHttpRequest rawData = do
                         , queryString = query
                         , requestHeaders = headers
                         , isSecure = False
-                        , remoteHost = SockAddrInet 0 0 -- TODO: Get from accept
+                        , remoteHost = SockAddrInet 0 0 -- TODO[b7r6]: Get from accept
                         , vault = Vault.empty
                         , requestBodyLength = KnownLength (fromIntegral contentLength)
                         , requestHeaderHost = lookup "Host" headers
@@ -1041,7 +1041,7 @@ sendBytes ctx clientFd bytes = do
 {- | Send bytes using zero-copy when buffer is large enough.
 Currently falls back to regular send since zero-copy requires
 buffer lifetime management that our synchronous model doesn't support.
-TODO: Implement proper zero-copy with IOSQE_CQE_SKIP_SUCCESS
+TODO[b7r6]: Implement proper zero-copy with IOSQE_CQE_SKIP_SUCCESS
 -}
 _sendBytesZeroCopy :: IOCtx -> Fd -> ByteString -> Int -> IO ()
 _sendBytesZeroCopy ctx clientFd bytes threshold
