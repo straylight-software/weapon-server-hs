@@ -17,7 +17,7 @@ import Evring.Wai (runEvring)
 import Network.Wai (Application)
 
 main :: IO ()
-main = runEvring 8080 myApp
+main = runEvring logger 8080 myApp
 @
 
 = Features
@@ -60,6 +60,9 @@ import Control.Exception (SomeException, bracket, catch, finally)
 import Control.Monad (replicateM, unless, void, when)
 
 import Data.ByteString (ByteString)
+import Data.Text qualified as T
+
+import Log qualified
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Char8 qualified as BC
@@ -180,11 +183,13 @@ data EvringSettings = EvringSettings
     -- ^ Timeout for receiving request body in seconds (default 60)
     , evringZeroCopyThreshold :: !Int
     -- ^ Minimum size in bytes to use zero-copy send (default 16KB, 0 to disable)
+    , evringLogger :: !Log.Logger
+    -- ^ Logger for server events
     }
 
 -- | Default settings for port 8080.
-defaultEvringSettings :: EvringSettings
-defaultEvringSettings =
+defaultEvringSettings :: Log.Logger -> EvringSettings
+defaultEvringSettings logger =
     EvringSettings
         { evringPort = 8080
         , evringHost = "0.0.0.0"
@@ -197,6 +202,7 @@ defaultEvringSettings =
         , evringRequestHeaderTimeout = 30 -- 30 seconds for headers
         , evringRequestBodyTimeout = 60 -- 60 seconds for body
         , evringZeroCopyThreshold = 16384 -- 16KB threshold for zero-copy send
+        , evringLogger = logger
         }
 
 -- | Server state for graceful shutdown and resource management
@@ -246,8 +252,8 @@ returnBuffer serverStateRef slot =
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- | Run a WAI application on the given port using io_uring.
-runEvring :: Int -> Application -> IO ()
-runEvring port = runEvringSettings (defaultEvringSettings{evringPort = port})
+runEvring :: Log.Logger -> Int -> Application -> IO ()
+runEvring logger port = runEvringSettings ((defaultEvringSettings logger){evringPort = port})
 
 {- | Run a WAI application with custom settings using io_uring.
 Uses single-threaded event loop for io_uring safety.
@@ -255,7 +261,8 @@ Handles SIGTERM and SIGINT for graceful shutdown.
 -}
 runEvringSettings :: EvringSettings -> Application -> IO ()
 runEvringSettings settings app = do
-    putStrLn $ "evring-wai: Starting server on port " ++ show (evringPort settings)
+    let lg = Log.withNS (evringLogger settings) "evring-wai"
+    Log.logInfo lg ("Starting server on port " <> T.pack (show (evringPort settings))) ()
 
     -- Pre-allocate buffer pool
     let poolSize = min 256 (evringMaxConnections settings)
@@ -273,7 +280,7 @@ runEvringSettings settings app = do
 
     -- Install signal handlers
     let shutdownHandler = do
-            putStrLn "\nevring-wai: Received shutdown signal, initiating graceful shutdown..."
+            Log.logInfo lg "Received shutdown signal, initiating graceful shutdown..." ()
             atomicModifyIORef' serverStateRef $ \s ->
                 (s{ssShuttingDown = True}, ())
 
@@ -285,33 +292,32 @@ runEvringSettings settings app = do
             withFdSocket listenSock $ \listenFd -> do
                 -- Catch exceptions from interrupted io_uring operations during shutdown
                 catch
-                    (runAcceptLoop ctx (Fd listenFd) settings app serverStateRef)
+                    (runAcceptLoop ctx (Fd listenFd) settings app serverStateRef lg)
                     ( \(e :: SomeException) -> do
                         -- Check error message for EINTR (-4), which is expected during shutdown
                         let errMsg = show e
                             isEintr = "failed: -4)" `isInfixOf` errMsg || "-4)" `isInfixOf` errMsg
                         unless isEintr $
-                            putStrLn $
-                                "evring-wai: Accept loop error: " ++ errMsg
+                            Log.logError lg ("Accept loop error: " <> T.pack errMsg) ()
                     )
-                    `finally` waitForConnections serverStateRef settings
+                    `finally` waitForConnections serverStateRef settings lg
 
 -- | Wait for active connections to drain during shutdown
-waitForConnections :: IORef ServerState -> EvringSettings -> IO ()
-waitForConnections serverStateRef settings = do
+waitForConnections :: IORef ServerState -> EvringSettings -> Log.Logger -> IO ()
+waitForConnections serverStateRef settings lg = do
     state <- readIORef serverStateRef
     when (ssActiveConnections state > 0) $ do
-        putStrLn $ "evring-wai: Waiting for " ++ show (ssActiveConnections state) ++ " active connections to drain..."
+        Log.logInfo lg ("Waiting for " <> T.pack (show (ssActiveConnections state)) <> " active connections to drain...") ()
         waitLoop (evringGracefulShutdownTimeout settings * 10) -- 100ms intervals
-    putStrLn "evring-wai: Shutdown complete"
+    Log.logInfo lg "Shutdown complete" ()
   where
     waitLoop 0 = do
         state <- readIORef serverStateRef
         when (ssActiveConnections state > 0) $
-            putStrLn $
-                "evring-wai: Timeout waiting for connections, forcing shutdown with "
-                    ++ show (ssActiveConnections state)
-                    ++ " active"
+            Log.logWarn lg
+                ("Timeout waiting for connections, forcing shutdown with "
+                    <> T.pack (show (ssActiveConnections state))
+                    <> " active") ()
     waitLoop remaining = do
         state <- readIORef serverStateRef
         unless (ssActiveConnections state == 0) $ do
@@ -346,8 +352,8 @@ createListenSocket EvringSettings{..} = do
 Single-threaded event loop for io_uring safety.
 Checks for shutdown signal and tracks active connections.
 -}
-runAcceptLoop :: IOCtx -> Fd -> EvringSettings -> Application -> IORef ServerState -> IO ()
-runAcceptLoop ctx listenFd settings app serverStateRef = do
+runAcceptLoop :: IOCtx -> Fd -> EvringSettings -> Application -> IORef ServerState -> Log.Logger -> IO ()
+runAcceptLoop ctx listenFd settings app serverStateRef lg = do
     -- Allocate sockaddr buffer for accept (reused across accepts)
     addrBuf <- mallocBytes 128 -- sockaddr_storage size
     addrLenBuf <- mallocBytes 4
@@ -359,7 +365,7 @@ runAcceptLoop ctx listenFd settings app serverStateRef = do
         -- Check if we're shutting down
         state <- readIORef serverStateRef
         when (ssShuttingDown state) $ do
-            putStrLn "evring-wai: Shutdown requested, stopping accept loop"
+            Log.logDebug lg "Shutdown requested, stopping accept loop" ()
             return ()
 
         unless (ssShuttingDown state) $ do
@@ -405,7 +411,7 @@ runAcceptLoop ctx listenFd settings app serverStateRef = do
                                 (capIdx, _) <- threadCapability =<< myThreadId
                                 _ <-
                                     forkOn capIdx $
-                                        handleConnection ctx clientFd clientAddr settings app serverStateRef
+                                        handleConnection ctx clientFd clientAddr settings app serverStateRef lg
                                             `finally` atomicModifyIORef'
                                                 serverStateRef
                                                 ( \s ->
@@ -435,8 +441,8 @@ data ConnState = ConnState
     }
 
 -- | Handle a connection with keep-alive support.
-handleConnection :: IOCtx -> Fd -> SockAddr -> EvringSettings -> Application -> IORef ServerState -> IO ()
-handleConnection ctx clientFd clientAddr settings app serverStateRef = do
+handleConnection :: IOCtx -> Fd -> SockAddr -> EvringSettings -> Application -> IORef ServerState -> Log.Logger -> IO ()
+handleConnection ctx clientFd clientAddr settings app serverStateRef lg = do
     let bufferSize = evringBufferSize settings
 
     -- Borrow buffer from pool
@@ -454,12 +460,12 @@ handleConnection ctx clientFd clientAddr settings app serverStateRef = do
                 }
 
     -- Enter keep-alive request loop, returning buffer when done
-    keepAliveLoop ctx clientFd settings app stateRef serverStateRef
+    keepAliveLoop ctx clientFd settings app stateRef serverStateRef lg
         `finally` returnBuffer serverStateRef bufferSlot
 
 -- | Keep-alive request loop - handles multiple requests per connection
-keepAliveLoop :: IOCtx -> Fd -> EvringSettings -> Application -> IORef ConnState -> IORef ServerState -> IO ()
-keepAliveLoop ctx clientFd settings app stateRef serverStateRef = do
+keepAliveLoop :: IOCtx -> Fd -> EvringSettings -> Application -> IORef ConnState -> IORef ServerState -> Log.Logger -> IO ()
+keepAliveLoop ctx clientFd settings app stateRef serverStateRef lg = do
     state <- readIORef stateRef
     serverState <- readIORef serverStateRef
     let bufferSize = evringBufferSize settings
@@ -476,7 +482,7 @@ keepAliveLoop ctx clientFd settings app stateRef serverStateRef = do
                     -- We have a complete request from leftover data
                     -- Attach streaming body reader and process
                     req <- attachStreamingBody ctx clientFd stateRef pr
-                    processRequest ctx clientFd settings app stateRef serverStateRef req leftover
+                    processRequest ctx clientFd settings app stateRef serverStateRef req leftover lg
                 Nothing -> do
                     -- Need to read more data
                     results <- submitBatch ctx $ \submit -> do
@@ -491,12 +497,12 @@ keepAliveLoop ctx clientFd settings app stateRef serverStateRef = do
                                 case tryParseRequest allData of
                                     Just (pr, leftover) -> do
                                         req <- attachStreamingBody ctx clientFd stateRef pr
-                                        processRequest ctx clientFd settings app stateRef serverStateRef req leftover
+                                        processRequest ctx clientFd settings app stateRef serverStateRef req leftover lg
                                     Nothing -> do
                                         -- Still incomplete, store and continue (request too large or split)
                                         writeIORef stateRef state{connLeftover = allData}
                                         -- Try reading more (could be chunked arrival)
-                                        keepAliveLoop ctx clientFd settings app stateRef serverStateRef
+                                        keepAliveLoop ctx clientFd settings app stateRef serverStateRef lg
                             Complete _zeroBytes -> closeConnection ctx clientFd -- 0 bytes = client closed
                             IoErrno _errno -> closeConnection ctx clientFd
                             Eof -> closeConnection ctx clientFd
@@ -534,8 +540,8 @@ tryParseRequest bs
 -- Note: getContentLengthFromParsed removed - use prContentLength directly
 
 -- | Process a complete request and decide whether to keep connection alive
-processRequest :: IOCtx -> Fd -> EvringSettings -> Application -> IORef ConnState -> IORef ServerState -> Request -> ByteString -> IO ()
-processRequest ctx clientFd settings app stateRef serverStateRef req leftover = do
+processRequest :: IOCtx -> Fd -> EvringSettings -> Application -> IORef ConnState -> IORef ServerState -> Request -> ByteString -> Log.Logger -> IO ()
+processRequest ctx clientFd settings app stateRef serverStateRef req leftover lg = do
     state <- readIORef stateRef
     serverState <- readIORef serverStateRef
 
@@ -544,7 +550,7 @@ processRequest ctx clientFd settings app stateRef serverStateRef req leftover = 
     let shouldKeepAlive = checkKeepAlive req && not (ssShuttingDown serverState)
 
     -- Call WAI application
-    response <- runApplication app req
+    response <- runApplication app req lg
 
     let handleNormalResponse = do
             sendResponseWithKeepAlive ctx clientFd response shouldKeepAlive
@@ -558,7 +564,7 @@ processRequest ctx clientFd settings app stateRef serverStateRef req leftover = 
                             { connLeftover = leftover
                             , connRequestCount = connRequestCount state + 1
                             }
-                    keepAliveLoop ctx clientFd settings app stateRef serverStateRef
+                    keepAliveLoop ctx clientFd settings app stateRef serverStateRef lg
                 else
                     closeConnection ctx clientFd
 
@@ -567,7 +573,7 @@ processRequest ctx clientFd settings app stateRef serverStateRef req leftover = 
         ResponseRaw rawApp _fallback -> do
             -- Handle raw connection (WebSocket, etc.)
             -- The rawApp takes a receive action and a send action
-            handleRawResponse ctx clientFd settings stateRef rawApp leftover
+            handleRawResponse ctx clientFd settings stateRef rawApp leftover lg
             -- After raw handler completes, close connection
             closeConnection ctx clientFd
         -- Normal HTTP responses (File, Builder, Stream)
@@ -596,8 +602,9 @@ handleRawResponse ::
     IORef ConnState ->
     (IO ByteString -> (ByteString -> IO ()) -> IO ()) ->
     ByteString ->
+    Log.Logger ->
     IO ()
-handleRawResponse ctx clientFd settings stateRef rawApp leftoverData = do
+handleRawResponse ctx clientFd settings stateRef rawApp leftoverData lg = do
     -- Create leftover buffer for any data that was read but not consumed
     leftoverRef <- newIORef leftoverData
 
@@ -637,12 +644,12 @@ handleRawResponse ctx clientFd settings stateRef rawApp leftoverData = do
     catch
         (rawApp recvAction sendAction)
         ( \(e :: SomeException) ->
-            putStrLn $ "evring-wai: Raw handler error: " ++ show e
+            Log.logError lg ("Raw handler error: " <> T.pack (show e)) ()
         )
 
 -- | Run the WAI application safely
-runApplication :: Application -> Request -> IO Response
-runApplication app req = do
+runApplication :: Application -> Request -> Log.Logger -> IO Response
+runApplication app req lg = do
     responseRef <- newIORef Nothing
     let respond resp = do
             writeIORef responseRef (Just resp)
@@ -651,7 +658,8 @@ runApplication app req = do
     catch
         (void $ app req respond)
         ( \(e :: SomeException) -> do
-            putStrLn $ "evring-wai: Application error: " ++ show e
+            let path = rawPathInfo req
+            Log.logError lg ("Application error on " <> T.pack (show path) <> ": " <> T.pack (show e)) ()
             writeIORef
                 responseRef
                 ( Just $
