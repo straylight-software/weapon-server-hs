@@ -12,15 +12,10 @@ let R2Config =
       , r2sEndpoint : Optional Text
       }
 
+-- TelemetryConfig is now a newtype around R2StorageConfig
+-- Presence = enabled, absence = disabled
 let Telemetry =
-      { Type =
-          { telEnabled : Optional Bool
-          , telR2 : Optional R2Config
-          }
-      , default =
-          { telEnabled = Some True
-          , telR2 = None R2Config
-          }
+      { Type = { telR2 : R2Config }
       }
 
 in  { Telemetry, R2Config }

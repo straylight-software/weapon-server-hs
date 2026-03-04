@@ -63,7 +63,6 @@ module Telemetry.R2 (
 
     -- * Configuration
     configFromDhall,
-    isConfigured,
 
     -- * Operations
     newR2Handle,
@@ -139,9 +138,7 @@ data R2Error
     | R2NetworkError Text
     -- ^ Network error
     | R2ConfigError Text
-    -- ^ Configuration error (missing env vars)
-    | R2NotConfigured
-    -- ^ R2 is not configured (env vars not set)
+    -- ^ Configuration error (missing required fields in Dhall config)
     deriving (Show, Eq)
 
 instance Exception R2Error
@@ -152,46 +149,37 @@ data R2Handle = R2Handle
     , r2Manager :: Manager
     }
 
-{- | Load R2 configuration from Dhall TelemetryConfig.
+{- | Validate R2 configuration from TelemetryConfig.
 
 All configuration comes from Dhall - no environment variable fallback.
-Returns R2NotConfigured if required fields are missing.
+Returns R2ConfigError if required fields are missing.
 
-Required fields in weapon.dhall:
-  telemetry.r2.accountId
-  telemetry.r2.accessKeyId  
-  telemetry.r2.secretKey
+Required fields in weapon.dhall telemetry.r2:
+  accountId
+  accessKeyId  
+  secretKey
 
 Optional fields (with defaults):
-  telemetry.r2.bucket   (default: "weapon-telemetry")
-  telemetry.r2.prefix   (default: "telemetry")
-  telemetry.r2.endpoint (default: none, uses Cloudflare R2)
+  bucket   (default: "weapon-telemetry")
+  prefix   (default: "telemetry")
+  endpoint (default: none, uses Cloudflare R2)
 -}
 configFromDhall :: TelemetryConfig -> Either R2Error R2Config
-configFromDhall telConfig =
-    case telR2 telConfig of
-        Nothing -> Left R2NotConfigured
-        Just r2cfg ->
-            case (r2sAccountId r2cfg, r2sAccessKeyId r2cfg, r2sSecretKey r2cfg) of
-                (Just accountId, Just accessKey, Just secretKey) ->
-                    Right R2Config
-                        { r2AccountId = accountId
-                        , r2AccessKeyId = accessKey
-                        , r2SecretAccessKey = secretKey
-                        , r2Bucket = maybe "weapon-telemetry" id (r2sBucket r2cfg)
-                        , r2Prefix = maybe "telemetry" id (r2sPrefix r2cfg)
-                        , r2Endpoint = r2sEndpoint r2cfg
-                        , r2Region = "auto" -- R2 always uses "auto"
-                        }
-                (Nothing, _, _) -> Left $ R2ConfigError "telemetry.r2.accountId is required"
-                (_, Nothing, _) -> Left $ R2ConfigError "telemetry.r2.accessKeyId is required"
-                (_, _, Nothing) -> Left $ R2ConfigError "telemetry.r2.secretKey is required"
-
--- | Check if R2 is configured in a TelemetryConfig
-isConfigured :: TelemetryConfig -> Bool
-isConfigured telConfig = case configFromDhall telConfig of
-    Right _ -> True
-    Left _ -> False
+configFromDhall (TelemetryConfig r2cfg) =
+    case (r2sAccountId r2cfg, r2sAccessKeyId r2cfg, r2sSecretKey r2cfg) of
+        (Just accountId, Just accessKey, Just secretKey) ->
+            Right R2Config
+                { r2AccountId = accountId
+                , r2AccessKeyId = accessKey
+                , r2SecretAccessKey = secretKey
+                , r2Bucket = maybe "weapon-telemetry" id (r2sBucket r2cfg)
+                , r2Prefix = maybe "telemetry" id (r2sPrefix r2cfg)
+                , r2Endpoint = r2sEndpoint r2cfg
+                , r2Region = "auto" -- R2 always uses "auto"
+                }
+        (Nothing, _, _) -> Left $ R2ConfigError "telemetry.r2.accountId is required"
+        (_, Nothing, _) -> Left $ R2ConfigError "telemetry.r2.accessKeyId is required"
+        (_, _, Nothing) -> Left $ R2ConfigError "telemetry.r2.secretKey is required"
 
 -- | Create a new R2 handle
 newR2Handle :: R2Config -> IO R2Handle

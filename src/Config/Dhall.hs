@@ -263,7 +263,8 @@ parseConfigFileStrict path = do
         resolved <- load expr
         -- Convert to JSON
         json <- throws (dhallToJSON resolved)
+
         -- Parse JSON with our FromJSON instance (allows missing fields)
         case Aeson.fromJSON json of
-            Aeson.Error msg -> fail msg
+            Aeson.Error msg -> fail $ "JSON parse error: " ++ msg ++ " for JSON: " ++ show json
             Aeson.Success cfg -> pure cfg

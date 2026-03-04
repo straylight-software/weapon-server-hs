@@ -122,7 +122,6 @@ module Config.Types (
     defaultExperimental,
     defaultEnterprise,
     defaultWatcher,
-    defaultTelemetry,
 ) where
 
 import Control.Applicative ((<|>))
@@ -136,6 +135,11 @@ import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Dhall (FromDhall (..), ToDhall (..))
 import GHC.Generics (Generic)
+
+-- | Try two optional parsers and return the first Just result
+-- Unlike <|>, this combines the Maybe results, not the Parser success/failure
+firstJust :: Parser (Maybe a) -> Parser (Maybe a) -> Parser (Maybe a)
+firstJust p1 p2 = liftA2 (<|>) p1 p2
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                      Enums
@@ -1819,48 +1823,43 @@ instance ToJSON R2StorageConfig where
 
 instance FromJSON R2StorageConfig where
     parseJSON = withObject "R2StorageConfig" $ \v ->
+        -- Support both Dhall field names (r2s prefix) and API names
         R2StorageConfig
-            <$> v .:? "accountId"
-            <*> v .:? "accessKeyId"
-            <*> v .:? "secretKey"
-            <*> v .:? "bucket"
-            <*> v .:? "prefix"
-            <*> v .:? "endpoint"
+            <$> firstJust (v .:? "r2sAccountId") (v .:? "accountId")
+            <*> firstJust (v .:? "r2sAccessKeyId") (v .:? "accessKeyId")
+            <*> firstJust (v .:? "r2sSecretKey") (v .:? "secretKey")
+            <*> firstJust (v .:? "r2sBucket") (v .:? "bucket")
+            <*> firstJust (v .:? "r2sPrefix") (v .:? "prefix")
+            <*> firstJust (v .:? "r2sEndpoint") (v .:? "endpoint")
 
 {- | Telemetry configuration for full-take capture.
 
-Controls whether telemetry is enabled and where data is uploaded.
+Presence of this config means telemetry is enabled. The type is:
+
+@
+Maybe TelemetryConfig  -- in Config record
+@
+
+* @Nothing@ = telemetry disabled
+* @Just cfg@ = telemetry enabled with R2 storage config
+
+This avoids the @Maybe Bool@ anti-pattern where @Nothing@, @Just True@,
+and @Just False@ create ambiguous semantics.
 -}
-data TelemetryConfig = TelemetryConfig
-    { telEnabled :: Maybe Bool
-    -- ^ Master switch for telemetry capture (default: True)
-    , telR2 :: Maybe R2StorageConfig
-    -- ^ R2 storage configuration for uploads
+newtype TelemetryConfig = TelemetryConfig
+    { telR2 :: R2StorageConfig
+    -- ^ R2 storage configuration (required when telemetry is enabled)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
 
 instance ToJSON TelemetryConfig where
-    toJSON t =
-        object $
-            catMaybes
-                [ fmap ("enabled" .=) (telEnabled t)
-                , fmap ("r2" .=) (telR2 t)
-                ]
+    toJSON t = object ["r2" .= telR2 t]
 
 instance FromJSON TelemetryConfig where
     parseJSON = withObject "TelemetryConfig" $ \v ->
-        TelemetryConfig
-            <$> v .:? "enabled"
-            <*> v .:? "r2"
-
--- | Default telemetry configuration (enabled by default)
-defaultTelemetry :: TelemetryConfig
-defaultTelemetry =
-    TelemetryConfig
-        { telEnabled = Just True
-        , telR2 = Nothing
-        }
+        -- Support both "telR2" (Dhall-to-JSON) and "r2" (API/JSON)
+        TelemetryConfig <$> (v .: "telR2" <|> v .: "r2")
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                 Full Config
@@ -1949,8 +1948,8 @@ data Config = Config
       cfgAutoUpdate :: Maybe AutoUpdate
     -- ^ Auto-update behavior (default: 'AutoUpdateNotify')
     , -- Telemetry
-      cfgTelemetry :: TelemetryConfig
-    -- ^ Telemetry capture settings
+      cfgTelemetry :: Maybe TelemetryConfig
+    -- ^ Telemetry capture settings (Nothing = disabled, Just = enabled)
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromDhall, ToDhall)
@@ -1984,7 +1983,7 @@ instance ToJSON Config where
                 , optField "themes" (cfgThemes c)
                 , optField "share" (cfgShare c)
                 , optField "autoupdate" (cfgAutoUpdate c)
-                , optField "telemetry" (Just $ cfgTelemetry c)
+                , optField "telemetry" (cfgTelemetry c)
                 ]
       where
         optField :: (ToJSON v) => Key -> Maybe v -> Maybe Pair
@@ -2016,7 +2015,7 @@ instance FromJSON Config where
             <*> v .:? "themes"
             <*> v .:? "share"
             <*> v .:? "autoupdate"
-            <*> v .:? "telemetry" .!= defaultTelemetry
+            <*> firstJust (v .:? "cfgTelemetry") (v .:? "telemetry")
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                    Defaults
@@ -2158,5 +2157,5 @@ defaultConfig =
         , cfgThemes = Nothing
         , cfgShare = Nothing
         , cfgAutoUpdate = Just AutoUpdateNotify
-        , cfgTelemetry = defaultTelemetry
+        , cfgTelemetry = Nothing  -- Telemetry disabled by default
         }

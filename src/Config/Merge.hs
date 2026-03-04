@@ -310,9 +310,6 @@ mergeWatcher base override =
         }
 
 -- | Merge telemetry configurations.
-mergeTelemetry :: TelemetryConfig -> TelemetryConfig -> TelemetryConfig
-mergeTelemetry base override =
-    TelemetryConfig
-        { telEnabled = mergeOptional (telEnabled base) (telEnabled override)
-        , telR2 = mergeOptional (telR2 base) (telR2 override)
-        }
+-- Override wins entirely if present (no field-level merge).
+mergeTelemetry :: Maybe TelemetryConfig -> Maybe TelemetryConfig -> Maybe TelemetryConfig
+mergeTelemetry = mergeOptional

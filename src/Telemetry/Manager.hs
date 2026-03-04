@@ -53,25 +53,22 @@ import Util.Identifier qualified as Identifier
 -- | Manager configuration
 data TelemetryManagerConfig = TelemetryManagerConfig
     { tmcTelemetryConfig :: TelemetryConfig
-    -- ^ Dhall telemetry configuration (source of truth for R2 credentials)
+    -- ^ Telemetry configuration (R2 credentials etc.)
     , tmcWALDir :: Maybe FilePath
     -- ^ Override WAL directory
     , tmcSyncOnWrite :: Bool
     -- ^ Fsync after every event
-    , tmcR2Required :: Bool
-    -- ^ FAIL if R2 is enabled but not configured (no silent degradation)
     , tmcLogger :: Log.Logger
     -- ^ Logger for telemetry subsystem
     }
 
--- | Default configuration (telemetry enabled, R2 not required)
+-- | Default configuration
 defaultManagerConfig :: TelemetryConfig -> Log.Logger -> TelemetryManagerConfig
 defaultManagerConfig telConfig logger =
     TelemetryManagerConfig
         { tmcTelemetryConfig = telConfig
         , tmcWALDir = Nothing
         , tmcSyncOnWrite = True
-        , tmcR2Required = False
         , tmcLogger = Log.withNS logger "telemetry"
         }
 
@@ -97,11 +94,14 @@ data TelemetryManager = TelemetryManager
     , tmUnsubscribe :: IO ()
     , tmDefaultProjectId :: Text
     , tmDefaultDirectory :: Text
-    , tmR2Handle :: Maybe R2.R2Handle
-    -- ^ R2 handle (if configured)
+    , tmR2Handle :: R2.R2Handle
+    -- ^ R2 handle (always present - config validated at startup)
     }
 
 -- | Start the telemetry manager
+-- 
+-- FAILS with error if R2 config validation fails (missing required credentials).
+-- The manager only exists when telemetry is enabled (caller checks Maybe TelemetryConfig).
 startManager ::
     TelemetryManagerConfig ->
     Bus.Bus ->
@@ -123,43 +123,27 @@ startManager config bus defaultProjectId defaultDirectory = do
     sessions <- newTVarIO Map.empty
     idGen <- Identifier.newIdGenState
 
-    -- Initialize R2 from Dhall config
-    -- FAIL if R2 is required but not configured (no silent degradation)
+    -- Validate and initialize R2 from config
+    -- FAIL if validation fails (no silent degradation - config errors are fatal)
     let lg = tmcLogger config
         telConfig = tmcTelemetryConfig config
-        telemetryEnabled = maybe True id (telEnabled telConfig)
     
-    mR2Handle <-
-        if telemetryEnabled
-            then case R2.configFromDhall telConfig of
-                Right r2Config -> do
-                    Log.logInfo lg "R2 replication enabled" ()
-                    Just <$> R2.newR2Handle r2Config
-                Left R2.R2NotConfigured
-                    | tmcR2Required config -> do
-                        let msg = "R2 replication required but not configured in weapon.dhall (telemetry.r2.*)"
-                        Log.logError lg msg ()
-                        throwIO $ userError $ T.unpack msg
-                    | otherwise -> do
-                        Log.logDebug lg "R2 not configured (add telemetry.r2 to weapon.dhall)" ()
-                        pure Nothing
-                Left (R2.R2ConfigError err) -> do
-                    let msg = "R2 config error: " <> err
-                    Log.logError lg msg ()
-                    if tmcR2Required config
-                        then throwIO $ userError $ T.unpack msg
-                        else pure Nothing
-                Left err -> do
-                    Log.logWarn lg ("R2 error: " <> T.pack (show err)) ()
-                    pure Nothing
-            else pure Nothing
+    r2Handle <- case R2.configFromDhall telConfig of
+        Right r2Config -> do
+            Log.logInfo lg "R2 replication enabled" ()
+            R2.newR2Handle r2Config
+        Left (R2.R2ConfigError err) -> do
+            let msg = "R2 config error: " <> err
+            Log.logError lg msg ()
+            throwIO $ userError $ T.unpack msg
+        Left err -> do
+            -- Other errors (network, upload) shouldn't happen during config
+            Log.logError lg ("Unexpected R2 error during config: " <> T.pack (show err)) ()
+            throwIO $ userError $ "R2 initialization failed: " <> show err
 
     -- Subscribe to all bus events
-    unsubscribe <-
-        if telemetryEnabled
-            then Bus.subscribeAll bus $ \busEvent ->
-                handleEvent walDir config mR2Handle sessions idGen defaultProjectId defaultDirectory busEvent
-            else pure (pure ())
+    unsubscribe <- Bus.subscribeAll bus $ \busEvent ->
+        handleEvent walDir config r2Handle sessions idGen defaultProjectId defaultDirectory busEvent
 
     pure $
         TelemetryManager
@@ -170,7 +154,7 @@ startManager config bus defaultProjectId defaultDirectory = do
             , tmUnsubscribe = unsubscribe
             , tmDefaultProjectId = defaultProjectId
             , tmDefaultDirectory = defaultDirectory
-            , tmR2Handle = mR2Handle
+            , tmR2Handle = r2Handle
             }
 
 -- | Stop the telemetry manager
@@ -193,15 +177,15 @@ stopManager tm = do
 handleEvent ::
     FilePath ->
     TelemetryManagerConfig ->
-    Maybe R2.R2Handle ->
+    R2.R2Handle ->
     TVar (Map Text SessionTelemetry) ->
     Identifier.IdGenState ->
     Text ->
     Text ->
     Bus.BusEvent ->
     IO ()
-handleEvent walDir config mR2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent = void $ forkIO $ do
-    result <- try $ handleEventSync walDir config mR2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent
+handleEvent walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent = void $ forkIO $ do
+    result <- try $ handleEventSync walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent
     case result of
         Left (e :: SomeException) ->
             Log.logError (tmcLogger config) ("Error capturing event: " <> T.pack (show e)) ()
@@ -211,14 +195,14 @@ handleEvent walDir config mR2Handle sessionsVar idGen defaultProjectId defaultDi
 handleEventSync ::
     FilePath ->
     TelemetryManagerConfig ->
-    Maybe R2.R2Handle ->
+    R2.R2Handle ->
     TVar (Map Text SessionTelemetry) ->
     Identifier.IdGenState ->
     Text ->
     Text ->
     Bus.BusEvent ->
     IO ()
-handleEventSync walDir config mR2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent = do
+handleEventSync walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent = do
     let eventType = Bus.beType busEvent
         payload = Bus.beProperties busEvent
 
@@ -226,7 +210,7 @@ handleEventSync walDir config mR2Handle sessionsVar idGen defaultProjectId defau
     let sessionId = extractSessionId payload
 
     -- Get or create session telemetry
-    sessionTel <- getOrCreateSession walDir config mR2Handle sessionsVar sessionId defaultProjectId defaultDirectory
+    sessionTel <- getOrCreateSession walDir config r2Handle sessionsVar sessionId defaultProjectId defaultDirectory
 
     -- Build and write event
     event <- buildEvent idGen sessionId (stProjectId sessionTel) (stDirectory sessionTel) eventType payload
@@ -248,13 +232,13 @@ extractSessionId _ = "global"
 getOrCreateSession ::
     FilePath ->
     TelemetryManagerConfig ->
-    Maybe R2.R2Handle ->
+    R2.R2Handle ->
     TVar (Map Text SessionTelemetry) ->
     Text ->
     Text ->
     Text ->
     IO SessionTelemetry
-getOrCreateSession walDir config mR2Handle sessionsVar sessionId defaultProjectId defaultDirectory = do
+getOrCreateSession walDir config r2Handle sessionsVar sessionId defaultProjectId defaultDirectory = do
     -- Check if exists
     mSession <- Map.lookup sessionId <$> readTVarIO sessionsVar
     case mSession of
@@ -269,19 +253,15 @@ getOrCreateSession walDir config mR2Handle sessionsVar sessionId defaultProjectI
                         }
             wal <- WAL.openWAL walConfig sessionId
 
-            -- Start R2 replication worker if configured
-            mR2Worker <- case mR2Handle of
-                Just r2Handle -> do
-                    worker <- R2.startReplicationWorker r2Handle wal sessionId r2PollIntervalSec (tmcLogger config)
-                    pure $ Just worker
-                Nothing -> pure Nothing
+            -- Start R2 replication worker
+            r2Worker <- R2.startReplicationWorker r2Handle wal sessionId r2PollIntervalSec (tmcLogger config)
 
             let session =
                     SessionTelemetry
                         { stWAL = wal
                         , stProjectId = defaultProjectId
                         , stDirectory = defaultDirectory
-                        , stR2Worker = mR2Worker
+                        , stR2Worker = Just r2Worker
                         }
 
             atomically $ modifyTVar' sessionsVar (Map.insert sessionId session)

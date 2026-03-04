@@ -92,11 +92,16 @@ mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir pr
         Log.logMsg logger Katip.InfoS $ "State: bus->eventChan forwarding: " <> Bus.beType event
         atomically $ writeTChan eventChan (toJSON event)
 
-    -- Load telemetry config from Dhall and start capture
+    -- Load telemetry config from Dhall and start capture (if configured)
     dhallConfig <- Dhall.loadConfigCached dhallCache (Text.unpack directory)
-    let telConfig = cfgTelemetry dhallConfig
-        telemetryConfig = Telemetry.defaultManagerConfig telConfig logger
-    telemetry <- Telemetry.startManager telemetryConfig bus projectID directory
+    telemetry <- case cfgTelemetry dhallConfig of
+        Nothing -> do
+            Log.logMsg logger Katip.InfoS "Telemetry disabled (no config)"
+            pure Nothing
+        Just telConfig -> do
+            let telemetryConfig = Telemetry.defaultManagerConfig telConfig logger
+            tm <- Telemetry.startManager telemetryConfig bus projectID directory
+            pure (Just tm)
 
     pure $
         AppState
@@ -116,7 +121,7 @@ mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir pr
             , stDhallCache = dhallCache
             , stExeCache = exeCache
             , stDirCache = dirCache
-            , stTelemetry = Just telemetry
+            , stTelemetry = telemetry
             }
 
 -- | Initialize a new state with MITM proxy
