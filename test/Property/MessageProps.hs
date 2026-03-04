@@ -99,7 +99,8 @@ genUserMessageInfo =
         <$> genNonEmptyText
         <*> genNonEmptyText
         <*> genMessageTime
-        <*> Gen.maybe genNonEmptyText
+        <*> genNonEmptyText
+        <*> genModelSelection
 
 genAssistantMessageInfo :: Gen AssistantMessageInfo
 genAssistantMessageInfo =

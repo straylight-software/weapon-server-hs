@@ -293,21 +293,23 @@ data UserMessageInfo = UserMessageInfo
     -- ^ Parent session ID
     , umiTime :: MessageTime
     -- ^ Message timing information
-    , umiAgent :: Maybe Text
-    -- ^ Agent that should handle this message
+    , umiAgent :: Text
+    -- ^ Agent that should handle this message (required)
+    , umiModel :: ModelSelection
+    -- ^ Model selection for this message (required)
     }
     deriving (Eq, Show, Generic)
 
 instance ToJSON UserMessageInfo where
     toJSON info =
-        object $
-            buildObject
-                [ "id" .= umiId info
-                , "sessionID" .= umiSessionId info
-                , "role" .= ("user" :: Text)
-                , "time" .= umiTime info
-                ]
-                [optField "agent" (umiAgent info)]
+        object
+            [ "id" .= umiId info
+            , "sessionID" .= umiSessionId info
+            , "role" .= ("user" :: Text)
+            , "time" .= umiTime info
+            , "agent" .= umiAgent info
+            , "model" .= umiModel info
+            ]
 
 instance FromJSON UserMessageInfo where
     parseJSON = withObject "UserMessageInfo" $ \v -> do
@@ -319,7 +321,8 @@ instance FromJSON UserMessageInfo where
                     <$> v .: "id"
                     <*> v .: "sessionID"
                     <*> v .: "time"
-                    <*> v .:? "agent"
+                    <*> v .: "agent"
+                    <*> v .: "model"
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // assistant message info //

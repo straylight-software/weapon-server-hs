@@ -42,6 +42,7 @@ import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
 import Data.List qualified as List
 import Data.Text (Text)
+import Data.Text qualified as T
 import Hedgehog (Gen)
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
@@ -145,9 +146,14 @@ genMessageId = do
     suffix <- Gen.text (Range.linear 1 12) Gen.alphaNum
     pure $ "msg" <> suffix
 
--- | Generate a valid provider ID (lowercase alphanumeric and hyphens only)
+-- | Generate a valid provider ID (lowercase alphanumeric and hyphens only, must start with letter/digit)
 genProviderId :: Gen Text
-genProviderId = Gen.text (Range.linear 1 12) (Gen.element (['a' .. 'z'] ++ ['0' .. '9'] ++ ['-']))
+genProviderId = do
+    -- First character must be letter or digit
+    firstChar <- Gen.element (['a' .. 'z'] ++ ['0' .. '9'])
+    -- Remaining characters can include hyphens
+    rest <- Gen.text (Range.linear 0 11) (Gen.element (['a' .. 'z'] ++ ['0' .. '9'] ++ ['-']))
+    pure $ T.cons firstChar rest
 
 -- | Generate alphanumeric text (1-64 chars)
 genText :: Gen Text

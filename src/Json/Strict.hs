@@ -120,6 +120,8 @@ instance FromJSON Person where
         Person \<$\> v .:!? "name"
 @
 -}
+infixl 5 .:!?
+
 (.:!?) :: (FromJSON a) => Object -> Key -> Parser (Maybe a)
 obj .:!? key = case KM.lookup key obj of
     Nothing -> pure Nothing

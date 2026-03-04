@@ -14,7 +14,7 @@ Key features:
 module Integration.HaskemathesisTest (tests) where
 
 import Api (api)
-
+import Config.Dhall qualified as Dhall
 import Control.Monad (unless, when)
 import Data.Function ((&))
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
@@ -22,7 +22,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Handlers (server)
 import Haskemathesis.Check.Standard (strictChecks)
-import Haskemathesis.Execute.Types (ApiRequest (..))
+
 import Haskemathesis.OpenApi.Loader (loadOpenApiFile)
 import Haskemathesis.Tasty (
     AppFactory,
@@ -35,10 +35,8 @@ import Haskemathesis.Tasty (
     withIsolated,
     withMaxSequenceLength,
     withPropertyCount,
-    withRequestTransform,
+    withStatefulPropertyCount,
  )
-
-import Config.Dhall qualified as Dhall
 import Katip (Severity (ErrorS))
 import Log qualified
 import Middleware (addAllowHeader, rejectDoubleEncodedPaths, rejectDuplicateQueryParams, rejectEmptyPathSegments, rejectHeadMethod, rejectInvalidCharset, rejectInvalidContentType, rejectMethodMismatch, rejectNullBytePaths, rejectUnknownQueryParams, rejectUnsupportedMethods, requireContentType, supplyEmptyBody)
@@ -152,39 +150,8 @@ preSeedSessions state = do
                     }
         Storage.write (Session.scStorage ctx) (sessionKey (Session.scProjectID ctx) sid) session
 
-{- | Rewrite a request to use known session IDs instead of random ones
-
-This intercepts requests to /session/{sessionID}/... and replaces the
-random sessionID with one of our known pre-seeded session IDs.
-
-Does NOT rewrite:
-- Special paths like /session/status
-- Session IDs that look malicious (contain %, null bytes, etc.) - these are
-  negative tests that should reach the server to test security validation
--}
-rewriteSessionId :: ApiRequest -> ApiRequest
-rewriteSessionId req =
-    let path = reqPath req
-        segments = T.splitOn "/" path
-     in case segments of
-            -- Skip literal paths that aren't session ID captures
-            ("" : "session" : "status" : _) -> req
-            -- /session/{sessionID}/... (with or without trailing path)
-            ("" : "session" : randomSid : rest)
-                -- Only rewrite if the session ID looks like a normal test ID
-                -- Skip rewriting for malicious inputs (negative tests)
-                | isSafeSessionId randomSid ->
-                    let newPath = T.intercalate "/" ("" : "session" : knownSessionId : rest)
-                     in req{reqPath = newPath}
-            _otherSegments -> req
-
-{- | Check if a session ID is safe to rewrite (not a negative test input)
-Returns False for IDs containing URL-encoded chars, null bytes, etc.
--}
-isSafeSessionId :: T.Text -> Bool
-isSafeSessionId sid =
-    not (T.any (\c -> c == '%' || c == '\x00' || c == '/' || c == '\\') sid)
-        && not (T.null sid)
+-- NOTE: rewriteSessionId removed - stateful tests create their own sessions
+-- and use those IDs, so rewriting breaks ID tracking between steps.
 
 {- | All haskemathesis tests
 
@@ -214,13 +181,16 @@ tests dhallCache = do
             -- Simple, composable configuration
             -- Note: defaultStatefulChecks already includes all 3 checks:
             -- useAfterFree, ensureResourceAvailability, ensureModificationPersisted
+            -- Note: withRequestTransform rewriteSessionId removed for stateful tests
+            -- as stateful tests create their own sessions and use those IDs
             let spec =
                     forApp openApi sharedApp
                         & withFull
                         & withIsolated mkApp
-                        & withRequestTransform rewriteSessionId
+                        -- & withRequestTransform rewriteSessionId  -- Disabled: breaks stateful ID tracking
                         & setChecks strictChecks
                         & withPropertyCount 100
+                        & withStatefulPropertyCount 2000
                         & withMaxSequenceLength 10
 
             (tree, result) <- runTests spec

@@ -528,11 +528,18 @@ sessionUpdateHandler st sid input = withSessionUpdate st sid (applyUpdate input)
             revert = case usiRevert usi of
                 Just v -> Just v
                 Nothing -> sessionRevert s
+            -- Apply time updates (currently only archived)
+            time' = case usiTime usi of
+                Just timeUpdate ->
+                    let currentTime = sessionTime s
+                     in currentTime{stArchived = ustArchived timeUpdate}
+                Nothing -> sessionTime s
          in s
                 { sessionTitle = title
                 , sessionSummary = summary
                 , sessionShare = share
                 , sessionRevert = revert
+                , sessionTime = time'
                 }
 
 sessionChildrenHandler :: AppState -> Text -> Maybe Text -> Handler [Session]
@@ -824,10 +831,10 @@ createMessageIO st sid input = do
     let systemPrompt = Context.buildSystemPrompt agentCtx mAgent
 
     -- Unwrap validated parts to Value for downstream processing
-    let parts = map unPartInput (cmiParts input)
+    let rawParts = map unPartInput (cmiParts input)
 
     -- Extract user text for logging
-    let userText = extractUserText parts
+    let userText = extractUserText rawParts
     Log.logMsg lg Katip.InfoS $ "create session=" <> sid <> " model=" <> fullModelId <> " agent=" <> agentName <> " text=" <> T.take 50 userText
 
     -- Publish session.status busy event (Critical for TUI Ctrl+C support)
@@ -841,12 +848,25 @@ createMessageIO st sid input = do
     -- 1. User Message
     -- Use "msg" prefix to match TUI conventions for consistent sorting
     uMsgId <- Identifier.ascendingWithPrefix (stIdGen st) "msg"
+
+    -- Add required fields (id, sessionID, messageID) to each part
+    parts <- forM rawParts $ \part -> do
+        partId' <- genId (stIdGen st)
+        pure $ case part of
+            Object obj ->
+                Object $
+                    -- Add id if not present OR if present but empty
+                    (if hasValidId obj then Prelude.id else KM.insert "id" (String partId')) $
+                        KM.insert "sessionID" (String sid) $
+                            KM.insert "messageID" (String uMsgId) obj
+            other -> other -- Non-object parts handled below
     let uMsgInfo =
             UserMessageInfo
                 { umiId = uMsgId
                 , umiSessionId = sid
                 , umiTime = msgTime
-                , umiAgent = Just agentName
+                , umiAgent = agentName
+                , umiModel = ModelSelection providerId modelId
                 }
     let uMsg =
             Message
@@ -915,61 +935,10 @@ createMessageIO st sid input = do
     Log.logMsg lg Katip.InfoS "message.updated published"
 
     -- Publish user message parts via SSE (Critical #3)
+    -- Parts already have id, sessionID, messageID from above
     forM_ (zip [(0 :: Int) ..] parts) $ \(idx, part) -> do
-        -- Generate a part ID if not present
-        partId' <- genId (stIdGen st)
-        -- Add required fields: id, sessionID, messageID
-        let partWithIds = case part of
-                Object obj ->
-                    Object $
-                        -- Only add id if not present
-                        (if KM.member "id" obj then Prelude.id else KM.insert "id" (String partId')) $
-                            KM.insert "sessionID" (String sid) $
-                                KM.insert "messageID" (String uMsgId) obj
-                Array _arr ->
-                    -- Array parts are not directly supported, wrap in object
-                    object
-                        [ "id" .= partId'
-                        , "sessionID" .= sid
-                        , "messageID" .= uMsgId
-                        , "type" .= ("text" :: Text)
-                        , "text" .= ("" :: Text)
-                        ]
-                String _str ->
-                    -- String parts get converted to text parts
-                    object
-                        [ "id" .= partId'
-                        , "sessionID" .= sid
-                        , "messageID" .= uMsgId
-                        , "type" .= ("text" :: Text)
-                        , "text" .= ("" :: Text)
-                        ]
-                Number _num ->
-                    object
-                        [ "id" .= partId'
-                        , "sessionID" .= sid
-                        , "messageID" .= uMsgId
-                        , "type" .= ("text" :: Text)
-                        , "text" .= ("" :: Text)
-                        ]
-                Bool _b ->
-                    object
-                        [ "id" .= partId'
-                        , "sessionID" .= sid
-                        , "messageID" .= uMsgId
-                        , "type" .= ("text" :: Text)
-                        , "text" .= ("" :: Text)
-                        ]
-                Null ->
-                    object
-                        [ "id" .= partId'
-                        , "sessionID" .= sid
-                        , "messageID" .= uMsgId
-                        , "type" .= ("text" :: Text)
-                        , "text" .= ("" :: Text)
-                        ]
         Log.logMsg lg Katip.InfoS $ "publishing message.part.updated for user part " <> T.pack (show idx)
-        Bus.publish (stBus st) "message.part.updated" (object ["part" .= partWithIds])
+        Bus.publish (stBus st) "message.part.updated" (object ["part" .= part])
 
     -- Publish assistant message (incomplete - no time.completed, no finish)
     -- This lets the TUI know there's an assistant message being generated
@@ -1474,6 +1443,13 @@ extractUserText parts = T.intercalate "\n" $ concatMap extractTextPart parts
 -- | Generate a unique part/tool ID using lexicographically sortable format
 genId :: Identifier.IdGenState -> IO Text
 genId idGen = Identifier.ascendingWithPrefix idGen "part"
+
+-- | Check if an object has a valid id field (non-empty and starts with "part_")
+hasValidId :: KM.KeyMap Value -> Bool
+hasValidId obj = case KM.lookup "id" obj of
+    Just (String s) -> not (T.null s) && "part_" `T.isPrefixOf` s
+    Just _nonStringValue -> False
+    Nothing -> False
 
 -- | Parse tool input from JSON string (arguments come as string from OpenAI format)
 parseToolInput :: Text -> Value

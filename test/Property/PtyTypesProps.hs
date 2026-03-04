@@ -105,7 +105,7 @@ prop_ptyStatusExitedJson = property $ do
     -- Verify the exit code is preserved in the value
     assert $ case status of
         PtyExited c -> c == exitCode
-        _ -> False
+        PtyRunning -> False
 
 prop_ptyInfoRoundtrip :: Property
 prop_ptyInfoRoundtrip = property $ do
