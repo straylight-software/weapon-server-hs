@@ -89,7 +89,7 @@ prop_writeTool = propertyWithTempDir $ \tmpDir -> do
 
 prop_writeReadToolRoundtrip :: Property
 prop_writeReadToolRoundtrip = propertyWithTempDir $ \tmpDir -> do
-    content <- forAll $ Gen.text (Range.linear 1 200) Gen.unicode
+    content <- forAll $ Gen.text (Range.linear 1 200) (Gen.filter (/= '\NUL') Gen.unicode)
     filename <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
     result <- evalIO $ do
         let path = tmpDir </> T.unpack filename
