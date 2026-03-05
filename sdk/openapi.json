@@ -5536,7 +5536,8 @@
             "in": "query",
             "name": "pattern",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "required": true
           }
@@ -5655,13 +5656,14 @@
     },
     "/find/file": {
       "get": {
-        "operationId": "find.files",
+         "operationId": "find.files",
         "parameters": [
           {
             "in": "query",
             "name": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "required": true
           },
@@ -5744,13 +5746,14 @@
     },
     "/find/symbol": {
       "get": {
-        "operationId": "find.symbols",
+         "operationId": "find.symbols",
         "parameters": [
           {
             "in": "query",
             "name": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "required": true
           }

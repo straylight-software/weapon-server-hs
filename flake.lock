@@ -132,11 +132,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1772065460,
-        "narHash": "sha256-Mt4Cghle8mCxdbymsGaXBtQqgXJWcqv6C0nH3U25vBk=",
+        "lastModified": 1772667767,
+        "narHash": "sha256-eVqqbCYk9NzsHxrUeQUotbxHl48mPWdLT+PbGjk0MQg=",
         "ref": "refs/heads/dev",
-        "rev": "b8db21be69071d3cb67b0bce81b8f2db1cd13eac",
-        "revCount": 9290,
+        "rev": "8446e102e8244de757cb24101e35e7b09d33caad",
+        "revCount": 9291,
         "type": "git",
         "url": "ssh://git@github.com/straylight-software/weapon.git"
       },

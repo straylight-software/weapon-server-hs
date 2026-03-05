@@ -492,9 +492,11 @@ sessionListHandler st mDir mRoots mLimit mStart mSearch = liftIO $ do
     Sess.list ctx mDir mRoots (round <$> mLimit) mStart mSearch
 
 sessionCreateHandler :: AppState -> Maybe Text -> CreateSessionInput -> Handler Session
-sessionCreateHandler st _mDir input = liftIO $ do
-    let ctx = sessionContext st
-    Sess.create ctx input
+sessionCreateHandler st _mDir input = do
+    _ <- V.validateBodySessionId (csiParentID input)
+    liftIO $ do
+        let ctx = sessionContext st
+        Sess.create ctx input
 
 sessionGetHandler :: AppState -> Text -> Handler Session
 sessionGetHandler st sid = do
@@ -560,15 +562,17 @@ sessionTodoHandler st sid = do
         pure $ fromMaybe [] result
 
 sessionInitHandler :: AppState -> Text -> Maybe Text -> InitSessionInput -> Handler Bool
-sessionInitHandler st sid _mDir _input = do
+sessionInitHandler st sid _mDir input = do
     _ <- V.validateSessionId sid
+    _ <- V.validateBodyMessageIdRequired (isiMessageId input)
     liftIO $ do
         Bus.publish (stBus st) "session.initialized" (object ["sessionID" .= sid])
         return True
 
 sessionForkHandler :: AppState -> Text -> ForkSessionInput -> Handler Session
-sessionForkHandler st sid _forkInput = do
+sessionForkHandler st sid forkInput = do
     _ <- V.validateSessionId sid
+    _ <- V.validateBodyMessageId (fsiMessageId forkInput)
     liftIO $ do
         let ctx = sessionContext st
         parent <- Sess.get ctx sid
@@ -641,6 +645,7 @@ loadSummary exeCache root = do
 sessionCommandHandler :: AppState -> Text -> Maybe Text -> SessionCommandInput -> Handler Value
 sessionCommandHandler st sid _mDir input = do
     _ <- V.validateSessionId sid
+    _ <- V.validateBodyMessageId (sciMessageID input)
     liftIO $ do
         let ctx =
                 ToolT.ToolContext
@@ -800,6 +805,7 @@ sessionMessageListHandler st sid _mLimit = do
 sessionMessageCreateHandler :: AppState -> Text -> CreateMessageInput -> Handler Message
 sessionMessageCreateHandler st sid input = do
     _ <- V.validateSessionId sid
+    _ <- V.validateBodyMessageId (cmiMessageId input)
     liftIO $ createMessageIO st sid input
 
 createMessageIO :: AppState -> Text -> CreateMessageInput -> IO Message
@@ -1364,6 +1370,7 @@ sessionMessagePartUpdateHandler st sid msgId partId input = do
 sessionPromptAsyncHandler :: AppState -> Text -> CreateMessageInput -> Handler NoContent
 sessionPromptAsyncHandler st sid input = do
     _ <- V.validateSessionId sid
+    _ <- V.validateBodyMessageId (cmiMessageId input)
     liftIO $ do
         reqId <- RequestStore.generateId
         let job = PromptAsync.PromptAsyncJob reqId sid input
@@ -1713,18 +1720,18 @@ permissionReplyHandler st rid _mDir input = do
 
 findHandler :: AppState -> Maybe Text -> Maybe Text -> Handler [Value]
 findHandler st mQuery mPattern = do
-    -- Require at least one of query or pattern
+    -- Require at least one of query or pattern, and it must be non-empty
     searchPattern <- case (mQuery, mPattern) of
-        (Just q, _) -> pure q
-        (Nothing, Just p) -> pure p
-        (Nothing, Nothing) -> V.throwValidation "Missing required query parameter: pattern"
+        (Just q, _) | not (T.null q) -> pure q
+        (_, Just p) | not (T.null p) -> pure p
+        _ -> V.throwValidation "Missing or empty required query parameter: query or pattern"
     -- Always search project directory - no user-supplied directory to prevent DoS
     let root = unpack (stDirectory st)
     liftIO $ FindSearch.findText root searchPattern
 
 findFileHandler :: AppState -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Handler [Value]
 findFileHandler st mQuery mDirsText mType mLimitText = do
-    query <- V.requireQueryParam "query" mQuery
+    query <- V.requireNonEmptyTextParam "query" mQuery
     validType <- V.validateFileTypeEnum mType
     dirs <- V.validateBoolParam "dirs" mDirsText
     limit <- V.validateIntParam "limit" mLimitText
@@ -1741,8 +1748,8 @@ findFileHandler st mQuery mDirsText mType mLimitText = do
 
 findSymbolHandler :: AppState -> Maybe Text -> Handler [Value]
 findSymbolHandler _st mQuery = do
-    -- Validate query is present (required by OpenAPI spec)
-    _ <- V.requireQueryParam "query" mQuery
+    -- Validate query is present and non-empty (required by OpenAPI spec)
+    _ <- V.requireNonEmptyTextParam "query" mQuery
     -- NOTE: TypeScript implementation returns [] (stub for LSP workspace symbols)
     -- This endpoint is intended to use LSP's workspace symbol search, not ripgrep
     return []
@@ -1831,11 +1838,13 @@ tuiPublishHandler st _mDir input = liftIO $ do
     return True
 
 tuiSelectSessionHandler :: AppState -> Maybe Text -> SelectSessionInput -> Handler Bool
-tuiSelectSessionHandler st _mDir input = liftIO $ do
-    let payload = object ["sessionID" .= ssiSessionID input]
-    TuiStore.setLast (stStorage st) payload
-    Bus.publish (stBus st) "tui.select-session" (object ["payload" .= payload])
-    return True
+tuiSelectSessionHandler st _mDir input = do
+    _ <- V.validateBodySessionIdRequired (ssiSessionID input)
+    liftIO $ do
+        let payload = object ["sessionID" .= ssiSessionID input]
+        TuiStore.setLast (stStorage st) payload
+        Bus.publish (stBus st) "tui.select-session" (object ["payload" .= payload])
+        return True
 
 instanceDisposeHandler :: AppState -> Handler Bool
 instanceDisposeHandler st = liftIO $ do

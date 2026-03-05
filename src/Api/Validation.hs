@@ -32,8 +32,15 @@ module Api.Validation (
     validateProviderId,
     validateMessageId,
 
+    -- * Request Body Field Validation
+    validateBodyMessageId,
+    validateBodyMessageIdRequired,
+    validateBodySessionId,
+    validateBodySessionIdRequired,
+
     -- * Query Parameter Validation
     requireQueryParam,
+    requireNonEmptyTextParam,
     validateEnumParam,
     validateFileTypeEnum,
     validateBoolParam,
@@ -169,6 +176,44 @@ validateMessageId value
     | otherwise = pure value
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Request Body Field Validation
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Validate an optional messageID in request body (pattern ^msg[a-zA-Z0-9_-]*$).
+validateBodyMessageId :: Maybe Text -> Handler (Maybe Text)
+validateBodyMessageId Nothing = pure Nothing
+validateBodyMessageId (Just value)
+    | T.null value = pure Nothing -- Empty string treated as absent
+    | not (T.isPrefixOf "msg" value) = throwValidation "Invalid messageID: must start with 'msg'"
+    | not (T.all isValidIdChar (T.drop 3 value)) = throwValidation "Invalid messageID: must contain only alphanumeric characters, underscores, and hyphens after 'msg'"
+    | otherwise = pure (Just value)
+
+-- | Validate a required messageID in request body (pattern ^msg[a-zA-Z0-9_-]*$).
+validateBodyMessageIdRequired :: Text -> Handler Text
+validateBodyMessageIdRequired value
+    | T.null value = throwValidation "Missing required field: messageID"
+    | not (T.isPrefixOf "msg" value) = throwValidation "Invalid messageID: must start with 'msg'"
+    | not (T.all isValidIdChar (T.drop 3 value)) = throwValidation "Invalid messageID: must contain only alphanumeric characters, underscores, and hyphens after 'msg'"
+    | otherwise = pure value
+
+-- | Validate an optional sessionID/parentID in request body (pattern ^ses[a-zA-Z0-9_-]*$).
+validateBodySessionId :: Maybe Text -> Handler (Maybe Text)
+validateBodySessionId Nothing = pure Nothing
+validateBodySessionId (Just value)
+    | T.null value = pure Nothing -- Empty string treated as absent
+    | not (T.isPrefixOf "ses" value) = throwValidation "Invalid sessionID: must start with 'ses'"
+    | not (T.all isValidIdChar (T.drop 3 value)) = throwValidation "Invalid sessionID: must contain only alphanumeric characters, underscores, and hyphens after 'ses'"
+    | otherwise = pure (Just value)
+
+-- | Validate a required sessionID in request body (pattern ^ses[a-zA-Z0-9_-]*$).
+validateBodySessionIdRequired :: Text -> Handler Text
+validateBodySessionIdRequired value
+    | T.null value = throwValidation "Missing required field: sessionID"
+    | not (T.isPrefixOf "ses" value) = throwValidation "Invalid sessionID: must start with 'ses'"
+    | not (T.all isValidIdChar (T.drop 3 value)) = throwValidation "Invalid sessionID: must contain only alphanumeric characters, underscores, and hyphens after 'ses'"
+    | otherwise = pure value
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Query Parameter Validation
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -186,6 +231,19 @@ requireQueryParam :: Text -> Maybe a -> Handler a
 requireQueryParam paramName Nothing =
     throwValidation $ "Missing required query parameter: " <> paramName
 requireQueryParam _ (Just value) = pure value
+
+{- | Require a non-empty text query parameter.
+
+Returns 400 Bad Request if the parameter is missing or empty.
+This is appropriate for search/pattern parameters where an empty
+string would match everything or cause unbounded work.
+-}
+requireNonEmptyTextParam :: Text -> Maybe Text -> Handler Text
+requireNonEmptyTextParam paramName Nothing =
+    throwValidation $ "Missing required query parameter: " <> paramName
+requireNonEmptyTextParam paramName (Just value)
+    | T.null value = throwValidation $ "Query parameter '" <> paramName <> "' must not be empty"
+    | otherwise = pure value
 
 {- | Validate that an optional query parameter is one of the allowed values.
 
