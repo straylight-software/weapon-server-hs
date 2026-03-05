@@ -97,13 +97,14 @@ startConnection ctx@ConnContext{..} loop clientFd clientAddr app = do
     leftoverRef <- newIORef BS.empty
 
     -- Submit first recv
-    submitted <- ioRecv
-        loop
-        clientFd
-        (bufArray recvBuf)
-        bufferSize
-        (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
-    
+    submitted <-
+        ioRecv
+            loop
+            clientFd
+            (bufArray recvBuf)
+            bufferSize
+            (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
+
     -- If we couldn't submit recv (capacity exhaustion), cleanup and close
     if submitted
         then pure ()
@@ -159,12 +160,13 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
             Nothing -> do
                 -- Incomplete, save and recv more
                 writeIORef leftoverRef allData
-                submitted <- ioRecv
-                    loop
-                    clientFd
-                    (bufArray recvBuf)
-                    bufferSize
-                    (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
+                submitted <-
+                    ioRecv
+                        loop
+                        clientFd
+                        (bufArray recvBuf)
+                        bufferSize
+                        (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
                 if submitted
                     then pure Nothing
                     else do
@@ -214,12 +216,13 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
                                                 pure Nothing
                                             Right errLen -> do
                                                 -- Send error response and close (don't keep-alive)
-                                                submitted <- ioSend
-                                                    loop
-                                                    clientFd
-                                                    (bufPtr sendBuf)
-                                                    errLen
-                                                    (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf False)
+                                                submitted <-
+                                                    ioSend
+                                                        loop
+                                                        clientFd
+                                                        (bufPtr sendBuf)
+                                                        errLen
+                                                        (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf False)
                                                 if submitted
                                                     then pure Nothing
                                                     else do
@@ -233,12 +236,13 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
                                         let keepAlive = checkKeepAlive req
 
                                         -- Submit send
-                                        submitted <- ioSend
-                                            loop
-                                            clientFd
-                                            (bufPtr sendBuf)
-                                            respLen
-                                            (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf keepAlive)
+                                        submitted <-
+                                            ioSend
+                                                loop
+                                                clientFd
+                                                (bufPtr sendBuf)
+                                                respLen
+                                                (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf keepAlive)
                                         if submitted
                                             then pure Nothing
                                             else do
@@ -296,12 +300,13 @@ sendCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef se
         if keepAlive
             then do
                 -- Keep-alive: recv next request
-                submitted <- ioRecv
-                    loop
-                    clientFd
-                    (bufArray recvBuf)
-                    bufferSize
-                    (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
+                submitted <-
+                    ioRecv
+                        loop
+                        clientFd
+                        (bufArray recvBuf)
+                        bufferSize
+                        (recvCont ctx loop clientFd clientAddr app recvBuf leftoverRef)
                 if submitted
                     then pure Nothing
                     else do
@@ -428,15 +433,16 @@ runApp lg app req = do
             pure ResponseReceived
     catch
         (void $ app req respond)
-        (\(e :: SomeException) -> do
+        ( \(e :: SomeException) -> do
             -- Log the exception - don't silently swallow
             let path = T.decodeUtf8 (rawPathInfo req)
             Log.logError lg ("Request handler exception on " <> path <> ": " <> T.pack (show e)) ()
         )
     fromMaybe (responseLBS status500 [] "Internal Server Error") <$> readIORef responseRef
 
--- | Serialize a response directly to a buffer
--- Returns Right bytesWritten on success, Left errorMsg if response too large
+{- | Serialize a response directly to a buffer
+Returns Right bytesWritten on success, Left errorMsg if response too large
+-}
 {-# INLINE serializeResponseTo #-}
 serializeResponseTo :: Response -> Ptr Word8 -> Int -> IO (Either String Int)
 serializeResponseTo resp bufPtr maxLen = do

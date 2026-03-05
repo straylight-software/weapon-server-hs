@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TupleSections #-}
 
 {- |
 Module      : Evring.Wai.MultiCore
@@ -41,7 +42,7 @@ where
 
 import Control.Concurrent (forkOn, getNumCapabilities, newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, SomeException, catch, try)
-import Control.Monad (forM_, replicateM, when)
+import Control.Monad (forM_, replicateM, unless)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Text qualified as T
 import Data.Word (Word32)
@@ -97,7 +98,7 @@ database connections, etc.
 runServerMultiCoreWithCleanup :: ServerSettings -> Application -> IO () -> IO ()
 runServerMultiCoreWithCleanup settings@ServerSettings{..} app cleanup = do
     let lg = Log.withNS serverLogger "evring"
-    
+
     -- Determine core count
     numCores <- case serverCores of
         Just n -> setNumCapabilities n >> pure n
@@ -111,17 +112,17 @@ runServerMultiCoreWithCleanup settings@ServerSettings{..} app cleanup = do
 
     -- Shutdown flag (also prevents multiple signal handlers from running)
     shutdownRef <- newIORef False
-    
+
     -- Install signal handlers for graceful shutdown
     let shutdownHandler = do
-            alreadyShuttingDown <- atomicModifyIORef' shutdownRef $ \old -> (True, old)
-            when (not alreadyShuttingDown) $ do
+            alreadyShuttingDown <- atomicModifyIORef' shutdownRef (True,)
+            unless alreadyShuttingDown $ do
                 Log.logInfo lg "Received shutdown signal, running cleanup..." ()
                 cleanup
                 Log.logInfo lg "Cleanup complete, exiting" ()
                 -- Close sockets to unblock workers
                 mapM_ close sockets
-    
+
     _ <- installHandler sigTERM (Catch shutdownHandler) Nothing
     _ <- installHandler sigINT (Catch shutdownHandler) Nothing
 
@@ -143,7 +144,7 @@ runServerMultiCoreWithCleanup settings@ServerSettings{..} app cleanup = do
 
     -- Cleanup sockets (may already be closed by signal handler)
     alreadyShutdown <- readIORef shutdownRef
-    when (not alreadyShutdown) $ mapM_ close sockets
+    unless alreadyShutdown $ mapM_ close sockets
 
 -- | Try to bind to a port, retrying on subsequent ports if busy
 bindWithRetry :: Log.Logger -> ServerSettings -> Int -> Int -> Int -> IO (Int, [Socket])
@@ -232,12 +233,13 @@ runWorker ServerSettings{..} app _coreId sock = do
             poke (castPtr addrLenBuf :: Ptr Word32) 128
 
             -- Start accept loop
-            !_ <- ioAccept
-                loop
-                (Fd listenFd)
-                addrBuf
-                addrLenBuf
-                (acceptCont ctx loop (Fd listenFd) addrBuf addrLenBuf app)
+            !_ <-
+                ioAccept
+                    loop
+                    (Fd listenFd)
+                    addrBuf
+                    addrLenBuf
+                    (acceptCont ctx loop (Fd listenFd) addrBuf addrLenBuf app)
 
             -- Run this core's event loop (forever)
             runLoop loop
@@ -247,12 +249,13 @@ acceptCont :: ConnContext -> Loop -> Fd -> Ptr () -> Ptr () -> Application -> Co
 acceptCont ctx loop listenFd addrBuf addrLenBuf app = Cont $ \case
     Failure _errno -> do
         -- Accept failed, try again
-        !_ <- ioAccept
-            loop
-            listenFd
-            addrBuf
-            addrLenBuf
-            (acceptCont ctx loop listenFd addrBuf addrLenBuf app)
+        !_ <-
+            ioAccept
+                loop
+                listenFd
+                addrBuf
+                addrLenBuf
+                (acceptCont ctx loop listenFd addrBuf addrLenBuf app)
         pure Nothing
     Success clientFdInt -> do
         let clientFd = Fd (fromIntegral clientFdInt)
@@ -267,12 +270,13 @@ acceptCont ctx loop listenFd addrBuf addrLenBuf app = Cont $ \case
         startConnection ctx loop clientFd clientAddr app
 
         -- Immediately submit next accept
-        !_ <- ioAccept
-            loop
-            listenFd
-            addrBuf
-            addrLenBuf
-            (acceptCont ctx loop listenFd addrBuf addrLenBuf app)
+        !_ <-
+            ioAccept
+                loop
+                listenFd
+                addrBuf
+                addrLenBuf
+                (acceptCont ctx loop listenFd addrBuf addrLenBuf app)
 
         pure Nothing
 

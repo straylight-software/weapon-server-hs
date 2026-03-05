@@ -4,7 +4,7 @@
   pkg-config,
 }:
 
-rustPlatform.buildRustPackage rec {
+rustPlatform.buildRustPackage {
   pname = "parquet-ffi";
   version = "0.1.0";
 

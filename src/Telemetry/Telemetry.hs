@@ -16,9 +16,9 @@ import Telemetry.Telemetry qualified as Telemetry
 main = do
     bus <- Bus.newBus
     telemetry <- Telemetry.start config bus sessionId projectId directory
-    
+
     -- Events are now being captured...
-    
+
     Telemetry.stop telemetry
 @
 
@@ -100,12 +100,12 @@ data TelemetryHandle = TelemetryHandle
 start ::
     TelemetryConfig ->
     Bus.Bus ->
+    -- | Session ID
     Text ->
-    -- ^ Session ID
+    -- | Project ID
     Text ->
-    -- ^ Project ID
+    -- | Working directory
     Text ->
-    -- ^ Working directory
     IO TelemetryHandle
 start config bus sessionId projectId directory = do
     -- Determine WAL directory

@@ -62,7 +62,7 @@ module Skill.Skill (
 
 import Config.Config qualified as Config
 import Config.Types qualified as CT
-import Control.Exception (try, SomeException)
+import Control.Exception (SomeException, try)
 import Control.Monad (foldM, forM)
 import Data.Aeson (FromJSON (..), ToJSON (..), eitherDecodeStrict, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.ByteString (ByteString)

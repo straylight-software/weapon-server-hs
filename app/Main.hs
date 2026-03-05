@@ -27,7 +27,6 @@ import Data.Aeson (object)
 import Data.ByteString qualified as BS
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Server.Run (ServerBackend (..), ServerSettings (..), checkBackendAvailable, defaultServerSettings, runServerWithCleanup)
 import Global.Event ()
 import Handlers
 import Katip qualified
@@ -67,12 +66,13 @@ import Pty.Connect ()
 import Pty.Pty qualified as Pty
 import Servant
 import Server.ErrorFormatters (errorFormattersContext)
+import Server.Run (ServerBackend (..), ServerSettings (..), checkBackendAvailable, defaultServerSettings, runServerWithCleanup)
 import State
-import Telemetry.Manager qualified as Telemetry
-import Util.Thread (forkLogged)
 import System.Directory (XdgDirectory (..), getCurrentDirectory, getXdgDirectory)
 import System.FilePath ((</>))
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
+import Telemetry.Manager qualified as Telemetry
+import Util.Thread (forkLogged)
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                          // command line args
@@ -95,46 +95,59 @@ data ServerOpts = ServerOpts
 
 -- | Parse command line options
 parseOpts :: IO ServerOpts
-parseOpts = execParser $ info (optsParser <**> helper)
-    ( fullDesc
-    <> header "weapon-server - Weapon HTTP server"
-    <> progDesc "Start the Weapon HTTP server with io_uring or warp backend"
-    )
+parseOpts =
+    execParser $
+        info
+            (optsParser <**> helper)
+            ( fullDesc
+                <> header "weapon-server - Weapon HTTP server"
+                <> progDesc "Start the Weapon HTTP server with io_uring or warp backend"
+            )
 
 optsParser :: Parser ServerOpts
 optsParser = do
-    optPort <- option auto
-        ( long "port"
-        <> short 'p'
-        <> metavar "PORT"
-        <> value defaultPort
-        <> showDefault
-        <> help "Port to listen on"
-        )
-    optBackend <- option backendReader
-        ( long "backend"
-        <> metavar "BACKEND"
-        <> value BackendIoUring
-        <> showDefaultWith showBackend
-        <> help "HTTP backend: iouring or warp"
-        )
-    optPortRetry <- option auto
-        ( long "port-retry"
-        <> metavar "N"
-        <> value 0
-        <> showDefault
-        <> help "Number of ports to try if busy (0 = fail immediately)"
-        )
-    optCores <- optional $ option auto
-        ( long "cores"
-        <> metavar "N"
-        <> help "Number of cores to use (default: all available)"
-        )
-    optQuiet <- switch
-        ( long "quiet"
-        <> short 'q'
-        <> help "Suppress stdout logging (log to file only)"
-        )
+    optPort <-
+        option
+            auto
+            ( long "port"
+                <> short 'p'
+                <> metavar "PORT"
+                <> value defaultPort
+                <> showDefault
+                <> help "Port to listen on"
+            )
+    optBackend <-
+        option
+            backendReader
+            ( long "backend"
+                <> metavar "BACKEND"
+                <> value BackendIoUring
+                <> showDefaultWith showBackend
+                <> help "HTTP backend: iouring or warp"
+            )
+    optPortRetry <-
+        option
+            auto
+            ( long "port-retry"
+                <> metavar "N"
+                <> value 0
+                <> showDefault
+                <> help "Number of ports to try if busy (0 = fail immediately)"
+            )
+    optCores <-
+        optional $
+            option
+                auto
+                ( long "cores"
+                    <> metavar "N"
+                    <> help "Number of cores to use (default: all available)"
+                )
+    optQuiet <-
+        switch
+            ( long "quiet"
+                <> short 'q'
+                <> help "Suppress stdout logging (log to file only)"
+            )
     pure ServerOpts{..}
 
 -- | Parse backend from string
@@ -245,13 +258,14 @@ defaultPort = 4096
 main :: IO ()
 main = do
     ServerOpts{..} <- parseOpts
-    
+
     -- Configure logging: file always, stdout only if not quiet
-    let logConfig = (Log.defaultLogConfig "weapon")
-            { Log.lcStdout = not optQuiet
-            , Log.lcFile = True
-            , Log.lcLevel = defaultLogLevel
-            }
+    let logConfig =
+            (Log.defaultLogConfig "weapon")
+                { Log.lcStdout = not optQuiet
+                , Log.lcFile = True
+                , Log.lcLevel = defaultLogLevel
+                }
     Log.withLoggerConfig logConfig $ \logger -> do
         hSetBuffering stdout LineBuffering
         hSetBuffering stderr LineBuffering
@@ -260,7 +274,7 @@ main = do
         Log.logMsg serverLogger Katip.InfoS "initializing weapon server"
 
         -- Check backend availability FIRST - fail fast if unavailable
-        let tempSettings = (defaultServerSettings logger) { serverBackend = optBackend }
+        let tempSettings = (defaultServerSettings logger){serverBackend = optBackend}
         available <- checkBackendAvailable tempSettings
         case available of
             Left err -> do
@@ -305,13 +319,14 @@ main = do
 
         -- Start server with explicit settings (no silent fallback)
         Log.logMsg serverLogger Katip.InfoS $ "starting on port " <> T.pack (show optPort) <> " with " <> T.pack (showBackend optBackend) <> " backend"
-        let settings = (defaultServerSettings logger)
-                { serverBackend = optBackend
-                , serverPort = optPort
-                , serverPortRetry = optPortRetry
-                , serverCores = optCores
-                }
-        
+        let settings =
+                (defaultServerSettings logger)
+                    { serverBackend = optBackend
+                    , serverPort = optPort
+                    , serverPortRetry = optPortRetry
+                    , serverCores = optCores
+                    }
+
         -- Cleanup action for graceful shutdown (telemetry flush, etc.)
         let cleanup = case stTelemetry appState of
                 Just tm -> do
@@ -319,7 +334,7 @@ main = do
                     Telemetry.stopManager tm
                     Log.logMsg serverLogger Katip.InfoS "telemetry shutdown complete"
                 Nothing -> pure ()
-        
+
         runServerWithCleanup settings websocketApp cleanup
 
 -- | Periodic heartbeat to keep SSE connections alive.

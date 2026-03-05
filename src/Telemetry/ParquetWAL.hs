@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -46,8 +47,9 @@ module Telemetry.ParquetWAL (
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (Exception, IOException, catch)
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Data.IORef
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -136,7 +138,7 @@ openWAL config sessionId = do
                 case readMaybe (T.unpack content) of
                     Just n -> pure n
                     Nothing -> do
-                        when (not (T.null (T.strip content))) $
+                        unless (T.null (T.strip content)) $
                             Log.logWarn logger ("Corrupted sequence file " <> T.pack seqFile <> ", content: " <> T.take 50 content <> " - resetting to 0") ()
                         pure 0
             else pure 0
@@ -151,7 +153,7 @@ openWAL config sessionId = do
                 case readMaybe (T.unpack content) of
                     Just n -> pure n
                     Nothing -> do
-                        when (not (T.null (T.strip content))) $
+                        unless (T.null (T.strip content)) $
                             Log.logWarn logger ("Corrupted high water mark file " <> T.pack hwmFile <> ", content: " <> T.take 50 content <> " - resetting to 0") ()
                         pure 0
             else pure 0
@@ -198,7 +200,7 @@ appendEvent wh event = do
 
     modifyMVar_ (whCurrentSegment wh) $ \mSeg -> do
         seg <- ensureSegment wh mSeg seq'
-        
+
         -- Append to parquet
         Parquet.appendEvent (ssWriter seg) eventWithSeq
 
@@ -216,11 +218,10 @@ appendEvent wh event = do
 appendEventSync :: WALHandle -> TelemetryEvent -> IO Word64
 appendEventSync wh event = do
     seq' <- appendEvent wh event
-    when (walSyncOnWrite (whConfig wh)) $ do
-        withMVar (whCurrentSegment wh) $ \mSeg ->
-            case mSeg of
-                Just seg -> Parquet.flush (ssWriter seg)
-                Nothing -> pure ()
+    when (walSyncOnWrite (whConfig wh)) $
+        withMVar (whCurrentSegment wh) $ \case
+            Just seg -> Parquet.flush (ssWriter seg)
+            Nothing -> pure ()
     pure seq'
 
 -- | Get the high water mark (last replicated sequence number)
@@ -244,13 +245,14 @@ listUnreplicatedSegments wh = do
             Log.logError (whLogger wh) ("Failed to list WAL directory: " <> T.pack (show e)) ()
             pure []
 
-    isSegmentFile f = 
-        length f > 8 && 
-        take 10 f == replicate 10 '0' || all (`elem` ['0' .. '9']) (take 10 f)
+    isSegmentFile f =
+        length f > 8
+            && take 10 f == replicate 10 '0'
+            || all (`elem` ['0' .. '9']) (take 10 f)
 
     parseSegmentFile :: FilePath -> (FilePath, Word64, Word64)
     parseSegmentFile name =
-        let segNum = maybe 0 id (readMaybe (takeWhile (/= '.') name))
+        let segNum = fromMaybe 0 (readMaybe (takeWhile (/= '.') name))
             segSize = fromIntegral $ walSegmentSize (whConfig wh)
             start = segNum * segSize
             end = start + segSize - 1

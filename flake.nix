@@ -22,6 +22,13 @@
       url = "git+ssh://git@github.com/straylight-software/weapon.git";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Sensenet - Buck2 build system integration
+    sensenet = {
+      url = "git+file:///home/b7r6/src/straylight/sensenet";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-parts.follows = "flake-parts";
+    };
   };
 
   outputs =
@@ -37,6 +44,7 @@
       imports = [
         ./nix/formatter.nix
         ./nix/ui.nix
+        inputs.sensenet.flakeModules.sensenet
       ];
 
       flake = {
@@ -48,6 +56,7 @@
         {
           pkgs,
           inputs',
+          config,
           ...
         }:
         let
@@ -103,17 +112,55 @@
               exec ${hsPkgs.weapon-server}/bin/weapon-server "$@"
             '';
           };
+          # GHC 9.10 with packages for Buck2 builds
+          inherit (pkgs.haskell.packages) ghc910;
+
         in
         {
+          # ════════════════════════════════════════════════════════════════════════
+          # Packages
+          # ════════════════════════════════════════════════════════════════════════
+          #
+          # nix build        -> cabal-built weapon-server (hermetic)
+          # nix build .#sensenet-weapon-server -> buck2-built (requires --impure)
+          #
           packages = {
             default = server;
             inherit (hsPkgs) weapon-server;
             docs = hsPkgs.weapon-server.doc;
+            inherit parquet-ffi;
           };
 
-          checks.weapon-server = server;
+          # ════════════════════════════════════════════════════════════════════════
+          # Checks (nix flake check)
+          # ════════════════════════════════════════════════════════════════════════
+          #
+          # Run the Haskell test suite via cabal (hermetic).
+          # Buck2 tests require devshell: nix develop .#sensenet-weapon-server -c buck2 test //:test
+          #
+          checks = {
+            # Build check - ensures the package builds
+            inherit (hsPkgs) weapon-server;
 
-          devShells.default = hsPkgs.shellFor {
+            # Test check - disabled until test suite issues are fixed
+            # (missing defaultsPath, defaultTelemetry exports)
+            # weapon-server-tests = pkgs.haskell.lib.overrideCabal hsPkgs.weapon-server (_old: {
+            #   doCheck = true;
+            # });
+          };
+
+          # ════════════════════════════════════════════════════════════════════════
+          # DevShells
+          # ════════════════════════════════════════════════════════════════════════
+          #
+          # nix develop                      -> sensenet-weapon-server (buck2)
+          # nix develop .#cabal              -> cabal-based shell
+          # nix develop .#sensenet-weapon-server -> same as default
+          #
+          # Note: devShells.default is set below after sensenet.projects defines
+          # sensenet-weapon-server. The sensenet module auto-creates devShells.sensenet-weapon-server.
+          #
+          devShells.cabal = hsPkgs.shellFor {
             packages = p: [ p.weapon-server ];
             buildInputs =
               runtimePkgs
@@ -126,6 +173,105 @@
                 mdbook
               ]);
           };
+
+          # ════════════════════════════════════════════════════════════════════════
+          # Sensenet (Buck2) project configuration
+          # ════════════════════════════════════════════════════════════════════════
+          sensenet.projects.weapon-server = {
+            src = ./.;
+            targets = [
+              "//:weapon-server"
+              "//:test"
+            ];
+            toolchain = {
+              cxx.enable = true;
+              haskell = {
+                enable = true;
+                ghcpackages = ghc910;
+                packages = hp: [
+                  # Core dependencies from weapon-server.cabal
+                  hp.aeson
+                  hp.async
+                  hp.base
+                  hp.base16-bytestring
+                  hp.base64-bytestring
+                  hp.bytestring
+                  hp.case-insensitive
+                  hp.containers
+                  hp.crypton
+                  hp.crypton-connection
+                  hp.data-default-class
+                  hp.dhall
+                  hp.dhall-json
+                  hp.directory
+                  hp.filepath
+                  hp.http-api-data
+                  hp.http-client
+                  hp.http-client-tls
+                  hp.http-types
+                  hp.katip
+                  hp.memory
+                  hp.mtl
+                  hp.network
+                  hp.optparse-applicative
+                  hp.posix-pty
+                  hp.primitive
+                  hp.process
+                  hp.random
+                  hp.servant
+                  hp.servant-server
+                  hp.stm
+                  hp.text
+                  hp.time
+                  hp.tls
+                  hp.unix
+                  hp.unliftio-core
+                  hp.vault
+                  hp.vector
+                  hp.wai
+                  hp.wai-extra
+                  hp.wai-websockets
+                  hp.warp
+                  hp.websockets
+                  # Test dependencies
+                  hp.hedgehog
+                  hp.hspec
+                  hp.hspec-core
+                  hp.hspec-hedgehog
+                  hp.openapi3
+                  hp.regex-pcre
+                  hp.tasty
+                  hp.tasty-hedgehog
+                  hp.tasty-hspec
+                  hp.temporary
+                  hp.transformers
+                  hp.unordered-containers
+                ];
+              };
+            };
+            # Extra buckconfig sections for io_uring and parquet_ffi library paths
+            extrabuckconfigsections = ''
+
+              [io-uring]
+              liburing_lib = ${pkgs.liburing}/lib
+              liburing_include = ${pkgs.liburing.dev}/include
+
+              [parquet-ffi]
+              parquet_ffi_lib = ${parquet-ffi}/lib
+              parquet_ffi_include = ${parquet-ffi}/include
+            '';
+            devshellpackages = [
+              pkgs.cabal-install
+              pkgs.ghcid
+              ghc910.haskell-language-server
+              pkgs.liburing
+              pkgs.mdbook
+              parquet-ffi
+            ];
+          };
+
+          # Set default devShell to the sensenet one (with buck2)
+          devShells.default = config.devShells.sensenet-weapon-server;
         };
     };
 }

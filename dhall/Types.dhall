@@ -38,7 +38,6 @@ let Telemetry = ./Types/Telemetry.dhall
 
 let AutoUpdate = < AutoUpdateEnabled | AutoUpdateDisabled | AutoUpdateNotify >
 
--- Config type with field names matching Haskell record (cfg prefix)
 let Config =
       { Type =
           { -- Core settings
@@ -68,7 +67,8 @@ let Config =
           , cfgFormatter : Optional Formatter.Formatter
           , cfgLsp : Optional LSP.LSP
           , cfgSkill : Optional (List { mapKey : Text, mapValue : Skill.Type })
-          , cfgCommand : Optional (List { mapKey : Text, mapValue : Command.Type })
+          , cfgCommand :
+              Optional (List { mapKey : Text, mapValue : Command.Type })
           , -- Theme settings
             cfgTheme : Optional Text
           , cfgThemes :

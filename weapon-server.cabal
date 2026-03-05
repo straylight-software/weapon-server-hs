@@ -129,10 +129,6 @@ library
     System.IoUring
     System.IoUring.Internal.FFI
     System.IoUring.URing
-    Tool.Defs
-    Tool.Exec
-    Tool.Tool
-    Tool.Types
     Telemetry.Manager
     Telemetry.Parquet
     Telemetry.ParquetWAL
@@ -140,6 +136,10 @@ library
     Telemetry.Telemetry
     Telemetry.Types
     Telemetry.WAL
+    Tool.Defs
+    Tool.Exec
+    Tool.Tool
+    Tool.Types
     Tui.Store
     Util.ExeCache
     Util.FileSystem
@@ -154,7 +154,9 @@ library
   -- // evring-wai (io_uring bindings)
   c-sources:          cbits/uring_compat.c
   include-dirs:       cbits
-  extra-libraries:    uring parquet_ffi
+  extra-libraries:
+    uring
+    parquet_ffi
 
   -- // agent
   -- // api
@@ -204,7 +206,6 @@ library
     , containers          >=0.6
     , crypton             >=0.34
     , crypton-connection  >=0.4
-    , memory              >=0.18
     , data-default-class  >=0.1
     , dhall               >=1.42
     , dhall-json          >=1.7
@@ -215,6 +216,7 @@ library
     , http-client-tls
     , http-types          >=0.12
     , katip               >=0.8
+    , memory              >=0.18
     , mtl                 >=2.2
     , network             >=3.1
     , posix-pty           >=0.2

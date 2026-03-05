@@ -53,7 +53,7 @@ haskell_ffi_binary(
     cxx_srcs = [
         "cbits/uring_compat.c",
     ],
-    extra_libs = ["uring"],
+    extra_libs = ["uring", "parquet_ffi"],
     language_extensions = [
         "BangPatterns",
         "DataKinds",
@@ -93,7 +93,7 @@ haskell_ffi_test(
     cxx_srcs = [
         "cbits/uring_compat.c",
     ],
-    extra_libs = ["uring"],
+    extra_libs = ["uring", "parquet_ffi"],
     language_extensions = [
         "DataKinds",
         "DeriveGeneric",

@@ -90,6 +90,7 @@ module LLM.OpenRouter (
 )
 where
 
+import Control.Concurrent.Async (wait, withAsync)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM, forM_, unless, when)
 import Data.Aeson
@@ -110,7 +111,6 @@ import Network.HTTP.Client qualified as HC
 import Network.HTTP.Client.TLS qualified as HCT
 import Network.HTTP.Types qualified as HT
 import Provider.Types qualified as PT
-import Control.Concurrent.Async (withAsync, wait)
 import System.Exit (ExitCode (..))
 import System.IO (hClose, hGetContents, hGetLine, hIsEOF)
 import System.Process (StdStream (..), createProcess, proc, std_err, std_in, std_out, waitForProcess)

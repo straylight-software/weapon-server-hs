@@ -66,7 +66,6 @@ module Global.Event (
 ) where
 
 import Control.Concurrent (myThreadId, threadDelay)
-import Util.Thread (forkLogged)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, catch, throwIO)
 import Control.Monad (forever)
@@ -82,6 +81,7 @@ import Network.HTTP.Types (ResponseHeaders, status200)
 import Network.Wai (Application, responseStream)
 import Servant (Handler, Tagged (..))
 import State
+import Util.Thread (forkLogged)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Configuration

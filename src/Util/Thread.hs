@@ -50,8 +50,8 @@ module Util.Thread (
 import Control.Concurrent (ThreadId, forkIO, myThreadId, throwTo)
 import Control.Exception (SomeException, catch, throwIO)
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Log
+import Data.Text qualified as T
+import Log qualified
 
 {- | Fork a thread that logs exceptions before dying.
 

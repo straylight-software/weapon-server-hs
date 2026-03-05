@@ -75,7 +75,6 @@ module Telemetry.R2 (
     stopReplicationWorker,
 ) where
 
-
 import Control.Concurrent (ThreadId, killThread, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (Exception, IOException, SomeException, try)
@@ -88,11 +87,13 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as B16
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as LBS
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Time.Clock (UTCTime, getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
+import Log qualified
 import Network.HTTP.Client (
     Manager,
     Request (..),
@@ -105,10 +106,9 @@ import Network.HTTP.Client (
  )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (Header, statusCode)
-import Log qualified
 import Util.Thread (forkLogged)
 
-import System.FilePath ((</>), takeFileName)
+import System.FilePath (takeFileName, (</>))
 import Telemetry.ParquetWAL qualified as WAL
 
 import Config.Types (R2StorageConfig (..), TelemetryConfig (..))
@@ -134,12 +134,12 @@ data R2Config = R2Config
 
 -- | R2 errors
 data R2Error
-    = R2UploadError Text Int ByteString
-    -- ^ Upload failed with status code and response body
-    | R2NetworkError Text
-    -- ^ Network error
-    | R2ConfigError Text
-    -- ^ Configuration error (missing required fields in Dhall config)
+    = -- | Upload failed with status code and response body
+      R2UploadError Text Int ByteString
+    | -- | Network error
+      R2NetworkError Text
+    | -- | Configuration error (missing required fields in Dhall config)
+      R2ConfigError Text
     deriving (Show, Eq)
 
 instance Exception R2Error
@@ -157,7 +157,7 @@ Returns R2ConfigError if required fields are missing.
 
 Required fields in weapon.dhall telemetry.r2:
   accountId
-  accessKeyId  
+  accessKeyId
   secretKey
 
 Optional fields (with defaults):
@@ -169,15 +169,16 @@ configFromDhall :: TelemetryConfig -> Either R2Error R2Config
 configFromDhall (TelemetryConfig r2cfg) =
     case (r2sAccountId r2cfg, r2sAccessKeyId r2cfg, r2sSecretKey r2cfg) of
         (Just accountId, Just accessKey, Just secretKey) ->
-            Right R2Config
-                { r2AccountId = accountId
-                , r2AccessKeyId = accessKey
-                , r2SecretAccessKey = secretKey
-                , r2Bucket = maybe "weapon-telemetry" id (r2sBucket r2cfg)
-                , r2Prefix = maybe "telemetry" id (r2sPrefix r2cfg)
-                , r2Endpoint = r2sEndpoint r2cfg
-                , r2Region = "auto" -- R2 always uses "auto"
-                }
+            Right
+                R2Config
+                    { r2AccountId = accountId
+                    , r2AccessKeyId = accessKey
+                    , r2SecretAccessKey = secretKey
+                    , r2Bucket = fromMaybe "weapon-telemetry" (r2sBucket r2cfg)
+                    , r2Prefix = fromMaybe "telemetry" (r2sPrefix r2cfg)
+                    , r2Endpoint = r2sEndpoint r2cfg
+                    , r2Region = "auto" -- R2 always uses "auto"
+                    }
         (Nothing, _, _) -> Left $ R2ConfigError "telemetry.r2.accountId is required"
         (_, Nothing, _) -> Left $ R2ConfigError "telemetry.r2.accessKeyId is required"
         (_, _, Nothing) -> Left $ R2ConfigError "telemetry.r2.secretKey is required"
@@ -191,18 +192,20 @@ newR2Handle config = do
 -- | Upload a segment file to R2
 uploadSegment ::
     R2Handle ->
+    -- | Session ID
     Text ->
-    -- ^ Session ID
+    -- | Local segment path
     FilePath ->
-    -- ^ Local segment path
     IO (Either R2Error ())
 uploadSegment h sessionId localPath = do
     -- TODO[b7r6]: add zstd compression for segment uploads
     readResult <- try @IOException $ BS.readFile localPath
     case readResult of
         Left err ->
-            pure $ Left $ R2NetworkError $
-                "Failed to read segment file " <> T.pack localPath <> ": " <> T.pack (show err)
+            pure $
+                Left $
+                    R2NetworkError $
+                        "Failed to read segment file " <> T.pack localPath <> ": " <> T.pack (show err)
         Right content -> do
             -- For now, no compression - just upload raw
             let compressed = content
@@ -218,14 +221,14 @@ uploadSegment h sessionId localPath = do
 -- | Upload session metadata
 uploadSessionMeta ::
     R2Handle ->
+    -- | Session ID
     Text ->
-    -- ^ Session ID
+    -- | Project ID
     Text ->
-    -- ^ Project ID
+    -- | Model ID
     Text ->
-    -- ^ Model ID
+    -- | Agent
     Text ->
-    -- ^ Agent
     IO (Either R2Error ())
 uploadSessionMeta h sessionId projectId modelId agent = do
     now <- getCurrentTime
@@ -248,12 +251,12 @@ uploadSessionMeta h sessionId projectId modelId agent = do
 -- | Upload raw bytes to R2 with AWS Signature V4
 uploadBytes ::
     R2Handle ->
+    -- | Object key
     Text ->
-    -- ^ Object key
+    -- | Content
     ByteString ->
-    -- ^ Content
+    -- | Content-Type
     ByteString ->
-    -- ^ Content-Type
     IO (Either R2Error ())
 uploadBytes h key content contentType = do
     now <- getCurrentTime
@@ -309,16 +312,16 @@ uploadBytes h key content contentType = do
 signRequest ::
     R2Config ->
     UTCTime ->
+    -- | HTTP method
     ByteString ->
-    -- ^ HTTP method
+    -- | Path (including bucket)
     ByteString ->
-    -- ^ Path (including bucket)
+    -- | Host
     ByteString ->
-    -- ^ Host
+    -- | Payload
     ByteString ->
-    -- ^ Payload
+    -- | Content-Type
     ByteString ->
-    -- ^ Content-Type
     [Header]
 signRequest config now httpMethod reqPath host payload contentType =
     [ ("Host", host)
@@ -356,8 +359,7 @@ signRequest config now httpMethod reqPath host payload contentType =
             <> reqPath
             <> "\n"
             <> "\n"
-            <> -- Query string (empty)
-            canonicalHeaders
+            <> canonicalHeaders -- Query string (empty)
             <> "\n"
             <> signedHeaders
             <> "\n"
@@ -417,12 +419,12 @@ data ReplicationWorker = ReplicationWorker
 startReplicationWorker ::
     R2Handle ->
     WAL.WALHandle ->
+    -- | Session ID
     Text ->
-    -- ^ Session ID
+    -- | Poll interval in seconds
     Int ->
-    -- ^ Poll interval in seconds
+    -- | Logger
     Log.Logger ->
-    -- ^ Logger
     IO ReplicationWorker
 startReplicationWorker r2 wal sessionId pollInterval logger = do
     stopVar <- newTVarIO False
@@ -508,8 +510,14 @@ replicationLoop r2 wal sessionId stopVar pollInterval lg = do
                 -- Log with escalating severity based on failure count
                 let errMsg = "Upload failed: " <> T.pack (show err)
                     backoffSecs = calculateBackoffSeconds failureCount
-                    backoffMsg = " (backoff: " <> T.pack (show backoffSecs) <> "s, attempt " 
-                                 <> T.pack (show failureCount) <> "/" <> T.pack (show maxConsecutiveFailures) <> ")"
+                    backoffMsg =
+                        " (backoff: "
+                            <> T.pack (show backoffSecs)
+                            <> "s, attempt "
+                            <> T.pack (show failureCount)
+                            <> "/"
+                            <> T.pack (show maxConsecutiveFailures)
+                            <> ")"
 
                 if failureCount >= maxConsecutiveFailures
                     then do
@@ -517,15 +525,17 @@ replicationLoop r2 wal sessionId stopVar pollInterval lg = do
                         Log.logError lg ("CRITICAL: telemetry upload failing repeatedly, giving up on batch: " <> errMsg) ()
                         -- Reset counter so we can try fresh on next batch
                         atomically $ writeTVar failureCountVar 0
-                    else if failureCount >= 6
-                        then do
-                            Log.logError lg ("CRITICAL: telemetry upload failing repeatedly: " <> errMsg <> backoffMsg) ()
-                            threadDelay (backoffSecs * 1000000)
-                        else if failureCount >= 3
+                    else
+                        if failureCount >= 6
                             then do
-                                Log.logError lg (errMsg <> backoffMsg) ()
+                                Log.logError lg ("CRITICAL: telemetry upload failing repeatedly: " <> errMsg <> backoffMsg) ()
                                 threadDelay (backoffSecs * 1000000)
-                            else do
-                                -- 1-2 failures: WARNING
-                                Log.logWarn lg (errMsg <> backoffMsg) ()
-                                threadDelay (backoffSecs * 1000000)
+                            else
+                                if failureCount >= 3
+                                    then do
+                                        Log.logError lg (errMsg <> backoffMsg) ()
+                                        threadDelay (backoffSecs * 1000000)
+                                    else do
+                                        -- 1-2 failures: WARNING
+                                        Log.logWarn lg (errMsg <> backoffMsg) ()
+                                        threadDelay (backoffSecs * 1000000)

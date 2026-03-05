@@ -89,8 +89,8 @@ import System.FilePath ((</>))
 
 -- | Configuration loading errors
 data ConfigError
-    = ConfigParseError FilePath String
-    -- ^ File exists but failed to parse (path, error message)
+    = -- | File exists but failed to parse (path, error message)
+      ConfigParseError FilePath String
     deriving (Show, Eq)
 
 instance Exception ConfigError
@@ -174,8 +174,9 @@ loadConfigFromFileCached cache path = modifyMVar (dcFiles cache) $ \files ->
             cfg <- loadConfigFromFile path
             pure (Map.insert path cfg files, cfg)
 
--- | Load full config (global + project + defaults) using cache.
--- FAILS on any parse error. Missing config files are allowed.
+{- | Load full config (global + project + defaults) using cache.
+FAILS on any parse error. Missing config files are allowed.
+-}
 loadConfigCached :: DhallCache -> FilePath -> IO Config
 loadConfigCached cache projectDir = do
     -- Load built-in defaults (cached, FAILS if missing or invalid)

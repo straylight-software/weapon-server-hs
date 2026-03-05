@@ -188,9 +188,9 @@ start config = do
 startWithErrorReporting :: Int -> MVar (Either ProxyError ()) -> Application -> IO ()
 startWithErrorReporting port resultMVar app = do
     let settings =
-            Warp.setPort port $
-                Warp.setBeforeMainLoop (putMVar resultMVar (Right ())) $
-                    Warp.defaultSettings
+            Warp.setPort port
+                . Warp.setBeforeMainLoop (putMVar resultMVar (Right ()))
+                $ Warp.defaultSettings
     Warp.runSettings settings app `catch` handleBindError
   where
     handleBindError :: IOException -> IO ()
@@ -689,7 +689,7 @@ getSessionLogs :: Log.Logger -> ProxyServer -> Text -> IO [LogEntry]
 getSessionLogs logger ProxyServer{..} sessionId = do
     result <- try @IOException $ BS.readFile psLogFile
     case result of
-        Left _ -> pure []  -- No logs yet is OK
+        Left _ -> pure [] -- No logs yet is OK
         Right content -> do
             let chunks = C8.lines content
                 parseResults = [(l, eitherDecode (LBS.fromStrict l)) | l <- chunks]

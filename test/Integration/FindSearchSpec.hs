@@ -154,5 +154,4 @@ spec = do
             it "throws SearchError for missing fd" $ do
                 let err = MissingExecutable "fd" "test description"
                 show err `shouldContain` "fd"
-                seName err `shouldBe` "fd"
-                seDescription err `shouldBe` "test description"
+                show err `shouldContain` "test description"

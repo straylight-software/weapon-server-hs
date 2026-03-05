@@ -16,13 +16,13 @@ module Log (
     -- * Configuration
     LogConfig (..),
     defaultLogConfig,
-    
+
     -- * Logger
     Logger,
     newLoggerWithConfig,
     closeLogger,
     withLoggerConfig,
-    
+
     -- * Legacy constructors (for backwards compatibility during migration)
     newLogger,
     newLoggerWithLevel,
@@ -44,6 +44,7 @@ module Log (
 
 import Control.Exception (bracket)
 import Control.Monad (void)
+import Data.Foldable (for_)
 import Data.Text (Text)
 import Katip hiding (logMsg)
 import System.Directory (XdgDirectory (..), createDirectoryIfMissing, getXdgDirectory)
@@ -85,52 +86,51 @@ data Logger = Logger
     -- ^ File handle to close on shutdown (if file logging enabled)
     }
 
-
-
 -- | Create a new logger with explicit configuration
 newLoggerWithConfig :: LogConfig -> IO Logger
 newLoggerWithConfig LogConfig{..} = do
     le <- initLogEnv (Namespace [lcAppName]) "production"
-    
+
     -- Add file scribe if enabled
-    (le', fileHandle) <- if lcFile
-        then do
-            logDir <- case lcLogDir of
-                Just d -> pure d
-                Nothing -> do
-                    xdgData <- getXdgDirectory XdgData "weapon"
-                    pure (xdgData </> "logs")
-            createDirectoryIfMissing True logDir
-            let logFile = logDir </> "weapon.log"
-            h <- openFile logFile AppendMode
-            fileScribe <- mkHandleScribeWithFormatter bracketFormat ColorIfTerminal h (permitItem lcLevel) V2
-            le'' <- registerScribe "file" fileScribe defaultScribeSettings le
-            pure (le'', Just h)
-        else
-            pure (le, Nothing)
-    
+    (le', fileHandle) <-
+        if lcFile
+            then do
+                logDir <- case lcLogDir of
+                    Just d -> pure d
+                    Nothing -> do
+                        xdgData <- getXdgDirectory XdgData "weapon"
+                        pure (xdgData </> "logs")
+                createDirectoryIfMissing True logDir
+                let logFile = logDir </> "weapon.log"
+                h <- openFile logFile AppendMode
+                fileScribe <- mkHandleScribeWithFormatter bracketFormat ColorIfTerminal h (permitItem lcLevel) V2
+                le'' <- registerScribe "file" fileScribe defaultScribeSettings le
+                pure (le'', Just h)
+            else
+                pure (le, Nothing)
+
     -- Add stdout scribe if enabled
-    le'' <- if lcStdout
-        then do
-            stdoutScribe <- mkHandleScribeWithFormatter bracketFormat ColorIfTerminal stdout (permitItem lcLevel) V2
-            registerScribe "stdout" stdoutScribe defaultScribeSettings le'
-        else
-            pure le'
-    
-    pure Logger
-        { lgEnv = le''
-        , lgContext = mempty
-        , lgNamespace = Namespace [lcAppName]
-        , lgFileHandle = fileHandle
-        }
+    le'' <-
+        if lcStdout
+            then do
+                stdoutScribe <- mkHandleScribeWithFormatter bracketFormat ColorIfTerminal stdout (permitItem lcLevel) V2
+                registerScribe "stdout" stdoutScribe defaultScribeSettings le'
+            else
+                pure le'
+
+    pure
+        Logger
+            { lgEnv = le''
+            , lgContext = mempty
+            , lgNamespace = Namespace [lcAppName]
+            , lgFileHandle = fileHandle
+            }
 
 -- | Close the logger and any open file handles
 closeLogger :: Logger -> IO ()
 closeLogger lg = do
     void (closeScribes (lgEnv lg))
-    case lgFileHandle lg of
-        Just h -> hClose h
-        Nothing -> pure ()
+    for_ (lgFileHandle lg) hClose
 
 -- | Bracket for logger lifecycle with config
 withLoggerConfig :: LogConfig -> (Logger -> IO a) -> IO a
@@ -141,50 +141,59 @@ withLoggerConfig config = bracket (newLoggerWithConfig config) closeLogger
 -- These should be migrated to use LogConfig eventually
 --------------------------------------------------------------------------------
 
--- | Create a new logger (stdout only, for backwards compatibility)
--- DEPRECATED: Use newLoggerWithConfig with explicit config
+{- | Create a new logger (stdout only, for backwards compatibility)
+DEPRECATED: Use newLoggerWithConfig with explicit config
+-}
 newLogger :: Text -> IO Logger
 newLogger appName = newLoggerWithConfig config
   where
-    config = (defaultLogConfig appName)
-        { lcStdout = True  -- Legacy behavior: stdout
-        , lcFile = False   -- Legacy behavior: no file
-        , lcLevel = DebugS
-        }
+    config =
+        (defaultLogConfig appName)
+            { lcStdout = True -- Legacy behavior: stdout
+            , lcFile = False -- Legacy behavior: no file
+            , lcLevel = DebugS
+            }
 
--- | Create a new logger with a minimum severity level (stdout only)
--- DEPRECATED: Use newLoggerWithConfig with explicit config
+{- | Create a new logger with a minimum severity level (stdout only)
+DEPRECATED: Use newLoggerWithConfig with explicit config
+-}
 newLoggerWithLevel :: Text -> Severity -> IO Logger
 newLoggerWithLevel appName level = newLoggerWithConfig config
   where
-    config = (defaultLogConfig appName)
-        { lcStdout = True  -- Legacy behavior: stdout
-        , lcFile = False   -- Legacy behavior: no file
-        , lcLevel = level
-        }
+    config =
+        (defaultLogConfig appName)
+            { lcStdout = True -- Legacy behavior: stdout
+            , lcFile = False -- Legacy behavior: no file
+            , lcLevel = level
+            }
 
--- | Create a null logger that discards all output (for TUI mode)
--- This creates a logger with no scribes - all messages are discarded
+{- | Create a null logger that discards all output (for TUI mode)
+This creates a logger with no scribes - all messages are discarded
+-}
 newNullLogger :: Text -> IO Logger
 newNullLogger appName = newLoggerWithConfig config
   where
-    config = (defaultLogConfig appName)
-        { lcStdout = False
-        , lcFile = False  -- Null logger: no output anywhere
-        }
+    config =
+        (defaultLogConfig appName)
+            { lcStdout = False
+            , lcFile = False -- Null logger: no output anywhere
+            }
 
--- | Bracket for logger lifecycle (stdout only)
--- DEPRECATED: Use withLoggerConfig
+{- | Bracket for logger lifecycle (stdout only)
+DEPRECATED: Use withLoggerConfig
+-}
 withLogger :: Text -> (Logger -> IO a) -> IO a
 withLogger appName = bracket (newLogger appName) closeLogger
 
--- | Bracket for logger lifecycle with minimum severity level (stdout only)
--- DEPRECATED: Use withLoggerConfig
+{- | Bracket for logger lifecycle with minimum severity level (stdout only)
+DEPRECATED: Use withLoggerConfig
+-}
 withLoggerLevel :: Text -> Severity -> (Logger -> IO a) -> IO a
 withLoggerLevel appName level = bracket (newLoggerWithLevel appName level) closeLogger
 
--- | Bracket for null logger lifecycle (no output)
--- DEPRECATED: Use withLoggerConfig with lcFile=False, lcStdout=False
+{- | Bracket for null logger lifecycle (no output)
+DEPRECATED: Use withLoggerConfig with lcFile=False, lcStdout=False
+-}
 withNullLogger :: Text -> (Logger -> IO a) -> IO a
 withNullLogger appName = bracket (newNullLogger appName) closeLogger
 

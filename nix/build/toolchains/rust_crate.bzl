@@ -116,6 +116,9 @@ def _rust_crate_impl(ctx: AnalysisContext) -> list[Provider]:
     """"""
     rustc = read_root_config("rust", "rustc", "rustc")
     
+    # Wrapper script to make OUT_DIR absolute (needed for include!() macro)
+    rustc_wrapper = ctx.attrs._rustc_wrapper[DefaultInfo].default_outputs[0]
+    
     # Crate name with underscores (Rust convention)
     crate_name = ctx.attrs.crate_name or ctx.attrs.name.replace("-", "_")
     
@@ -128,7 +131,11 @@ def _rust_crate_impl(ctx: AnalysisContext) -> list[Provider]:
         out = ctx.actions.declare_output("lib{}.rlib".format(crate_name))
         crate_type = "rlib"
     
-    cmd = cmd_args([rustc])
+    # Use wrapper script when we have generated files (for OUT_DIR handling)
+    if ctx.attrs.generated_files:
+        cmd = cmd_args([rustc_wrapper, rustc])
+    else:
+        cmd = cmd_args([rustc])
     
     # Crate type and name
     cmd.add("--crate-type", crate_type)
@@ -192,16 +199,17 @@ def _rust_crate_impl(ctx: AnalysisContext) -> list[Provider]:
         env[key] = val
     
     # Handle generated files (for build.rs output simulation)
+    # For crates that use include!(concat!(env!("OUT_DIR"), "/file.rs")), the path
+    # must be absolute because include! resolves relative to the source file.
+    # The rustc-abs-outdir wrapper script converts OUT_DIR to absolute at runtime.
     if ctx.attrs.generated_files:
         generated_outputs = []
         for filename, content in ctx.attrs.generated_files.items():
             gen_file = ctx.actions.declare_output("generated/{}".format(filename))
             ctx.actions.write(gen_file, content)
             generated_outputs.append(gen_file)
-        # Set OUT_DIR to the absolute directory containing generated files
-        # The project root for Buck2 in this setup
-        project_root = read_root_config("project", "root", ".")
-        env["OUT_DIR"] = cmd_args(generated_outputs[0], parent = 1, format = project_root + "/{}")
+        # Set OUT_DIR - relative path that wrapper script will make absolute
+        env["OUT_DIR"] = cmd_args(generated_outputs[0], parent = 1)
         cmd.add(cmd_args(hidden = generated_outputs))
     
     ctx.actions.run(cmd, category = "rustc", identifier = crate_name, env = env)
@@ -234,6 +242,7 @@ rust_crate = rule(
         "rustc_flags": attrs.list(attrs.string(), default = []),
         "env": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "generated_files": attrs.dict(attrs.string(), attrs.string(), default = {}),
+        "_rustc_wrapper": attrs.dep(default = "toolchains//scripts:rustc-abs-outdir"),
     },
 )
 

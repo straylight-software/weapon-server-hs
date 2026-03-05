@@ -82,7 +82,6 @@ module Bus.Bus (
 
 import Bus.Event (EventType, eventTypeToText)
 import Control.Concurrent (ThreadId, forkIO, killThread)
-import Util.Thread (forkLogged)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Control.Monad (forever, when)
@@ -91,6 +90,7 @@ import Data.Aeson.Types (Parser)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Log qualified
+import Util.Thread (forkLogged)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Types
@@ -312,22 +312,24 @@ dupBusChan bus = atomically $ dupTChan (unBus bus)
 -- Internal Helpers (separated for testability)
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- | Start a subscriber thread that reads from a channel and invokes the callback.
--- Exceptions in the callback will propagate and kill the thread.
---
--- __WARNING__: This uses raw 'forkIO' - thread deaths are silent!
--- Prefer 'startSubscriberThreadLogged' for production use.
+{- | Start a subscriber thread that reads from a channel and invokes the callback.
+Exceptions in the callback will propagate and kill the thread.
+
+__WARNING__: This uses raw 'forkIO' - thread deaths are silent!
+Prefer 'startSubscriberThreadLogged' for production use.
+-}
 startSubscriberThread :: TChan BusEvent -> (BusEvent -> IO ()) -> IO ThreadId
 startSubscriberThread chan callback =
     forkIO $ forever $ do
         event <- atomically $ readTChan chan
         callback event
 
--- | Start a subscriber thread with error logging and recovery.
--- If the callback throws, the error is logged and the subscriber continues
--- receiving future events (the thread does NOT die).
--- Uses forkLogged for outer supervision - if the forever loop itself fails
--- (e.g., STM exception), the thread death is logged before dying.
+{- | Start a subscriber thread with error logging and recovery.
+If the callback throws, the error is logged and the subscriber continues
+receiving future events (the thread does NOT die).
+Uses forkLogged for outer supervision - if the forever loop itself fails
+(e.g., STM exception), the thread death is logged before dying.
+-}
 startSubscriberThreadLogged :: Log.Logger -> Text -> TChan BusEvent -> (BusEvent -> IO ()) -> IO ThreadId
 startSubscriberThreadLogged logger subscriberName chan callback =
     forkLogged logger ("bus-subscriber-" <> subscriberName) $ forever $ do

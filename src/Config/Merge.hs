@@ -309,7 +309,8 @@ mergeWatcher base override =
         { watchIgnore = mergeOptional (watchIgnore base) (watchIgnore override)
         }
 
--- | Merge telemetry configurations.
--- Override wins entirely if present (no field-level merge).
+{- | Merge telemetry configurations.
+Override wins entirely if present (no field-level merge).
+-}
 mergeTelemetry :: Maybe TelemetryConfig -> Maybe TelemetryConfig -> Maybe TelemetryConfig
 mergeTelemetry = mergeOptional

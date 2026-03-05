@@ -189,7 +189,8 @@ retryWithDelay mLogger cfg defaultVal action = go (retryAttempts cfg)
                 let remaining = n - 1
                 case mLogger of
                     Just lg ->
-                        Log.logDebug lg
+                        Log.logDebug
+                            lg
                             ("Retry attempt failed (" <> T.pack (show remaining) <> " remaining): " <> T.pack (show err))
                             ()
                     Nothing -> pure ()

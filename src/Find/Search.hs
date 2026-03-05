@@ -55,16 +55,16 @@ These errors indicate either missing dependencies or process failures.
 data SearchError
     = -- | Required executable not found in PATH
       MissingExecutable
+        -- | Name of the missing executable (e.g., "rg", "fd")
         !String
-        -- ^ Name of the missing executable (e.g., "rg", "fd")
+        -- | Human-readable description with installation instructions
         !String
-        -- ^ Human-readable description with installation instructions
     | -- | Process exited with non-zero exit code
       ProcessFailed
+        -- | Name of the process that failed
         !String
-        -- ^ Name of the process that failed
+        -- | Error message including exit code and stderr
         !String
-        -- ^ Error message including exit code and stderr
     deriving (Eq)
 
 instance Show SearchError where

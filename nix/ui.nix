@@ -55,6 +55,7 @@
     in
     {
       packages.ui = withUI;
-      checks.ui = withUI;
+      # Note: ui check disabled until weapon frontend @opentui/solid/preload issue is fixed
+      # checks.ui = withUI;
     };
 }

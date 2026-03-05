@@ -136,10 +136,11 @@ import Data.Text (Text)
 import Dhall (FromDhall (..), ToDhall (..))
 import GHC.Generics (Generic)
 
--- | Try two optional parsers and return the first Just result
--- Unlike <|>, this combines the Maybe results, not the Parser success/failure
+{- | Try two optional parsers and return the first Just result
+Unlike <|>, this combines the Maybe results, not the Parser success/failure
+-}
 firstJust :: Parser (Maybe a) -> Parser (Maybe a) -> Parser (Maybe a)
-firstJust p1 p2 = liftA2 (<|>) p1 p2
+firstJust = liftA2 (<|>)
 
 -- ════════════════════════════════════════════════════════════════════════════
 --                                                                      Enums
@@ -2157,5 +2158,5 @@ defaultConfig =
         , cfgThemes = Nothing
         , cfgShare = Nothing
         , cfgAutoUpdate = Just AutoUpdateNotify
-        , cfgTelemetry = Nothing  -- Telemetry disabled by default
+        , cfgTelemetry = Nothing -- Telemetry disabled by default
         }

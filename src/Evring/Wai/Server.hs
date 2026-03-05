@@ -91,12 +91,13 @@ runServer ServerSettings{..} app = do
             poke (castPtr addrLenBuf :: Ptr Word32) 128
 
             -- Start accept loop
-            !_ <- ioAccept
-                loop
-                (Fd listenFd)
-                addrBuf
-                addrLenBuf
-                (acceptCont ctx loop (Fd listenFd) addrBuf addrLenBuf app)
+            !_ <-
+                ioAccept
+                    loop
+                    (Fd listenFd)
+                    addrBuf
+                    addrLenBuf
+                    (acceptCont ctx loop (Fd listenFd) addrBuf addrLenBuf app)
 
             -- Run event loop
             runLoop loop
@@ -108,12 +109,13 @@ acceptCont :: ConnContext -> Loop -> Fd -> Ptr () -> Ptr () -> Application -> Co
 acceptCont ctx loop listenFd addrBuf addrLenBuf app = Cont $ \case
     Failure _errno -> do
         -- Accept failed, try again
-        !_ <- ioAccept
-            loop
-            listenFd
-            addrBuf
-            addrLenBuf
-            (acceptCont ctx loop listenFd addrBuf addrLenBuf app)
+        !_ <-
+            ioAccept
+                loop
+                listenFd
+                addrBuf
+                addrLenBuf
+                (acceptCont ctx loop listenFd addrBuf addrLenBuf app)
         pure Nothing
     Success clientFdInt -> do
         let clientFd = Fd (fromIntegral clientFdInt)
@@ -128,12 +130,13 @@ acceptCont ctx loop listenFd addrBuf addrLenBuf app = Cont $ \case
         startConnection ctx loop clientFd clientAddr app
 
         -- Immediately submit next accept (this is the key - we don't block!)
-        !_ <- ioAccept
-            loop
-            listenFd
-            addrBuf
-            addrLenBuf
-            (acceptCont ctx loop listenFd addrBuf addrLenBuf app)
+        !_ <-
+            ioAccept
+                loop
+                listenFd
+                addrBuf
+                addrLenBuf
+                (acceptCont ctx loop listenFd addrBuf addrLenBuf app)
 
         -- This continuation is done (accept cont chain continues independently)
         pure Nothing

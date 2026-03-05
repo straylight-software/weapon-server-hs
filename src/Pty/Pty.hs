@@ -68,7 +68,7 @@ import Data.Bifunctor (bimap)
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Text (Text)
 import Data.Word (Word64)
 import System.Directory (findExecutable)
@@ -237,9 +237,9 @@ createSandboxed PtyManager{..} ptyId params input = do
     let home = fromMaybe "/tmp" mHome
         user = fromMaybe "nobody" mUser
     -- Warn on suspicious fallback defaults that may cause unexpected behavior
-    when (mHome == Nothing) $
+    when (isNothing mHome) $
         Log.logWarn pmLogger "HOME not set, falling back to /tmp - PTY session may behave unexpectedly" ()
-    when (mUser == Nothing) $
+    when (isNothing mUser) $
         Log.logWarn pmLogger "USER not set, falling back to 'nobody' - PTY session may behave unexpectedly" ()
 
     -- Build sandbox config with actual user values

@@ -403,8 +403,9 @@ indicate bugs or data corruption and are logged so operators can investigate.
 -}
 readStoredAuth :: Log.Logger -> Storage.StorageConfig -> Text -> IO (Maybe Value)
 readStoredAuth logger storage providerID = do
-    result <- Control.Exception.try @Control.Exception.SomeException $
-        Storage.read storage ["auth", providerID]
+    result <-
+        Control.Exception.try @Control.Exception.SomeException $
+            Storage.read storage ["auth", providerID]
     case result of
         Right val -> pure (Just val)
         Left e -> do
@@ -412,9 +413,11 @@ readStoredAuth logger storage providerID = do
             -- All other errors indicate bugs or data corruption - log at ERROR
             case Control.Exception.fromException e of
                 Just (Storage.NotFoundError _) -> pure ()
-                _ -> Log.logError logger
-                    ("Failed to load auth for provider " <> providerID <> ": " <> T.pack (show e))
-                    ()
+                _ ->
+                    Log.logError
+                        logger
+                        ("Failed to load auth for provider " <> providerID <> ": " <> T.pack (show e))
+                        ()
             pure Nothing
 
 {- | Get authentication status for all providers.

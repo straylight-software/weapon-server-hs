@@ -437,6 +437,10 @@ def _haskell_ffi_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     liburing_lib = read_root_config("io-uring", "liburing_lib", "")
     liburing_include = read_root_config("io-uring", "liburing_include", "")
     
+    # parquet-ffi paths (Rust FFI library for Parquet support)
+    parquet_ffi_lib = read_root_config("parquet-ffi", "parquet_ffi_lib", "")
+    parquet_ffi_include = read_root_config("parquet-ffi", "parquet_ffi_include", "")
+    
     # Extra library dirs from [cxx] config (includes notcurses, etc.)
     cxx_extra_lib_dirs = read_root_config("cxx", "extra_lib_dirs", "")
     
@@ -514,6 +518,11 @@ def _haskell_ffi_binary_impl(ctx: AnalysisContext) -> list[Provider]:
         ghc_cmd.add("-optl", "-L" + liburing_lib)
         ghc_cmd.add("-optl", "-Wl,-rpath," + liburing_lib)
     
+    # parquet-ffi library (Rust FFI for Parquet support)
+    if parquet_ffi_lib:
+        ghc_cmd.add("-optl", "-L" + parquet_ffi_lib)
+        ghc_cmd.add("-optl", "-Wl,-rpath," + parquet_ffi_lib)
+    
     # Extra library directories from [cxx] config (notcurses, openssl, etc.)
     if cxx_extra_lib_dirs:
         for lib_dir in cxx_extra_lib_dirs.split(":"):
@@ -589,6 +598,10 @@ def _haskell_ffi_test_impl(ctx: AnalysisContext) -> list[Provider]:
     liburing_lib = read_root_config("io-uring", "liburing_lib", "")
     liburing_include = read_root_config("io-uring", "liburing_include", "")
     
+    # parquet-ffi paths (Rust FFI library for Parquet support)
+    parquet_ffi_lib = read_root_config("parquet-ffi", "parquet_ffi_lib", "")
+    parquet_ffi_include = read_root_config("parquet-ffi", "parquet_ffi_include", "")
+    
     # C++ stdlib paths for unwrapped clang
     gcc_include = read_root_config("cxx", "gcc_include", "")
     gcc_include_arch = read_root_config("cxx", "gcc_include_arch", "")
@@ -662,6 +675,11 @@ def _haskell_ffi_test_impl(ctx: AnalysisContext) -> list[Provider]:
     if liburing_lib:
         ghc_cmd.add("-optl", "-L" + liburing_lib)
         ghc_cmd.add("-optl", "-Wl,-rpath," + liburing_lib)
+    
+    # parquet-ffi library (Rust FFI for Parquet support)
+    if parquet_ffi_lib:
+        ghc_cmd.add("-optl", "-L" + parquet_ffi_lib)
+        ghc_cmd.add("-optl", "-Wl,-rpath," + parquet_ffi_lib)
     
     ghc_cmd.add("-o", out.as_output())
     

@@ -1,5 +1,4 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 {- |
@@ -37,6 +36,7 @@ module Telemetry.Parquet (
 ) where
 
 import Control.Exception (Exception, throwIO)
+import Control.Monad (when)
 import Data.Aeson (encode)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
@@ -73,42 +73,42 @@ foreign import ccall unsafe "parquet_writer_new"
 foreign import ccall unsafe "parquet_writer_append"
     c_parquet_writer_append ::
         Ptr () ->
+        -- | event_id
         CString ->
-        -- ^ event_id
+        -- | seq
         Int64 ->
-        -- ^ seq
+        -- | timestamp_us
         Int64 ->
-        -- ^ timestamp_us
+        -- | monotonic_ns
         Int64 ->
-        -- ^ monotonic_ns
+        -- | session_id
         CString ->
-        -- ^ session_id
+        -- | project_id
         CString ->
-        -- ^ project_id
+        -- | directory
         CString ->
-        -- ^ directory
+        -- | event_type
         CString ->
-        -- ^ event_type
+        -- | payload
         CString ->
-        -- ^ payload
+        -- | payload_len
         CSize ->
-        -- ^ payload_len
+        -- | meta_model
         CString ->
-        -- ^ meta_model
+        -- | meta_agent
         CString ->
-        -- ^ meta_agent
+        -- | meta_tokens_in
         CInt ->
-        -- ^ meta_tokens_in
+        -- | meta_tokens_in_null
         CInt ->
-        -- ^ meta_tokens_in_null
+        -- | meta_tokens_out
         CInt ->
-        -- ^ meta_tokens_out
+        -- | meta_tokens_out_null
         CInt ->
-        -- ^ meta_tokens_out_null
+        -- | meta_tool_name
         CString ->
-        -- ^ meta_tool_name
+        -- | meta_error
         CString ->
-        -- ^ meta_error
         IO CInt
 
 foreign import ccall unsafe "parquet_writer_flush"
@@ -126,10 +126,10 @@ foreign import ccall unsafe "parquet_free_error"
 
 -- | Create a new Parquet writer
 newWriter ::
+    -- | Output file path
     FilePath ->
-    -- ^ Output file path
+    -- | Row group size
     Int ->
-    -- ^ Row group size
     IO ParquetWriter
 newWriter path rowGroupSize = do
     alloca $ \errPtr -> do
@@ -192,13 +192,11 @@ flush (ParquetWriter ptr) = do
     alloca $ \errPtr -> do
         poke errPtr nullPtr
         result <- c_parquet_writer_flush ptr errPtr
-        if result /= 0
-            then do
-                err <- peek errPtr
-                msg <- peekCString err
-                c_parquet_free_error err
-                throwIO $ ParquetError (T.pack msg)
-            else pure ()
+        when (result /= 0) $ do
+            err <- peek errPtr
+            msg <- peekCString err
+            c_parquet_free_error err
+            throwIO $ ParquetError (T.pack msg)
 
 -- | Close the writer and finalize the file
 close :: ParquetWriter -> IO ()
@@ -206,20 +204,18 @@ close (ParquetWriter ptr) = do
     alloca $ \errPtr -> do
         poke errPtr nullPtr
         result <- c_parquet_writer_close ptr errPtr
-        if result /= 0
-            then do
-                err <- peek errPtr
-                msg <- peekCString err
-                c_parquet_free_error err
-                throwIO $ ParquetError (T.pack msg)
-            else pure ()
+        when (result /= 0) $ do
+            err <- peek errPtr
+            msg <- peekCString err
+            c_parquet_free_error err
+            throwIO $ ParquetError (T.pack msg)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Helpers
 -- ═══════════════════════════════════════════════════════════════════════════
 
 withText :: Text -> (CString -> IO a) -> IO a
-withText t f = BS.useAsCString (TE.encodeUtf8 t) f
+withText t = BS.useAsCString (TE.encodeUtf8 t)
 
 withMaybeText :: Maybe Text -> (CString -> IO a) -> IO a
 withMaybeText Nothing f = f nullPtr

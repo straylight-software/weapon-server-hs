@@ -119,7 +119,7 @@ withStateWith dhallCache exeCache action =
                 chan <- newBroadcastTChanIO
                 _ <- Bus.subscribeAll bus $ \event ->
                     atomically $ writeTChan chan (toJSON event)
-                pty <- Pty.newManager dir
+                pty <- Pty.newManager lg dir
                 queue <- newTQueueIO
                 activeAgents <- newTVarIO Map.empty
                 idGen <- Identifier.newIdGenState

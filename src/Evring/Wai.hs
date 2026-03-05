@@ -62,7 +62,6 @@ import Control.Monad (replicateM, unless, void, when)
 import Data.ByteString (ByteString)
 import Data.Text qualified as T
 
-import Log qualified
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Char8 qualified as BC
@@ -77,6 +76,7 @@ import Data.Vault.Lazy qualified as Vault
 import Data.Vector qualified as V
 import Data.Word (Word32, Word8)
 import Foreign (Ptr, castPtr, copyBytes, free, mallocBytes)
+import Log qualified
 
 import Evring.Wai.Internal (
     checkKeepAliveHeaders,
@@ -314,10 +314,13 @@ waitForConnections serverStateRef settings lg = do
     waitLoop 0 = do
         state <- readIORef serverStateRef
         when (ssActiveConnections state > 0) $
-            Log.logWarn lg
-                ("Timeout waiting for connections, forcing shutdown with "
+            Log.logWarn
+                lg
+                ( "Timeout waiting for connections, forcing shutdown with "
                     <> T.pack (show (ssActiveConnections state))
-                    <> " active") ()
+                    <> " active"
+                )
+                ()
     waitLoop remaining = do
         state <- readIORef serverStateRef
         unless (ssActiveConnections state == 0) $ do

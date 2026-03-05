@@ -28,13 +28,14 @@ module Telemetry.Manager (
 ) where
 
 import Bus.Bus qualified as Bus
-import Util.Thread (forkLogged)
+import Config.Types (TelemetryConfig (..))
 import Control.Concurrent.STM
 import Control.Exception (throwIO)
 import Control.Monad (forM_, void)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
+import Data.Foldable (for_)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -44,11 +45,11 @@ import Data.Time.Clock.System (getSystemTime, systemNanoseconds, systemSeconds)
 import Log qualified
 import System.Directory (XdgDirectory (..), createDirectoryIfMissing, getXdgDirectory)
 import System.FilePath ((</>))
-import Config.Types (TelemetryConfig (..))
 import Telemetry.ParquetWAL qualified as WAL
 import Telemetry.R2 qualified as R2
 import Telemetry.Types
 import Util.Identifier qualified as Identifier
+import Util.Thread (forkLogged)
 
 -- | Manager configuration
 data TelemetryManagerConfig = TelemetryManagerConfig
@@ -98,17 +99,18 @@ data TelemetryManager = TelemetryManager
     -- ^ R2 handle (always present - config validated at startup)
     }
 
--- | Start the telemetry manager
--- 
--- FAILS with error if R2 config validation fails (missing required credentials).
--- The manager only exists when telemetry is enabled (caller checks Maybe TelemetryConfig).
+{- | Start the telemetry manager
+
+FAILS with error if R2 config validation fails (missing required credentials).
+The manager only exists when telemetry is enabled (caller checks Maybe TelemetryConfig).
+-}
 startManager ::
     TelemetryManagerConfig ->
     Bus.Bus ->
+    -- | Default project ID
     Text ->
-    -- ^ Default project ID
+    -- | Default directory
     Text ->
-    -- ^ Default directory
     IO TelemetryManager
 startManager config bus defaultProjectId defaultDirectory = do
     -- Determine WAL directory
@@ -127,7 +129,7 @@ startManager config bus defaultProjectId defaultDirectory = do
     -- FAIL if validation fails (no silent degradation - config errors are fatal)
     let lg = tmcLogger config
         telConfig = tmcTelemetryConfig config
-    
+
     r2Handle <- case R2.configFromDhall telConfig of
         Right r2Config -> do
             Log.logInfo lg "R2 replication enabled" ()
@@ -167,9 +169,7 @@ stopManager tm = do
     sessions <- readTVarIO (tmSessions tm)
     forM_ (Map.elems sessions) $ \sess -> do
         -- Stop R2 worker if running
-        case stR2Worker sess of
-            Just worker -> R2.stopReplicationWorker worker
-            Nothing -> pure ()
+        for_ (stR2Worker sess) R2.stopReplicationWorker
         -- Close WAL
         WAL.closeWAL (stWAL sess)
 
@@ -184,9 +184,10 @@ handleEvent ::
     Text ->
     Bus.BusEvent ->
     IO ()
-handleEvent walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent = void $
-    forkLogged (tmcLogger config) "telemetry-event-handler" $
-        handleEventSync walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent
+handleEvent walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent =
+    void $
+        forkLogged (tmcLogger config) "telemetry-event-handler" $
+            handleEventSync walDir config r2Handle sessionsVar idGen defaultProjectId defaultDirectory busEvent
 
 -- | Synchronous event handler
 handleEventSync ::

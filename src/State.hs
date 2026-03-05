@@ -75,8 +75,9 @@ mkAppStateWithCache proxy dhallCache homeDir storageDir projectID directory logg
 mkAppStateWithCaches :: Maybe Proxy.ProxyServer -> Dhall.DhallCache -> Formatter.ExeCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
 mkAppStateWithCaches = mkAppStateWithCachesQuiet False
 
--- | Initialize a new state with optional proxy, home directory override, shared caches
--- The Bool parameter is deprecated and ignored - logging is now controlled via Log.LogConfig
+{- | Initialize a new state with optional proxy, home directory override, shared caches
+The Bool parameter is deprecated and ignored - logging is now controlled via Log.LogConfig
+-}
 mkAppStateWithCachesQuiet :: Bool -> Maybe Proxy.ProxyServer -> Dhall.DhallCache -> Formatter.ExeCache -> Maybe FilePath -> FilePath -> Text -> Text -> Log.Logger -> IO AppState
 mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir projectID directory logger = do
     bus <- Bus.newBus
@@ -125,8 +126,9 @@ mkAppStateWithCachesQuiet _quiet proxy dhallCache exeCache homeDir storageDir pr
             , stTelemetry = telemetry
             }
 
--- | Initialize a new state with MITM proxy
--- Fails if the proxy port is already in use
+{- | Initialize a new state with MITM proxy
+Fails if the proxy port is already in use
+-}
 initialState :: FilePath -> Text -> Text -> Log.Logger -> IO AppState
 initialState storageDir projectID directory logger = do
     -- Start MITM proxy for LLM traffic surveillance

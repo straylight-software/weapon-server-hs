@@ -136,7 +136,6 @@ import Bus.Bus qualified as Bus
 import Config.Config qualified as Config
 import Control.Applicative ((<|>))
 import Control.Concurrent (myThreadId)
-import Util.Thread (forkLogged)
 import Control.Concurrent.STM
 import Control.Exception (AsyncException (ThreadKilled), IOException, SomeException, catch, fromException, try)
 import Control.Monad (forM, forM_, unless, when)
@@ -147,6 +146,7 @@ import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
+import Util.Thread (forkLogged)
 
 import Data.Foldable (for_)
 import Data.List (sortOn)
@@ -1523,9 +1523,10 @@ toolResultToMessage :: OpenRouter.ToolResultMessage -> OpenRouter.ChatMessage
 toolResultToMessage trm =
     OpenRouter.toolResultChatMessage (OpenRouter.trmToolCallId trm) (truncateToolOutputForLLM $ OpenRouter.trmContent trm)
 
--- | Load conversation history from storage (Critical #2)
--- NOTE: Catching NotFoundError and returning [] is intentional - a session
--- with no messages yet should return an empty list for conversation context.
+{- | Load conversation history from storage (Critical #2)
+NOTE: Catching NotFoundError and returning [] is intentional - a session
+with no messages yet should return an empty list for conversation context.
+-}
 loadConversationHistory :: AppState -> Text -> IO [Message]
 loadConversationHistory st sid = do
     let key = ["message", sid]
@@ -1655,8 +1656,10 @@ fileReadHandler mDir path = do
     -- Read file with error handling for TOCTOU races and permission errors
     readResult <- liftIO $ try @IOException $ BS.readFile fullPath
     bytes <- case readResult of
-        Left err -> throwError $ notFoundErrorWithMsg $
-            "Failed to read file: " <> T.pack (show err)
+        Left err ->
+            throwError $
+                notFoundErrorWithMsg $
+                    "Failed to read file: " <> T.pack (show err)
         Right content -> pure content
     case (hasNull bytes, TE.decodeUtf8' bytes) of
         (True, _) -> return $ FileContent ContentTypeBinary (encodeBase64 bytes)

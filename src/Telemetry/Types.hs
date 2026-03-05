@@ -49,7 +49,7 @@ type EventId = Text
 -- | Session identifier
 type SessionId = Text
 
--- | Project identifier  
+-- | Project identifier
 type ProjectId = Text
 
 -- | Rich metadata attached to each telemetry event

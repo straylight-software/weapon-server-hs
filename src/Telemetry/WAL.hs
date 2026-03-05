@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -53,9 +54,10 @@ module Telemetry.WAL (
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (Exception)
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Data.ByteString.Lazy qualified as LBS
 import Data.IORef
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -64,7 +66,7 @@ import Log qualified
 import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory)
 import System.FilePath ((</>))
 import System.IO (BufferMode (..), Handle, IOMode (..), hClose, hFlush, hSetBuffering, openFile)
-import System.Posix.IO (openFd, closeFd, defaultFileFlags, OpenMode(..))
+import System.Posix.IO (OpenMode (..), closeFd, defaultFileFlags, openFd)
 import System.Posix.Types (Fd)
 import System.Posix.Unistd (fileSynchronise)
 import Telemetry.Types (TelemetryEvent (..), eventToJSONL)
@@ -147,7 +149,7 @@ openWAL config sessionId = do
                 case readMaybe (T.unpack content) of
                     Just n -> pure n
                     Nothing -> do
-                        when (not (T.null (T.strip content))) $
+                        unless (T.null (T.strip content)) $
                             Log.logWarn logger ("Corrupted sequence file " <> T.pack seqFile <> ", content: " <> T.take 50 content <> " - resetting to 0") ()
                         pure 0
             else pure 0
@@ -162,7 +164,7 @@ openWAL config sessionId = do
                 case readMaybe (T.unpack content) of
                     Just n -> pure n
                     Nothing -> do
-                        when (not (T.null (T.strip content))) $
+                        unless (T.null (T.strip content)) $
                             Log.logWarn logger ("Corrupted high water mark file " <> T.pack hwmFile <> ", content: " <> T.take 50 content <> " - resetting to 0") ()
                         pure 0
             else pure 0
@@ -231,13 +233,12 @@ appendEvent wh event = do
 appendEventSync :: WALHandle -> TelemetryEvent -> IO Word64
 appendEventSync wh event = do
     seq' <- appendEvent wh event
-    when (walSyncOnWrite (whConfig wh)) $ do
-        withMVar (whCurrentSegment wh) $ \mSeg ->
-            case mSeg of
-                Just seg -> do
-                    hFlush (ssHandle seg)
-                    fileSynchronise (ssFd seg)
-                Nothing -> pure ()
+    when (walSyncOnWrite (whConfig wh)) $
+        withMVar (whCurrentSegment wh) $ \case
+            Just seg -> do
+                hFlush (ssHandle seg)
+                fileSynchronise (ssFd seg)
+            Nothing -> pure ()
     pure seq'
 
 -- | Get the high water mark (last replicated sequence number)
@@ -258,7 +259,7 @@ listUnreplicatedSegments wh = do
 
     parseSegmentFile :: FilePath -> (FilePath, Word64, Word64)
     parseSegmentFile name =
-        let segNum = maybe 0 id (readMaybe (takeWhile (/= '.') name))
+        let segNum = fromMaybe 0 (readMaybe (takeWhile (/= '.') name))
             segSize = fromIntegral $ walSegmentSize (whConfig wh)
             start = segNum * segSize
             end = start + segSize - 1
@@ -291,7 +292,7 @@ openSegmentForSeq wh seq' = do
     -- Open Handle for buffered writes
     h <- openFile segPath AppendMode
     hSetBuffering h (BlockBuffering (Just 65536))
-    
+
     -- Open separate Fd for fsync (same file, won't be closed by Handle)
     fd <- openFd segPath WriteOnly defaultFileFlags
 
@@ -303,5 +304,3 @@ openSegmentForSeq wh seq' = do
             , ssSegmentNum = segNum
             , ssEventCount = 0
             }
-
-

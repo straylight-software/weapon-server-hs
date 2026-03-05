@@ -50,7 +50,7 @@ This is useful for gracefully degrading when git is not installed.
 @
 status <- 'withGit' cache "unknown" $ do
     mStatus <- 'runGit' cache root ["status", "--porcelain"]
-    pure $ maybe "error" id mStatus
+    pure $ fromMaybe "error" mStatus
 @
 -}
 withGit :: ExeCache -> a -> IO a -> IO a

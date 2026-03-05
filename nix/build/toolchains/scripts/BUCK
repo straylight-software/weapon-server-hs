@@ -1,7 +1,13 @@
-# Haskell toolchain helper scripts
+# Toolchain helper scripts
 
 export_file(
     name = "ghc-pkg-id",
     src = "ghc-pkg-id",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "rustc-abs-outdir",
+    src = "rustc-abs-outdir",
     visibility = ["PUBLIC"],
 )

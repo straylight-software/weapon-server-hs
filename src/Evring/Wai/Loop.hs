@@ -63,8 +63,6 @@ import Control.Exception (bracket)
 import Data.Aeson (ToJSON)
 import Data.IORef
 import Data.Int (Int32, Int64)
-import GHC.Generics (Generic)
-import Katip (LogItem (..), PayloadSelection (..), ToObject (..))
 import Data.Primitive (
     MutablePrimArray,
     mutablePrimArrayContents,
@@ -77,6 +75,8 @@ import Data.Word (Word8)
 import Foreign (Ptr, castPtr, nullPtr)
 import Foreign.C.Types (CULLong (..))
 import GHC.Exts (RealWorld)
+import GHC.Generics (Generic)
+import Katip (LogItem (..), PayloadSelection (..), ToObject (..))
 import System.Posix.Types (Fd (..))
 
 import Log qualified
@@ -101,9 +101,12 @@ emptySlot = -1
 
 -- | Structured payload for orphan completion errors (indicates a bug)
 data OrphanCompletionPayload = OrphanCompletionPayload
-    { ocpSlot :: !Int         -- ^ The slot index that was already freed
-    , ocpResult :: !Int64     -- ^ The io_uring completion result
-    , ocpCapacity :: !Int     -- ^ Total slot capacity (for context)
+    { ocpSlot :: !Int
+    -- ^ The slot index that was already freed
+    , ocpResult :: !Int64
+    -- ^ The io_uring completion result
+    , ocpCapacity :: !Int
+    -- ^ Total slot capacity (for context)
     }
     deriving (Show, Generic, ToJSON)
 
@@ -160,8 +163,9 @@ withLoop logger ringSize action = do
 shutdown :: Loop -> IO ()
 shutdown Loop{..} = writeIORef loopRunning False
 
--- | Allocate a slot and register continuation
--- Returns Nothing if no slots available (capacity exhaustion)
+{- | Allocate a slot and register continuation
+Returns Nothing if no slots available (capacity exhaustion)
+-}
 {-# INLINE allocSlot #-}
 allocSlot :: Loop -> Cont -> IO (Maybe SlotId)
 allocSlot Loop{..} cont = do
@@ -185,8 +189,9 @@ freeSlot Loop{..} slot = do
     writePrimArray loopFreeList slot (fromIntegral oldHead)
     writeIORef loopFreeHead slot
 
--- | Submit accept and register continuation
--- Returns False if operation could not be submitted (capacity exhaustion)
+{- | Submit accept and register continuation
+Returns False if operation could not be submitted (capacity exhaustion)
+-}
 {-# INLINE ioAccept #-}
 ioAccept :: Loop -> Fd -> Ptr () -> Ptr () -> Cont -> IO Bool
 ioAccept loop@Loop{..} (Fd fd) addrBuf addrLenBuf cont = do
@@ -215,8 +220,9 @@ ioAccept loop@Loop{..} (Fd fd) addrBuf addrLenBuf cont = do
                     c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
                     pure True
 
--- | Submit recv and register continuation
--- Returns False if operation could not be submitted (capacity exhaustion)
+{- | Submit recv and register continuation
+Returns False if operation could not be submitted (capacity exhaustion)
+-}
 {-# INLINE ioRecv #-}
 ioRecv :: Loop -> Fd -> MutablePrimArray RealWorld Word8 -> Int -> Cont -> IO Bool
 ioRecv loop@Loop{..} (Fd fd) buf len cont = do
@@ -244,8 +250,9 @@ ioRecv loop@Loop{..} (Fd fd) buf len cont = do
                     c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
                     pure True
 
--- | Submit send (from pointer) and register continuation
--- Returns False if operation could not be submitted (capacity exhaustion)
+{- | Submit send (from pointer) and register continuation
+Returns False if operation could not be submitted (capacity exhaustion)
+-}
 {-# INLINE ioSend #-}
 ioSend :: Loop -> Fd -> Ptr Word8 -> Int -> Cont -> IO Bool
 ioSend loop@Loop{..} (Fd fd) ptr len cont = do
@@ -272,9 +279,10 @@ ioSend loop@Loop{..} (Fd fd) ptr len cont = do
                     c_hs_uring_sqe_set_data sqe (CULLong (fromIntegral slot))
                     pure True
 
--- | Submit close and register continuation
--- Returns False if operation could not be submitted (capacity exhaustion)
--- Note: If close fails to submit, the fd may leak. Callers should log this.
+{- | Submit close and register continuation
+Returns False if operation could not be submitted (capacity exhaustion)
+Note: If close fails to submit, the fd may leak. Callers should log this.
+-}
 {-# INLINE ioClose #-}
 ioClose :: Loop -> Fd -> Cont -> IO Bool
 ioClose loop@Loop{..} (Fd fd) cont = do
@@ -344,7 +352,8 @@ dispatch loop@Loop{..} (URing.IOCompletion (URing.IOOpId cid) (URing.IOResult re
             -- CRITICAL BUG: Completion arrived for slot that was already freed.
             -- This indicates double-free, use-after-free, or slot ID corruption.
             -- If you see this in logs, investigate immediately!
-            Log.logError loopLogger
+            Log.logError
+                loopLogger
                 "Orphan io_uring completion - slot already freed (BUG!)"
                 OrphanCompletionPayload
                     { ocpSlot = slot
