@@ -653,7 +653,7 @@
         "dirtyRev": "7bc4529859329dd114335f65ece2974baf043743-dirty",
         "dirtyShortRev": "7bc4529-dirty",
         "lastModified": 1772051893,
-        "narHash": "sha256-aTnTTaEbGh5tgCDBxesoPyONQE1wbXBqQnJCJtup70A=",
+        "narHash": "sha256-YeZnR5NFi4VaiuTZRDaLfm8FJ4e9eLQiZVU6WZil9Ps=",
         "type": "git",
         "url": "file:///home/b7r6/src/straylight/sensenet"
       },

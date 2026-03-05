@@ -46,6 +46,27 @@ in
       default = false;
       description = "Open firewall for weapon-server port";
     };
+
+    backend = lib.mkOption {
+      type = lib.types.enum [
+        "iouring"
+        "warp"
+      ];
+      default = "iouring";
+      description = "HTTP backend to use (iouring requires kernel 5.1+)";
+    };
+
+    cores = lib.mkOption {
+      type = lib.types.nullOr lib.types.int;
+      default = null;
+      description = "Number of cores to use (null = all available)";
+    };
+
+    quiet = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Suppress stdout logging (log to file only)";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -72,7 +93,21 @@ in
         User = cfg.user;
         Group = cfg.group;
         WorkingDirectory = cfg.workDir;
-        ExecStart = "${cfg.package}/bin/weapon-server";
+        ExecStart =
+          let
+            args = [
+              "--port"
+              (toString cfg.port)
+              "--backend"
+              cfg.backend
+            ]
+            ++ lib.optionals (cfg.cores != null) [
+              "--cores"
+              (toString cfg.cores)
+            ]
+            ++ lib.optionals cfg.quiet [ "--quiet" ];
+          in
+          "${cfg.package}/bin/weapon-server ${lib.escapeShellArgs args}";
         Restart = "on-failure";
         RestartSec = 5;
 
