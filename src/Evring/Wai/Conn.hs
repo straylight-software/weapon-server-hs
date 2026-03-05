@@ -39,6 +39,7 @@ import Control.Concurrent (forkIO)
 import Control.Exception (SomeException, catch)
 import Control.Monad (void)
 import Data.Bifunctor (first)
+import System.IO (hPutStrLn, stderr)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder qualified as Builder
@@ -176,21 +177,51 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
                                 -- Normal response handling
                                 -- Get send buffer from pool
                                 sendBuf <- acquireBuffer ctxSendPool
+                                let method = prMethod req
 
                                 -- Serialize response directly into send buffer
-                                respLen <- serializeResponseTo response (bufPtr sendBuf) (bufSize sendBuf)
+                                serializeResult <- serializeResponseTo method response (bufPtr sendBuf) (bufSize sendBuf)
 
-                                -- Determine if keep-alive
-                                let keepAlive = checkKeepAlive req
+                                case serializeResult of
+                                    Left (respSize, errMsg) -> do
+                                        -- Log the error to stderr
+                                        hPutStrLn stderr $ "[evring-wai] ERROR: " ++ errMsg
+                                        hPutStrLn stderr $ "[evring-wai] Response size: " ++ show respSize ++ " bytes, buffer limit: " ++ show (bufSize sendBuf) ++ " bytes"
 
-                                -- Submit send
-                                ioSend
-                                    loop
-                                    clientFd
-                                    (bufPtr sendBuf)
-                                    respLen
-                                    (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf keepAlive)
-                                pure Nothing
+                                        -- Send a 500 Internal Server Error response instead
+                                        let err500 = responseLBS status500 [(hContentType, "application/json")] "{\"error\":\"Response too large\"}"
+                                        -- Use GET for error response serialization (we want the body)
+                                        err500Result <- serializeResponseTo "GET" err500 (bufPtr sendBuf) (bufSize sendBuf)
+                                        case err500Result of
+                                            Left _ -> do
+                                                -- Even 500 error doesn't fit - close connection
+                                                hPutStrLn stderr "[evring-wai] CRITICAL: Even error response doesn't fit in buffer, closing connection"
+                                                releaseBuffer ctxSendPool sendBuf
+                                                releaseBuffer ctxRecvPool recvBuf
+                                                ioClose loop clientFd closeCont
+                                                pure Nothing
+                                            Right errLen -> do
+                                                -- Send the 500 error and close connection (don't keep-alive after error)
+                                                ioSend
+                                                    loop
+                                                    clientFd
+                                                    (bufPtr sendBuf)
+                                                    errLen
+                                                    (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf False)
+                                                pure Nothing
+
+                                    Right respLen -> do
+                                        -- Determine if keep-alive
+                                        let keepAlive = checkKeepAlive req
+
+                                        -- Submit send
+                                        ioSend
+                                            loop
+                                            clientFd
+                                            (bufPtr sendBuf)
+                                            respLen
+                                            (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf keepAlive)
+                                        pure Nothing
 
                 -- Check for ResponseRaw (WebSocket, etc.)
                 case response of
@@ -366,13 +397,15 @@ runApp app req = do
         (\(_ :: SomeException) -> pure ())
     fromMaybe (responseLBS status500 [] "Internal Server Error") <$> readIORef responseRef
 
--- | Serialize a response directly to a buffer, returns bytes written
+-- | Serialize a response directly to a buffer, returns bytes written or error
+-- The method parameter is used to determine if the body should be omitted (HEAD requests)
 {-# INLINE serializeResponseTo #-}
-serializeResponseTo :: Response -> Ptr Word8 -> Int -> IO Int
-serializeResponseTo resp bufPtr maxLen = do
+serializeResponseTo :: ByteString -> Response -> Ptr Word8 -> Int -> IO (Either (Int, String) Int)
+serializeResponseTo reqMethod resp bufPtr maxLen = do
     let (status, headers, withBody) = responseToStream resp
+        isHead = reqMethod == "HEAD"
 
-    -- Collect body
+    -- Collect body (needed to compute Content-Length even for HEAD)
     bodyRef <- newIORef mempty
     withBody $ \streamingBody ->
         streamingBody
@@ -384,6 +417,7 @@ serializeResponseTo resp bufPtr maxLen = do
         bodyLen = LBS.length body
 
     -- Build response directly
+    -- For HEAD requests, include Content-Length but omit body (RFC 9110)
     let !respBuilder =
             mconcat
                 [ Builder.byteString "HTTP/1.1 "
@@ -395,17 +429,17 @@ serializeResponseTo resp bufPtr maxLen = do
                 , Builder.byteString "Content-Length: "
                 , Builder.int64Dec bodyLen
                 , Builder.byteString "\r\nConnection: keep-alive\r\n\r\n"
-                , Builder.lazyByteString body
+                , if isHead then mempty else Builder.lazyByteString body
                 ]
         !respBytes = LBS.toStrict $ Builder.toLazyByteString respBuilder
         !len = BS.length respBytes
 
     if len > maxLen
-        then error "Response too large for buffer"
+        then pure $ Left (len, "Response too large for buffer: " ++ show len ++ " bytes > " ++ show maxLen ++ " byte limit")
         else do
             BSU.unsafeUseAsCStringLen respBytes $ \(src, srcLen) ->
                 copyBytes bufPtr (castPtr src) srcLen
-            pure len
+            pure $ Right len
 
 -- Note: formatHeader is imported from Evring.Wai.Internal
 
