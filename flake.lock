@@ -3,13 +3,13 @@
     "agenix": {
       "inputs": {
         "darwin": "darwin",
-        "home-manager": "home-manager",
+        "home-manager": "home-manager_2",
         "nixpkgs": [
           "sensenet",
           "nvidia-sdk",
           "nixpkgs"
         ],
-        "systems": "systems_2"
+        "systems": "systems_3"
       },
       "locked": {
         "lastModified": 1762618334,
@@ -205,6 +205,47 @@
         "nixpkgs-lib": "nixpkgs-lib_3"
       },
       "locked": {
+        "lastModified": 1768135262,
+        "narHash": "sha256-PVvu7OqHBGWN16zSi6tEmPwwHQ4rLPU9Plvs8/1TUBY=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "80daad04eddbbf5a4d883996a73f3f542fa437ac",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "flake-parts_5": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "sensenet",
+          "nix2gpu",
+          "nixified-ai",
+          "hercules-ci-effects",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1765495779,
+        "narHash": "sha256-MhA7wmo/7uogLxiewwRRmIax70g6q1U/YemqTGoFHlM=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "5635c32d666a59ec9a55cab87e898889869f7b71",
+        "type": "github"
+      },
+      "original": {
+        "id": "flake-parts",
+        "type": "indirect"
+      }
+    },
+    "flake-parts_6": {
+      "inputs": {
+        "nixpkgs-lib": "nixpkgs-lib_4"
+      },
+      "locked": {
         "lastModified": 1767602221,
         "narHash": "sha256-wl3P4WioICNY9SEvClT4JLAWFtItk3CbFNm/FmeeWlI=",
         "owner": "hercules-ci",
@@ -342,7 +383,53 @@
         "url": "ssh://git@github.com/straylight-software/haskemathesis.git"
       }
     },
+    "hercules-ci-effects": {
+      "inputs": {
+        "flake-parts": "flake-parts_5",
+        "nixpkgs": [
+          "sensenet",
+          "nix2gpu",
+          "nixified-ai",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1765774562,
+        "narHash": "sha256-UQhfCggNGDc7eam+EittlYmeW89CZVT1KkFIHZWBH7k=",
+        "owner": "hercules-ci",
+        "repo": "hercules-ci-effects",
+        "rev": "edcbb19948b6caf1700434e369fde6ff9e6a3c93",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "hercules-ci-effects",
+        "type": "github"
+      }
+    },
     "home-manager": {
+      "inputs": {
+        "nixpkgs": [
+          "sensenet",
+          "nix2gpu",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1768240557,
+        "narHash": "sha256-bVqJ34yMiiUQwYhjliiiN5LBH1Y+UldbIjNTCUtDdwE=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "b3f737e70fb9eef1d2308ea6738ffed5ae080f9b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
+    "home-manager_2": {
       "inputs": {
         "nixpkgs": [
           "sensenet",
@@ -362,6 +449,21 @@
       "original": {
         "owner": "nix-community",
         "repo": "home-manager",
+        "type": "github"
+      }
+    },
+    "import-tree": {
+      "locked": {
+        "lastModified": 1763762820,
+        "narHash": "sha256-ZvYKbFib3AEwiNMLsejb/CWs/OL/srFQ8AogkebEPF0=",
+        "owner": "vic",
+        "repo": "import-tree",
+        "rev": "3c23749d8013ec6daa1d7255057590e9ca726646",
+        "type": "github"
+      },
+      "original": {
+        "owner": "vic",
+        "repo": "import-tree",
         "type": "github"
       }
     },
@@ -397,16 +499,40 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1770034444,
-        "narHash": "sha256-MRQb1vb78XKrOqb4QbKD6SgJzNlBLwXbdVZwitSuO9c=",
+        "lastModified": 1772709733,
+        "narHash": "sha256-EcSan/F+IkIZ+ggVfVYtIM+iyq6zzck3O93aUDiwRr8=",
         "owner": "TraceMachina",
         "repo": "nativelink",
-        "rev": "85385e68271d78b2b72a24098202aade157a5553",
+        "rev": "86b86e15e8dcc3936a07d22feb10d088dc9ad4ae",
         "type": "github"
       },
       "original": {
         "owner": "TraceMachina",
         "repo": "nativelink",
+        "type": "github"
+      }
+    },
+    "nimi": {
+      "inputs": {
+        "nix2container": "nix2container_2",
+        "nixpkgs": [
+          "sensenet",
+          "nix2gpu",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1768238066,
+        "narHash": "sha256-prTeXJ5KHTlYJU42e8NEw5frYER8NeGcWU2EqlZE1kA=",
+        "owner": "weyl-ai",
+        "repo": "nimi",
+        "rev": "c1135f769558c7d3ae092cae9c1ee2812aa849ae",
+        "type": "github"
+      },
+      "original": {
+        "owner": "weyl-ai",
+        "ref": "baileylu/minimize-flake",
+        "repo": "nimi",
         "type": "github"
       }
     },
@@ -431,6 +557,91 @@
         "owner": "nlewo",
         "repo": "nix2container",
         "rev": "cc96df7c3747c61c584d757cfc083922b4f4b33e",
+        "type": "github"
+      }
+    },
+    "nix2container_2": {
+      "inputs": {
+        "nixpkgs": [
+          "sensenet",
+          "nix2gpu",
+          "nimi",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1767430085,
+        "narHash": "sha256-SiXJ6xv4pS2MDUqfj0/mmG746cGeJrMQGmoFgHLS25Y=",
+        "owner": "nlewo",
+        "repo": "nix2container",
+        "rev": "66f4b8a47e92aa744ec43acbb5e9185078983909",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nlewo",
+        "repo": "nix2container",
+        "type": "github"
+      }
+    },
+    "nix2gpu": {
+      "inputs": {
+        "flake-parts": "flake-parts_4",
+        "home-manager": "home-manager",
+        "import-tree": "import-tree",
+        "nimi": "nimi",
+        "nix2container": [
+          "sensenet",
+          "nix2gpu",
+          "nimi",
+          "nix2container"
+        ],
+        "nixified-ai": "nixified-ai",
+        "nixpkgs": [
+          "sensenet",
+          "nixpkgs"
+        ],
+        "systems": "systems_2",
+        "treefmt-nix": "treefmt-nix"
+      },
+      "locked": {
+        "lastModified": 1769165807,
+        "narHash": "sha256-MALi0mpKiY9gzpzPzjedKrglqUaeS4p64XuHUnNqL+c=",
+        "owner": "straylight-software",
+        "repo": "nix2gpu",
+        "rev": "c6391d52429db8ad38efb56d46bf691b11001438",
+        "type": "github"
+      },
+      "original": {
+        "owner": "straylight-software",
+        "repo": "nix2gpu",
+        "type": "github"
+      }
+    },
+    "nixified-ai": {
+      "inputs": {
+        "flake-parts": [
+          "sensenet",
+          "nix2gpu",
+          "flake-parts"
+        ],
+        "hercules-ci-effects": "hercules-ci-effects",
+        "nixpkgs": [
+          "sensenet",
+          "nix2gpu",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1767843980,
+        "narHash": "sha256-skl1BnMj8BkpFTFG0Ix+ejOU3dRAvHHBUhd/l7PhYVU=",
+        "owner": "nixified-ai",
+        "repo": "flake",
+        "rev": "4a0e94067f863de3a2711d48651e499cb51f337e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixified-ai",
+        "repo": "flake",
         "type": "github"
       }
     },
@@ -495,6 +706,21 @@
         "type": "github"
       }
     },
+    "nixpkgs-lib_4": {
+      "locked": {
+        "lastModified": 1765674936,
+        "narHash": "sha256-k00uTP4JNfmejrCLJOwdObYC9jHRrr/5M/a/8L2EIdo=",
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "rev": "2075416fcb47225d9b68ac469a5c4801a9c4dd85",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "type": "github"
+      }
+    },
     "nixpkgs_2": {
       "locked": {
         "lastModified": 1747852984,
@@ -530,7 +756,7 @@
     "nvidia-sdk": {
       "inputs": {
         "agenix": "agenix",
-        "flake-parts": "flake-parts_4",
+        "flake-parts": "flake-parts_6",
         "llvm-project": [
           "sensenet",
           "llvm-project"
@@ -583,7 +809,7 @@
         "haskemathesis": "haskemathesis",
         "nixpkgs": "nixpkgs",
         "sensenet": "sensenet",
-        "treefmt-nix": "treefmt-nix_2",
+        "treefmt-nix": "treefmt-nix_3",
         "weapon": "weapon"
       }
     },
@@ -640,26 +866,29 @@
         "ghc-source-gen-src": "ghc-source-gen-src",
         "llvm-project": "llvm-project",
         "nativelink": "nativelink",
+        "nix2gpu": "nix2gpu",
         "nixpkgs": [
           "nixpkgs"
         ],
         "nvidia-sdk": "nvidia-sdk",
         "purescript-overlay": "purescript-overlay",
         "rust-overlay": "rust-overlay_2",
-        "systems": "systems_3",
-        "treefmt-nix": "treefmt-nix"
+        "systems": "systems_4",
+        "treefmt-nix": "treefmt-nix_2"
       },
       "locked": {
-        "dirtyRev": "7bc4529859329dd114335f65ece2974baf043743-dirty",
-        "dirtyShortRev": "7bc4529-dirty",
-        "lastModified": 1772051893,
-        "narHash": "sha256-YeZnR5NFi4VaiuTZRDaLfm8FJ4e9eLQiZVU6WZil9Ps=",
+        "lastModified": 1772790316,
+        "narHash": "sha256-rBo48FGn2t0nh6Dtb28ui06+3UFPXsq8LUg1AMb7TU8=",
+        "ref": "feat/nativelink-isa-gcp",
+        "rev": "1fa98222f13e7d2576cef3bc4c788f42dbf23779",
+        "revCount": 60,
         "type": "git",
-        "url": "file:///home/b7r6/src/straylight/sensenet"
+        "url": "ssh://git@github.com/straylight-software/sensenet"
       },
       "original": {
+        "ref": "feat/nativelink-isa-gcp",
         "type": "git",
-        "url": "file:///home/b7r6/src/straylight/sensenet"
+        "url": "ssh://git@github.com/straylight-software/sensenet"
       }
     },
     "systems": {
@@ -679,16 +908,16 @@
     },
     "systems_2": {
       "locked": {
-        "lastModified": 1681028828,
-        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "lastModified": 1680978846,
+        "narHash": "sha256-Gtqg8b/v49BFDpDetjclCYXm8mAnTrUzR0JnE2nv5aw=",
         "owner": "nix-systems",
-        "repo": "default",
-        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "repo": "x86_64-linux",
+        "rev": "2ecfcac5e15790ba6ce360ceccddb15ad16d08a8",
         "type": "github"
       },
       "original": {
         "owner": "nix-systems",
-        "repo": "default",
+        "repo": "x86_64-linux",
         "type": "github"
       }
     },
@@ -707,7 +936,44 @@
         "type": "github"
       }
     },
+    "systems_4": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
     "treefmt-nix": {
+      "inputs": {
+        "nixpkgs": [
+          "sensenet",
+          "nix2gpu",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1768158989,
+        "narHash": "sha256-67vyT1+xClLldnumAzCTBvU0jLZ1YBcf4vANRWP3+Ak=",
+        "owner": "numtide",
+        "repo": "treefmt-nix",
+        "rev": "e96d59dff5c0d7fddb9d113ba108f03c3ef99eca",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "treefmt-nix",
+        "type": "github"
+      }
+    },
+    "treefmt-nix_2": {
       "inputs": {
         "nixpkgs": "nixpkgs_3"
       },
@@ -725,7 +991,7 @@
         "type": "github"
       }
     },
-    "treefmt-nix_2": {
+    "treefmt-nix_3": {
       "inputs": {
         "nixpkgs": [
           "nixpkgs"

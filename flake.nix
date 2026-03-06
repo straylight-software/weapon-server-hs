@@ -25,7 +25,7 @@
 
     # Sensenet - Buck2 build system integration
     sensenet = {
-      url = "git+file:///home/b7r6/src/straylight/sensenet";
+      url = "git+ssh://git@github.com/straylight-software/sensenet?ref=feat/nativelink-isa-gcp";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-parts.follows = "flake-parts";
     };
