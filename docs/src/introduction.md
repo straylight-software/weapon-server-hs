@@ -27,14 +27,16 @@ Weapon Server is a high-performance Haskell backend for AI coding agents. It pro
 
 Built on a custom `io_uring`-based HTTP server (`evring-wai`) for maximum throughput on Linux. Falls back to standard Warp on other platforms.
 
-**Benchmark** (aarch64, 12 cores, 10k requests @ 100 concurrent):
+**Benchmark** (aarch64, 20 cores, 100k requests):
 
-| Backend | req/s | p50 | p99 |
-|---------|-------|-----|-----|
-| io_uring | 37,765 | 1.2ms | 13ms |
-| warp | 35,048 | 1.4ms | 13ms |
+| Backend | Concurrency | req/s | p99 |
+|---------|-------------|-------|-----|
+| io_uring | 100 | 42,596 | 9ms |
+| warp | 100 | 40,388 | 13ms |
+| io_uring | 1000 | **53,350** | 189ms |
+| warp | 1000 | 32,427 | 373ms |
 
-io_uring provides ~8% higher throughput with slightly lower median latency.
+At high concurrency, io_uring delivers **64% higher throughput** and **2x better tail latency**.
 
 ### Functional Design
 

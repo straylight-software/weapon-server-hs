@@ -114,11 +114,12 @@ The server supports two HTTP backends:
 
 | Backend | Flag | Platform | Notes |
 |---------|------|----------|-------|
-| io_uring | `--backend iouring` | Linux 5.1+ | Default. ~38k req/s, 1.2ms p50 |
-| Warp | `--backend warp` | All | Fallback. ~35k req/s, 1.4ms p50 |
+| io_uring | `--backend iouring` | Linux 5.1+ | Default. 53k req/s @ c=1000 |
+| warp | `--backend warp` | All | Fallback. 32k req/s @ c=1000 |
 
-io_uring uses Linux kernel async I/O for ~8% higher throughput. The server
-automatically falls back to Warp on non-Linux platforms.
+io_uring uses Linux kernel async I/O for **64% higher throughput** at high
+concurrency (1000 connections) with 2x better tail latency. The advantage
+grows with connection count. Falls back to Warp on non-Linux platforms.
 
 ## `// environment`
 
