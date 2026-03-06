@@ -13,7 +13,8 @@
 
 Haskell implementation of the Weapon AI coding agent server. Full API parity
 with the TypeScript reference implementation, 100% endpoint coverage, property
-tested with Hedgehog.
+tested with Hedgehog. Features a custom `io_uring`-based HTTP backend for
+high-throughput request handling (~38k req/s on aarch64).
 
 ## `// quick start`
 
@@ -106,6 +107,18 @@ Tool execution flow:
 1. `Tool.Exec.executeToolUse` runs the tool and returns `ToolResult`
 1. results sent back as `tool_result` content blocks
 1. conversation continues until `stop_reason: "end_turn"`
+
+## `// http backends`
+
+The server supports two HTTP backends:
+
+| Backend | Flag | Platform | Notes |
+|---------|------|----------|-------|
+| io_uring | `--backend iouring` | Linux 5.1+ | Default. ~38k req/s, 1.2ms p50 |
+| Warp | `--backend warp` | All | Fallback. ~35k req/s, 1.4ms p50 |
+
+io_uring uses Linux kernel async I/O for ~8% higher throughput. The server
+automatically falls back to Warp on non-Linux platforms.
 
 ## `// environment`
 
