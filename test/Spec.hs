@@ -9,6 +9,7 @@ import Integration.HandlerSubprocessSpec qualified as HandlerSubprocessSpec
 import Integration.HaskemathesisTest qualified as HaskemathesisTest
 import Integration.StorageSpec qualified as StorageSpec
 import Integration.ToolExecSpec qualified as ToolExecSpec
+import Integration.VcsDiffSpec qualified as VcsDiffSpec
 import Property.AgentAgentProps qualified as AgentAgentProps
 import Property.AgentContextProps qualified as AgentContextProps
 import Property.AgentTypesProps qualified as AgentTypesProps
@@ -100,6 +101,7 @@ main = do
     providerTests <- testSpec "Provider Unit Tests" ProviderSpec.spec
     toolStreamingTests <- testSpec "Tool Streaming Unit Tests" ToolStreamingSpec.spec
     toolExecTests <- testSpec "Tool Exec Integration Tests" ToolExecSpec.spec
+    vcsDiffTests <- testSpec "VCS Diff Integration Tests" VcsDiffSpec.spec
     haskemathesisTests <- HaskemathesisTest.tests dhallCache
     storageIntegrationTests <- testSpec "Storage Integration Tests" StorageSpec.spec
     defaultMain $
@@ -178,6 +180,7 @@ main = do
             , toolExecTests
             , findSearchTests
             , handlerSubprocessTests
+            , vcsDiffTests
             , haskemathesisTests
             , storageIntegrationTests
             ]

@@ -99,6 +99,23 @@ prop_parseNumstatFilesPreservesPaths = property $ do
   where
     toFileLine (a, d, fname) = T.pack (show a) <> "\t" <> T.pack (show d) <> "\t" <> fname
 
+-- | Property: parseNumstatFiles infers file status from counts
+prop_parseNumstatFilesStatusInference :: Property
+prop_parseNumstatFilesStatusInference = property $ do
+    adds <- forAll $ Gen.int (Range.linear 0 1000)
+    dels <- forAll $ Gen.int (Range.linear 0 1000)
+    fname <- forAll genFilePath
+    let text = T.pack (show adds) <> "\t" <> T.pack (show dels) <> "\t" <> fname
+    let fileDiffs = Diff.parseNumstatFiles text
+    case fileDiffs of
+        [fd] -> Diff.fdiStatus fd === expectedStatus adds dels
+        _other -> failure
+  where
+    expectedStatus adds dels
+        | adds > 0 && dels == 0 = Diff.FileAdded
+        | adds == 0 && dels > 0 = Diff.FileDeleted
+        | otherwise = Diff.FileModified
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- readNumstatInt properties
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -219,8 +236,88 @@ prop_parseNumstatTotalsMatchFiles = property $ do
     toFileLine (a, d, fname) = T.pack (show a) <> "\t" <> T.pack (show d) <> "\t" <> fname
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- parseUnifiedDiffFiles properties
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- | Property: parseUnifiedDiffFiles counts additions and deletions in modified files
+prop_parseUnifiedDiffCountsModified :: Property
+prop_parseUnifiedDiffCountsModified = property $ do
+    fname <- forAll genFilePath
+    adds <- forAll $ Gen.list (Range.linear 0 15) genContentLine
+    dels <- forAll $ Gen.list (Range.linear 0 15) genContentLine
+    let block = renderModifiedDiff fname adds dels
+    case Diff.parseUnifiedDiffFiles block of
+        [fd] -> do
+            Diff.fdiFile fd === fname
+            Diff.fdiStatus fd === Diff.FileModified
+            Diff.fdiAdditions fd === listLength adds
+            Diff.fdiDeletions fd === listLength dels
+            Diff.fdiPatch fd === block
+        _other -> failure
+
+-- | Property: parseUnifiedDiffFiles detects added files
+prop_parseUnifiedDiffStatusAdded :: Property
+prop_parseUnifiedDiffStatusAdded = property $ do
+    fname <- forAll genFilePath
+    adds <- forAll $ Gen.list (Range.linear 1 10) genContentLine
+    let block = renderAddedDiff fname adds
+    case Diff.parseUnifiedDiffFiles block of
+        [fd] -> do
+            Diff.fdiFile fd === fname
+            Diff.fdiStatus fd === Diff.FileAdded
+            Diff.fdiAdditions fd === listLength adds
+            Diff.fdiDeletions fd === 0
+        _other -> failure
+
+-- | Property: parseUnifiedDiffFiles detects deleted files
+prop_parseUnifiedDiffStatusDeleted :: Property
+prop_parseUnifiedDiffStatusDeleted = property $ do
+    fname <- forAll genFilePath
+    dels <- forAll $ Gen.list (Range.linear 1 10) genContentLine
+    let block = renderDeletedDiff fname dels
+    case Diff.parseUnifiedDiffFiles block of
+        [fd] -> do
+            Diff.fdiFile fd === fname
+            Diff.fdiStatus fd === Diff.FileDeleted
+            Diff.fdiAdditions fd === 0
+            Diff.fdiDeletions fd === listLength dels
+        _other -> failure
+
+-- | Property: parseUnifiedDiffFiles detects renames and prefers new path
+prop_parseUnifiedDiffStatusRenamed :: Property
+prop_parseUnifiedDiffStatusRenamed = property $ do
+    oldName <- forAll genFilePath
+    newName <- forAll genFilePath
+    let block = renderRenamedDiff oldName newName
+    case Diff.parseUnifiedDiffFiles block of
+        [fd] -> do
+            Diff.fdiFile fd === newName
+            Diff.fdiStatus fd === Diff.FileRenamed
+            Diff.fdiAdditions fd === 1
+            Diff.fdiDeletions fd === 1
+        _other -> failure
+
+-- | Property: parseUnifiedDiffFiles preserves block count
+prop_parseUnifiedDiffFilesCount :: Property
+prop_parseUnifiedDiffFilesCount = property $ do
+    files <- forAll $ Gen.list (Range.linear 1 5) genFilePath
+    let blocks = map (\f -> renderModifiedDiff f ["add"] ["del"]) files
+    let parsed = Diff.parseUnifiedDiffFiles (T.intercalate "\n" blocks)
+    listLength parsed === listLength blocks
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Generators
 -- ═══════════════════════════════════════════════════════════════════════════
+
+genPathSegment :: Gen Text
+genPathSegment =
+    Gen.text (Range.linear 1 12) Gen.alphaNum
+
+genFilePath :: Gen Text
+genFilePath = do
+    dirs <- Gen.list (Range.linear 0 3) genPathSegment
+    fname <- genFileName
+    pure $ T.intercalate "/" (dirs <> [fname])
 
 genFileName :: Gen Text
 genFileName = do
@@ -244,6 +341,10 @@ genEntry = do
     dels <- Gen.int (Range.linear 0 1000)
     pure (adds, dels)
 
+genContentLine :: Gen Text
+genContentLine =
+    Gen.text (Range.linear 1 20) Gen.alphaNum
+
 -- | Generate valid numstat text
 genNumstatText :: Gen Text
 genNumstatText = do
@@ -251,6 +352,56 @@ genNumstatText = do
     pure $ T.intercalate "\n" (map toLine entries)
   where
     toLine (a, d, fname) = T.pack (show a) <> "\t" <> T.pack (show d) <> "\t" <> fname
+
+renderModifiedDiff :: Text -> [Text] -> [Text] -> Text
+renderModifiedDiff fname adds dels =
+    T.unlines $
+        [ "diff --git a/" <> fname <> " b/" <> fname
+        , "index 1111111..2222222 100644"
+        , "--- a/" <> fname
+        , "+++ b/" <> fname
+        , "@@ -1,1 +1,1 @@"
+        ]
+            <> map ("-" <>) dels
+            <> map ("+" <>) adds
+
+renderAddedDiff :: Text -> [Text] -> Text
+renderAddedDiff fname adds =
+    T.unlines $
+        [ "diff --git a/" <> fname <> " b/" <> fname
+        , "new file mode 100644"
+        , "index 0000000..1111111"
+        , "--- /dev/null"
+        , "+++ b/" <> fname
+        , "@@ -0,0 +1,1 @@"
+        ]
+            <> map ("+" <>) adds
+
+renderDeletedDiff :: Text -> [Text] -> Text
+renderDeletedDiff fname dels =
+    T.unlines $
+        [ "diff --git a/" <> fname <> " b/" <> fname
+        , "deleted file mode 100644"
+        , "index 1111111..0000000"
+        , "--- a/" <> fname
+        , "+++ /dev/null"
+        , "@@ -1,1 +0,0 @@"
+        ]
+            <> map ("-" <>) dels
+
+renderRenamedDiff :: Text -> Text -> Text
+renderRenamedDiff oldName newName =
+    T.unlines $
+        [ "diff --git a/" <> oldName <> " b/" <> newName
+        , "similarity index 100%"
+        , "rename from " <> oldName
+        , "rename to " <> newName
+        , "--- a/" <> oldName
+        , "+++ b/" <> newName
+        , "@@ -1,1 +1,1 @@"
+        , "-old"
+        , "+new"
+        ]
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Test tree
@@ -272,6 +423,7 @@ tests =
             , testProperty "parse numstat files binary" prop_parseNumstatFilesBinary
             , testProperty "parse numstat files empty" prop_parseNumstatFilesEmpty
             , testProperty "parse numstat files preserves paths" prop_parseNumstatFilesPreservesPaths
+            , testProperty "parse numstat files infers status" prop_parseNumstatFilesStatusInference
             ]
         , testGroup
             "readNumstatInt"
@@ -295,5 +447,13 @@ tests =
             "consistency"
             [ testProperty "file count consistent" prop_parseNumstatFilesCountConsistent
             , testProperty "totals match files" prop_parseNumstatTotalsMatchFiles
+            ]
+        , testGroup
+            "parseUnifiedDiffFiles"
+            [ testProperty "counts additions/deletions for modified files" prop_parseUnifiedDiffCountsModified
+            , testProperty "detects added files" prop_parseUnifiedDiffStatusAdded
+            , testProperty "detects deleted files" prop_parseUnifiedDiffStatusDeleted
+            , testProperty "detects renamed files" prop_parseUnifiedDiffStatusRenamed
+            , testProperty "preserves diff block count" prop_parseUnifiedDiffFilesCount
             ]
         ]

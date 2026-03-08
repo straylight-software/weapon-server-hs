@@ -297,6 +297,7 @@ test-suite weapon-server-test
     Integration.HaskemathesisTest
     Integration.StorageSpec
     Integration.ToolExecSpec
+    Integration.VcsDiffSpec
     Property.AgentAgentProps
     Property.AgentContextProps
     Property.AgentTypesProps

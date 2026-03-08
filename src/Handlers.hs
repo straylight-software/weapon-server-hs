@@ -618,8 +618,8 @@ sessionDiffHandler st sid _mDir _mMessageID = do
     toApiFileDiff fd =
         FileDiff
             { fdFile = Diff.fdiFile fd
-            , fdBefore = "" -- Would need full file content diff to populate
-            , fdAfter = "" -- Would need full file content diff to populate
+            , fdBefore = fromMaybe "" (Diff.fdiBefore fd)
+            , fdAfter = fromMaybe "" (Diff.fdiAfter fd)
             , fdAdditions = Diff.fdiAdditions fd
             , fdDeletions = Diff.fdiDeletions fd
             , fdStatus = Just $ inferStatus fd
