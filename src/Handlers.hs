@@ -65,6 +65,9 @@ module Handlers (
     sessionMessagePartDeleteHandler,
     sessionMessagePartUpdateHandler,
     sessionPromptAsyncHandler,
+
+    -- * Internal
+    loadConversationHistory,
     startPromptAsyncWorker,
 
     -- * Infrastructure Handlers
@@ -146,7 +149,6 @@ import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as B64
-
 import Data.Foldable (for_)
 import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
@@ -165,6 +167,7 @@ import Health.Build qualified as HealthBuild
 import Katip qualified
 import LLM.Anthropic qualified as Anthropic
 import LLM.OpenRouter qualified as OpenRouter
+import LLM.OpenRouter.History qualified as ORHistory
 import LLM.Types qualified as LLMTypes
 import Log qualified
 import Lsp.Store qualified as LspStore
@@ -841,7 +844,7 @@ createMessageIO st sid input = do
     let rawParts = map unPartInput (cmiParts input)
 
     -- Extract user text for logging
-    let userText = extractUserText rawParts
+    let userText = Parts.extractUserText rawParts
     Log.logMsg lg Katip.InfoS $ "create session=" <> sid <> " model=" <> fullModelId <> " agent=" <> agentName <> " text=" <> T.take 50 userText
 
     -- Publish session.status busy event (Critical for TUI Ctrl+C support)
@@ -1010,7 +1013,7 @@ createMessageIO st sid input = do
 
                         -- Critical #2: Load conversation history and send to LLM
                         priorMsgs <- loadConversationHistory st sid
-                        let historyMessages = map messageToOpenRouter priorMsgs
+                        let historyMessages = concatMap (ORHistory.messageToOpenRouterWith truncateToolOutputForLLM) priorMsgs
 
                         -- Major #7: Add system prompt if agent has one
                         let systemMessage = case systemPrompt of
@@ -1422,32 +1425,6 @@ appendPromptAsyncIndex storage sid reqId = do
         next = if reqId `elem` ids then ids else ids ++ [reqId]
     Storage.write storage (PromptAsync.promptAsyncIndexKey sid) next
 
--- | Extract text content from user message parts
-extractUserText :: [Value] -> Text
-extractUserText parts = T.intercalate "\n" $ concatMap extractTextPart parts
-  where
-    extractTextPart (Object obj) = case KM.lookup "type" obj of
-        Just (String "text") -> case KM.lookup "text" obj of
-            Just (String txt) -> [txt]
-            Just (Object _) -> []
-            Just (Array _) -> []
-            Just (Number _) -> []
-            Just (Bool _) -> []
-            Just Null -> []
-            Nothing -> []
-        Just (String _) -> []
-        Just (Object _) -> []
-        Just (Array _) -> []
-        Just (Number _) -> []
-        Just (Bool _) -> []
-        Just Null -> []
-        Nothing -> []
-    extractTextPart (Array _) = []
-    extractTextPart (String _) = []
-    extractTextPart (Number _) = []
-    extractTextPart (Bool _) = []
-    extractTextPart Null = []
-
 -- | Generate a unique part/tool ID using lexicographically sortable format
 genId :: Identifier.IdGenState -> IO Text
 genId idGen = Identifier.ascendingWithPrefix idGen "part"
@@ -1506,19 +1483,14 @@ toolResultToMessage trm =
 loadConversationHistory :: AppState -> Text -> IO [Message]
 loadConversationHistory st sid = do
     let key = ["message", sid]
-    (Storage.list (stStorage st) key >>= mapM (Storage.read (stStorage st)))
-        `catch` \(Storage.NotFoundError _) -> return []
-
--- | Convert a stored Message to OpenRouter.Message format (Critical #2)
-messageToOpenRouter :: Message -> OpenRouter.ChatMessage
-messageToOpenRouter msg =
-    let role = case messageInfoRole (msgInfo msg) of
-            "user" -> OpenRouter.User
-            "assistant" -> OpenRouter.Assistant
-            "system" -> OpenRouter.System
-            _otherRole -> OpenRouter.User -- fallback for any other role string
-        content = extractUserText (msgParts msg)
-     in OpenRouter.simpleMessage role content
+    messages <-
+        (Storage.list (stStorage st) key >>= mapM (Storage.read (stStorage st)))
+            `catch` \(Storage.NotFoundError _) -> return []
+    let rolePriority :: Text -> Int
+        rolePriority "user" = 0
+        rolePriority "assistant" = 1
+        rolePriority _ = 2
+    pure $ sortOn (\m -> (messageInfoCreatedTime (msgInfo m), rolePriority (messageInfoRole (msgInfo m)))) messages
 
 {- | Mark message as complete and publish idle event
 Minor #8: parentID now correctly references the user message
@@ -2086,7 +2058,7 @@ chatWithOpenRouter storage model message = do
                 Left err -> return $ errorResponse err
                 Right resp ->
                     let content = case OpenRouter.respChoices resp of
-                            (c : _) -> fromMaybe "" (OpenRouter.msgContent (OpenRouter.choiceMessage c))
+                            (c : _) -> fromMaybe "" (OpenRouter.messageContentText (OpenRouter.choiceMessage c))
                             [] -> ""
                      in return $
                             object

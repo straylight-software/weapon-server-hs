@@ -94,6 +94,7 @@ library
     Json.Strict
     LLM.Anthropic
     LLM.OpenRouter
+    LLM.OpenRouter.History
     LLM.Types
     Log
     Lsp.Store
@@ -338,6 +339,7 @@ test-suite weapon-server-test
     Property.MiddlewareProps
     Property.OAuthProps
     Property.OpenApiProps
+    Property.OpenRouterHistoryProps
     Property.OpenRouterProps
     Property.PathProps
     Property.ProjectDiscoveryProps

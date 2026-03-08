@@ -53,11 +53,26 @@ genToolResultMessage =
         <$> genNonEmptyText
         <*> genText
 
+genContentPart :: Gen ContentPart
+genContentPart =
+    Gen.choice
+        [ ContentPartText <$> genText
+        , ContentPartImageUrl <$> genNonEmptyText
+        , ContentPartFile <$> genNonEmptyText <*> genNonEmptyText <*> Gen.maybe genText
+        ]
+
+genContent :: Gen Content
+genContent =
+    Gen.choice
+        [ ContentText <$> genText
+        , ContentParts <$> Gen.list (Range.linear 0 4) genContentPart
+        ]
+
 genMessage :: Gen Message
 genMessage =
     Message
         <$> genRole
-        <*> Gen.maybe genText
+        <*> Gen.maybe genContent
         <*> Gen.maybe (Gen.list (Range.linear 1 3) genToolCall)
 
 genToolFunction :: Gen ToolFunction
@@ -296,7 +311,7 @@ prop_simpleMessageStructure = property $ do
     case msg of
         RegularMessage m -> do
             msgRole m === role
-            msgContent m === Just content
+            msgContent m === Just (ContentText content)
             msgToolCalls m === Nothing
         ToolResult _ -> failure
 
@@ -309,6 +324,75 @@ prop_toolResultMessageStructure = property $ do
     trmRole msg === "tool"
     trmToolCallId msg === callId
     trmContent msg === content
+
+-- | Property: Content JSON round-trip for mixed content parts
+prop_contentRoundtripMixedParts :: Property
+prop_contentRoundtripMixedParts = property $ do
+    txt1 <- forAll genText
+    txt2 <- forAll genText
+    url1 <- forAll genNonEmptyText
+    url2 <- forAll genNonEmptyText
+    mime <- forAll genNonEmptyText
+    filename <- forAll (Gen.maybe genText)
+    let content =
+            ContentParts
+                [ ContentPartText txt1
+                , ContentPartFile url1 mime filename
+                , ContentPartImageUrl url2
+                , ContentPartText txt2
+                ]
+    let json = encode content
+    case decode json of
+        Nothing -> failure
+        Just content' -> content === content'
+
+-- | Property: Content parsing rejects malformed parts
+prop_contentRejectsMalformedParts :: Property
+prop_contentRejectsMalformedParts = property $ do
+    let badImage = "[{\"type\":\"image_url\"}]"
+    let badFile = "[{\"type\":\"file\",\"file\":{\"mime\":\"text/plain\"}}]"
+    let badType = "[{\"type\":\"unknown\",\"text\":\"x\"}]"
+    (decode badImage :: Maybe Content) === Nothing
+    (decode badFile :: Maybe Content) === Nothing
+    (decode badType :: Maybe Content) === Nothing
+
+-- | Property: messageContentText only uses text parts
+prop_messageContentTextFromParts :: Property
+prop_messageContentTextFromParts = property $ do
+    txt1 <- forAll genText
+    txt2 <- forAll genText
+    let msg =
+            Message
+                { msgRole = User
+                , msgContent =
+                    Just
+                        ( ContentParts
+                            [ ContentPartImageUrl "https://example.com/x.png"
+                            , ContentPartText txt1
+                            , ContentPartFile "https://example.com/y.pdf" "application/pdf" Nothing
+                            , ContentPartText txt2
+                            ]
+                        )
+                , msgToolCalls = Nothing
+                }
+    messageContentText msg === Just (txt1 <> "\n" <> txt2)
+
+-- | Property: messageContentText returns Nothing when no text parts exist
+prop_messageContentTextEmpty :: Property
+prop_messageContentTextEmpty = property $ do
+    let msg =
+            Message
+                { msgRole = User
+                , msgContent =
+                    Just
+                        ( ContentParts
+                            [ ContentPartImageUrl "https://example.com/x.png"
+                            , ContentPartFile "https://example.com/y.pdf" "application/pdf" Nothing
+                            ]
+                        )
+                , msgToolCalls = Nothing
+                }
+    messageContentText msg === Nothing
 
 -- ============================================================================
 -- Test Tree
@@ -343,5 +427,9 @@ tests =
             "Message Helpers"
             [ testProperty "simpleMessage structure" prop_simpleMessageStructure
             , testProperty "toolResultMessage structure" prop_toolResultMessageStructure
+            , testProperty "content roundtrip mixed parts" prop_contentRoundtripMixedParts
+            , testProperty "content rejects malformed parts" prop_contentRejectsMalformedParts
+            , testProperty "messageContentText extracts text parts" prop_messageContentTextFromParts
+            , testProperty "messageContentText empty when no text" prop_messageContentTextEmpty
             ]
         ]

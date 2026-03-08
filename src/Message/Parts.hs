@@ -20,12 +20,14 @@ module Message.Parts (
     partId,
     mergePart,
     partExists,
+    extractUserText,
 ) where
 
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KM
 import Data.List (find)
 import Data.Text (Text)
+import Data.Text qualified as T
 
 {- | Find a part by its ID in a list of parts.
 
@@ -149,3 +151,29 @@ Object (fromList [("a",1),("b",3)])
 mergePart :: Value -> Value -> Value
 mergePart (Object old) (Object new) = Object (KM.union new old)
 mergePart _ new = new
+
+-- | Extract text content from user message parts.
+extractUserText :: [Value] -> Text
+extractUserText parts = T.intercalate "\n" $ concatMap extractTextPart parts
+  where
+    extractTextPart (Object obj) = case KM.lookup "type" obj of
+        Just (String "text") -> case KM.lookup "text" obj of
+            Just (String txt) -> [txt]
+            Just (Object _) -> []
+            Just (Array _) -> []
+            Just (Number _) -> []
+            Just (Bool _) -> []
+            Just Null -> []
+            Nothing -> []
+        Just (String _) -> []
+        Just (Object _) -> []
+        Just (Array _) -> []
+        Just (Number _) -> []
+        Just (Bool _) -> []
+        Just Null -> []
+        Nothing -> []
+    extractTextPart (Array _) = []
+    extractTextPart (String _) = []
+    extractTextPart (Number _) = []
+    extractTextPart (Bool _) = []
+    extractTextPart Null = []

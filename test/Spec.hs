@@ -45,6 +45,7 @@ import Property.MessageProps qualified as MessageProps
 import Property.MessageTypesProps qualified as MessageTypesProps
 import Property.MiddlewareProps qualified as MiddlewareProps
 import Property.OAuthProps qualified as OAuthProps
+import Property.OpenRouterHistoryProps qualified as OpenRouterHistoryProps
 import Property.OpenRouterProps qualified as OpenRouterProps
 import Property.PathProps qualified as PathProps
 import Property.ProjectDiscoveryProps qualified as ProjectDiscoveryProps
@@ -138,6 +139,7 @@ main = do
                 , MessagePartProps.tests
                 , MessageTypesProps.tests
                 , OAuthProps.tests
+                , OpenRouterHistoryProps.tests
                 , LLMProps.tests
                 , OpenRouterProps.tests
                 , LspProps.tests

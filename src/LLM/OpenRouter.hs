@@ -58,6 +58,8 @@ module LLM.OpenRouter (
     Message (..),
     ChatMessage (..),
     Role (..),
+    Content (..),
+    ContentPart (..),
 
     -- * Tool Types
     Tool (..),
@@ -68,9 +70,12 @@ module LLM.OpenRouter (
 
     -- * Message Helpers
     simpleMessage,
+    messageWithContent,
     toolResultMessage,
     assistantMessageWithTools,
     toolResultChatMessage,
+    contentToText,
+    messageContentText,
 
     -- * Tool Conversion
     toolDefToOpenAI,
@@ -281,6 +286,59 @@ instance ToJSON ChatMessage where
     toJSON (RegularMessage m) = toJSON m
     toJSON (ToolResult tr) = toJSON tr
 
+data ContentPart
+    = ContentPartText Text
+    | ContentPartImageUrl Text
+    | ContentPartFile Text Text (Maybe Text)
+    deriving (Eq, Show, Generic)
+
+instance ToJSON ContentPart where
+    toJSON (ContentPartText txt) =
+        object ["type" .= ("text" :: Text), "text" .= txt]
+    toJSON (ContentPartImageUrl url) =
+        object
+            [ "type" .= ("image_url" :: Text)
+            , "image_url" .= object ["url" .= url]
+            ]
+    toJSON (ContentPartFile url mime filename) =
+        object
+            [ "type" .= ("file" :: Text)
+            , "file"
+                .= object
+                    ( [ "url" .= url
+                      , "mime" .= mime
+                      ]
+                        ++ maybe [] (\name -> ["filename" .= name]) filename
+                    )
+            ]
+
+instance FromJSON ContentPart where
+    parseJSON = withObject "ContentPart" $ \v -> do
+        typ <- v .: "type"
+        case typ :: Text of
+            "text" -> ContentPartText <$> v .: "text"
+            "image_url" -> do
+                img <- v .: "image_url"
+                ContentPartImageUrl <$> img .: "url"
+            "file" -> do
+                f <- v .: "file"
+                ContentPartFile <$> f .: "url" <*> f .: "mime" <*> f .:? "filename"
+            _other -> fail "Unknown content part type"
+
+data Content
+    = ContentText Text
+    | ContentParts [ContentPart]
+    deriving (Eq, Show, Generic)
+
+instance ToJSON Content where
+    toJSON (ContentText txt) = String txt
+    toJSON (ContentParts parts) = toJSON parts
+
+instance FromJSON Content where
+    parseJSON v@(String _) = ContentText <$> parseJSON v
+    parseJSON v@(Array _) = ContentParts <$> parseJSON v
+    parseJSON _other = fail "Invalid content"
+
 {- | A chat message in OpenAI format.
 
 In OpenAI's format, content can be null when tool_calls are present.
@@ -290,8 +348,8 @@ separate content blocks.
 data Message = Message
     { msgRole :: Role
     -- ^ Who sent this message
-    , msgContent :: Maybe Text
-    -- ^ Text content (may be Nothing when tool_calls present)
+    , msgContent :: Maybe Content
+    -- ^ Content (text or multi-part)
     , msgToolCalls :: Maybe [ToolCall]
     -- ^ Tool calls requested by the assistant
     }
@@ -323,10 +381,19 @@ instance FromJSON Message where
 ==== Example
 
 >>> simpleMessage User "Hello, how are you?"
-RegularMessage (Message {msgRole = User, msgContent = Just "Hello, how are you?", msgToolCalls = Nothing})
+RegularMessage (Message {msgRole = User, msgContent = Just (ContentText "Hello, how are you?"), msgToolCalls = Nothing})
 -}
 simpleMessage :: Role -> Text -> ChatMessage
 simpleMessage role content =
+    RegularMessage $
+        Message
+            { msgRole = role
+            , msgContent = Just (ContentText content)
+            , msgToolCalls = Nothing
+            }
+
+messageWithContent :: Role -> Content -> ChatMessage
+messageWithContent role content =
     RegularMessage $
         Message
             { msgRole = role
@@ -359,7 +426,7 @@ assistantMessageWithTools content toolCalls =
     RegularMessage $
         Message
             { msgRole = Assistant
-            , msgContent = content
+            , msgContent = ContentText <$> content
             , msgToolCalls = if null toolCalls then Nothing else Just toolCalls
             }
 
@@ -371,6 +438,15 @@ for direct inclusion in the messages list.
 toolResultChatMessage :: Text -> Text -> ChatMessage
 toolResultChatMessage toolCallId content =
     ToolResult $ toolResultMessage toolCallId content
+
+contentToText :: Content -> Maybe Text
+contentToText (ContentText txt) = Just txt
+contentToText (ContentParts parts) =
+    let texts = [t | ContentPartText t <- parts]
+     in if null texts then Nothing else Just (T.intercalate "\n" texts)
+
+messageContentText :: Message -> Maybe Text
+messageContentText msg = msgContent msg >>= contentToText
 
 -- ============================================================================
 -- Tool Definition Types

@@ -67,6 +67,47 @@ The actual LLM is never called in these tests.
 testModel :: Maybe ModelSelection
 testModel = Just (ModelSelection "anthropic" "test-model")
 
+mkUserMessageWithTime :: Text -> Text -> Double -> Message
+mkUserMessageWithTime msgId sessionId created =
+    Message
+        { msgInfo =
+            UserInfo
+                UserMessageInfo
+                    { umiId = msgId
+                    , umiSessionId = sessionId
+                    , umiTime = MessageTime created Nothing
+                    , umiAgent = "agent"
+                    , umiModel = ModelSelection "openrouter" "test"
+                    }
+        , msgParts = []
+        }
+
+mkAssistantMessageWithTime :: Text -> Text -> Double -> Text -> Message
+mkAssistantMessageWithTime msgId sessionId created parentId =
+    Message
+        { msgInfo =
+            AssistantInfo
+                AssistantMessageInfo
+                    { amiId = msgId
+                    , amiSessionId = sessionId
+                    , amiTime = MessageTime created Nothing
+                    , amiParentId = parentId
+                    , amiModelId = "test"
+                    , amiProviderId = "openrouter"
+                    , amiMode = "normal"
+                    , amiAgent = "agent"
+                    , amiPath = MessagePath "/tmp" "/tmp"
+                    , amiCost = 0
+                    , amiTokens = MessageTokens Nothing 0 0 0 (TokenCache 0 0)
+                    , amiSummary = Nothing
+                    , amiVariant = Nothing
+                    , amiFinish = Nothing
+                    , amiError = Nothing
+                    , amiStructured = Nothing
+                    }
+        , msgParts = []
+        }
+
 data ProjectHandlersResult = ProjectHandlersResult
     { phrListed :: !(Either ServerError [Project])
     , phrCurrent :: !(Either ServerError Project)
@@ -778,6 +819,36 @@ prop_sameTimestampUserBeforeAssistant dhallCache exeCache = property $ do
                     annotate $ "Expected [user, assistant, ...] but got: " ++ show roles
                     failure
 
+-- | Property: loadConversationHistory sorts by created time then role priority.
+prop_loadConversationHistoryOrdered :: CachedProperty
+prop_loadConversationHistoryOrdered dhallCache exeCache = property $ do
+    sessionSuffix <- forAll $ Gen.text (Range.linear 6 10) Gen.alphaNum
+    t1 <- forAll $ Gen.double (Range.linearFrac 0 10000)
+    delta <- forAll $ Gen.double (Range.linearFrac 0.001 1000)
+    let t2 = t1 + delta
+    let sessionId = "history_order_" <> sessionSuffix
+    result <- evalIO $ withStateWith dhallCache exeCache $ \st -> do
+        let u1 = mkUserMessageWithTime "u1" sessionId t1
+        let a1 = mkAssistantMessageWithTime "a1" sessionId t1 "u1"
+        let u2 = mkUserMessageWithTime "u2" sessionId t2
+        let a2 = mkAssistantMessageWithTime "a2" sessionId t2 "u2"
+        Storage.write (stStorage st) ["message", sessionId, "a2"] a2
+        Storage.write (stStorage st) ["message", sessionId, "u2"] u2
+        Storage.write (stStorage st) ["message", sessionId, "a1"] a1
+        Storage.write (stStorage st) ["message", sessionId, "u1"] u1
+        loadConversationHistory st sessionId
+    case result of
+        [m1, m2, m3, m4] -> do
+            messageInfoRole (msgInfo m1) === "user"
+            messageInfoRole (msgInfo m2) === "assistant"
+            messageInfoRole (msgInfo m3) === "user"
+            messageInfoRole (msgInfo m4) === "assistant"
+            messageInfoCreatedTime (msgInfo m1) === t1
+            messageInfoCreatedTime (msgInfo m2) === t1
+            messageInfoCreatedTime (msgInfo m3) === t2
+            messageInfoCreatedTime (msgInfo m4) === t2
+        _other -> failure
+
 {- | Property: Message events are forwarded from bus to eventChan (SSE delivery path).
 This verifies the State.hs subscription that forwards bus events to eventChan,
 which is what SSE handlers read from.
@@ -1387,6 +1458,7 @@ tests dhallCache exeCache =
         , testProperty "session message create publishes events" (prop_sessionMessageCreatePublishesEvents dhallCache exeCache)
         , testProperty "session messages ordered correctly" (prop_sessionMessagesOrderedCorrectly dhallCache exeCache)
         , testProperty "same timestamp user before assistant" (prop_sameTimestampUserBeforeAssistant dhallCache exeCache)
+        , testProperty "loadConversationHistory ordered" (prop_loadConversationHistoryOrdered dhallCache exeCache)
         , testProperty "message events forwarded to eventChan" (prop_messageEventsForwardedToEventChan dhallCache exeCache)
         , testProperty "session.status events published" (prop_sessionStatusEventsPublished dhallCache exeCache)
         , testProperty "session message part handlers" (prop_sessionMessagePartHandlers dhallCache exeCache)
