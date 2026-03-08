@@ -65,10 +65,9 @@ module Global.Event (
     heartbeatIntervalMicros,
 ) where
 
-import Control.Concurrent (forkIO, myThreadId, threadDelay)
+import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, catch)
-import Control.Monad (forever)
+import Control.Exception (SomeException, catch, finally)
 import Data.Aeson (Value, encode, object, (.=))
 import Data.ByteString.Builder (Builder, lazyByteString, string8)
 import Data.ByteString.Lazy qualified as BSL
@@ -223,6 +222,29 @@ formatSSEMessage jsonBytes =
     , string8 "\n\n"
     ]
 
+globalConnectedValue :: Text -> Value
+globalConnectedValue directory =
+    wrapGlobalEvent directory "server.connected" (object [])
+
+globalHeartbeatValue :: Text -> Value
+globalHeartbeatValue directory =
+    wrapGlobalEvent directory "server.heartbeat" (object [])
+
+globalConnectedBytes :: Text -> BSL.ByteString
+globalConnectedBytes = encode . globalConnectedValue
+
+globalHeartbeatBytes :: Text -> BSL.ByteString
+globalHeartbeatBytes = encode . globalHeartbeatValue
+
+globalTransformBytes :: Text -> Value -> BSL.ByteString
+globalTransformBytes directory = encode . wrapEventPayload directory
+
+rawConnectedBytes :: BSL.ByteString
+rawConnectedBytes = serverConnectedRaw
+
+rawHeartbeatBytes :: BSL.ByteString
+rawHeartbeatBytes = encode serverHeartbeatRaw
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Internal Helpers
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -260,17 +282,27 @@ startHeartbeat ::
     (Builder -> IO ()) ->
     -- | SSE flush function
     IO () ->
-    IO ()
-startHeartbeat logger prefix mkHeartbeat send flush = do
-    _ <- forkIO $ forever $ do
+    -- | Stop flag shared with the event loop
+    TVar Bool ->
+    IO ThreadId
+startHeartbeat logger prefix mkHeartbeat send flush stopVar =
+    forkIO loop
+  where
+    loop = do
+        shouldStop <- readTVarIO stopVar
+        if shouldStop
+            then logSSE logger $ prefix <> ": heartbeat stopping"
+            else do
+                sendHeartbeat
+                loop
+    sendHeartbeat = do
         threadDelay heartbeatIntervalMicros
         logSSE logger $ prefix <> ": sending heartbeat"
         heartbeatJson <- mkHeartbeat
-        sendSSE send heartbeatJson
-        flush
-            `catch` \(e :: SomeException) ->
-                logSSE logger $ prefix <> ": heartbeat flush error: " <> T.pack (show e)
-    pure ()
+        (sendSSE send heartbeatJson >> flush)
+            `catch` \(e :: SomeException) -> do
+                logSSE logger $ prefix <> ": heartbeat send/flush error: " <> T.pack (show e)
+                atomically $ writeTVar stopVar True
 
 {- | Run the main event loop that forwards bus events to SSE.
 
@@ -292,24 +324,72 @@ runEventLoop ::
     (Builder -> IO ()) ->
     -- | SSE flush function
     IO () ->
+    -- | Stop flag shared with the heartbeat thread
+    TVar Bool ->
     IO ()
-runEventLoop logger prefix chan transformEvent logEvent send flush = do
+runEventLoop logger prefix chan transformEvent logEvent send flush stopVar = do
     logSSE logger $ prefix <> ": entering event loop"
-    let loop = do
-            logSSE logger $ prefix <> ": waiting for event from bus..."
-            val <- atomically $ readTChan chan
-            let eventJson = transformEvent val
-            -- Optional event-specific logging
-            case logEvent of
-                Just logFn -> logFn eventJson
-                Nothing -> logSSE logger $ prefix <> ": got event from bus, sending"
-            sendSSE send eventJson
-            flush
-            logSSE logger $ prefix <> ": event sent and flushed"
-            loop
-    loop
-        `catch` \(e :: SomeException) ->
-            logSSE logger $ prefix <> ": loop ended with: " <> T.pack (show e)
+    loop `catch` \(e :: SomeException) ->
+        logSSE logger $ prefix <> ": loop ended with: " <> T.pack (show e)
+  where
+    loop = do
+        logSSE logger $ prefix <> ": waiting for event from bus..."
+        mVal <- waitForEvent
+        case mVal of
+            Nothing -> logSSE logger $ prefix <> ": stop flag set; exiting event loop"
+            Just val -> do
+                sendEvent val
+                loop
+    waitForEvent =
+        atomically $
+            ( do
+                shouldStop <- readTVar stopVar
+                check shouldStop
+                pure Nothing
+            )
+                `orElse` (Just <$> readTChan chan)
+    sendEvent val = do
+        let eventJson = transformEvent val
+        logEventJson eventJson
+        sendAndFlush eventJson
+        logSSE logger $ prefix <> ": event sent and flushed"
+    logEventJson eventJson =
+        case logEvent of
+            Just logFn -> logFn eventJson
+            Nothing -> logSSE logger $ prefix <> ": got event from bus, sending"
+    sendAndFlush eventJson =
+        (sendSSE send eventJson >> flush)
+            `catch` \(e :: SomeException) -> do
+                logSSE logger $ prefix <> ": event send/flush error: " <> T.pack (show e)
+                atomically $ writeTVar stopVar True
+
+runSseStream ::
+    Logger ->
+    Text ->
+    TChan Value ->
+    BSL.ByteString ->
+    IO BSL.ByteString ->
+    (Value -> BSL.ByteString) ->
+    Maybe (BSL.ByteString -> IO ()) ->
+    (Builder -> IO ()) ->
+    IO () ->
+    IO ()
+runSseStream logger prefix chan connectedBytes mkHeartbeat transformEvent logEvent send flush = do
+    logSSE logger $ prefix <> ": starting stream body"
+    stopVar <- newTVarIO False
+
+    logSSE logger $ prefix <> ": sending server.connected"
+    sendSSE send connectedBytes
+    flush
+    logSSE logger $ prefix <> ": flushed server.connected"
+
+    heartbeatTid <- startHeartbeat logger prefix mkHeartbeat send flush stopVar
+    let stopAll = do
+            atomically $ writeTVar stopVar True
+            killThread heartbeatTid
+
+    runEventLoop logger prefix chan transformEvent logEvent send flush stopVar
+        `finally` stopAll
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SSE Handlers
@@ -354,22 +434,16 @@ globalEventHandler state = Tagged $ \_ respond' -> do
     chan <- atomically $ dupTChan (stEventChan state)
 
     respond' $ responseStream status200 sseHeaders $ \send flush -> do
-        logSSE logger $ prefix <> ": starting stream body"
-
-        -- Send initial connection event
-        let connectedEvent = wrapGlobalEvent directory "server.connected" (object [])
-        logSSE logger $ prefix <> ": sending server.connected"
-        sendSSE send (encode connectedEvent)
-        flush
-        logSSE logger $ prefix <> ": flushed server.connected"
-
-        -- Start heartbeat
-        let mkHeartbeat = pure $ encode $ wrapGlobalEvent directory "server.heartbeat" (object [])
-        startHeartbeat logger prefix mkHeartbeat send flush
-
-        -- Run main event loop
-        let transformEvent = encode . wrapEventPayload directory
-        runEventLoop logger prefix chan transformEvent Nothing send flush
+        runSseStream
+            logger
+            prefix
+            chan
+            (globalConnectedBytes directory)
+            (pure (globalHeartbeatBytes directory))
+            (globalTransformBytes directory)
+            Nothing
+            send
+            flush
 
 {- | SSE handler for @\/event@ endpoint.
 
@@ -405,19 +479,15 @@ eventHandler state = Tagged $ \_req respond' -> do
     chan <- atomically $ dupTChan (stEventChan state)
 
     respond' $ responseStream status200 sseHeaders $ \send flush -> do
-        logSSE logger $ prefix <> ": starting stream body"
-
-        -- Send initial connection event (pre-formatted for efficiency)
-        sendSSE send serverConnectedRaw
-        flush
-        logSSE logger $ prefix <> ": flushed server.connected"
-
-        -- Start heartbeat
-        let mkHeartbeat = pure $ encode serverHeartbeatRaw
-        startHeartbeat logger prefix mkHeartbeat send flush
-
-        -- Run main event loop with verbose logging
-        let transformEvent = encode
         let logEventFn jsonBytes =
                 logSSE logger $ prefix <> ": got event, sending: " <> T.take 200 (TE.decodeUtf8 (BSL.toStrict jsonBytes))
-        runEventLoop logger prefix chan transformEvent (Just logEventFn) send flush
+        runSseStream
+            logger
+            prefix
+            chan
+            rawConnectedBytes
+            (pure rawHeartbeatBytes)
+            encode
+            (Just logEventFn)
+            send
+            flush

@@ -8,11 +8,13 @@ correctly structured GlobalEvent and Event payloads per the OpenAPI spec.
 module Property.EventProps where
 
 import Data.Aeson (Value (..), decode, encode, object, (.=))
+import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString.Builder (toLazyByteString)
 import Data.ByteString.Lazy qualified as BSL
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Vector qualified as V
 import Global.Event (
     formatSSEMessage,
     heartbeatIntervalMicros,
@@ -214,6 +216,22 @@ prop_wrapGlobalEvent_nested_properties = property $ do
             Nothing -> failOnNothing "payload field"
         other -> failOnNonObject "wrapGlobalEvent result" other
 
+-- | Property: wrapGlobalEvent preserves non-object properties exactly
+prop_wrapGlobalEvent_preserves_non_object_properties :: Property
+prop_wrapGlobalEvent_preserves_non_object_properties = property $ do
+    dir <- forAll genDirectory
+    eventType <- forAll genEventType
+    props <- forAll genValue
+    let result = wrapGlobalEvent dir eventType props
+    case result of
+        Object obj -> case KM.lookup "payload" obj of
+            Just (Object payload) -> case KM.lookup "properties" payload of
+                Just p -> p === props
+                Nothing -> failOnNothing "properties field"
+            Just other -> failOnNonObject "payload field" other
+            Nothing -> failOnNothing "payload field"
+        other -> failOnNonObject "wrapGlobalEvent result" other
+
 -- | Property: Different directories produce different outputs
 prop_wrapGlobalEvent_different_directories :: Property
 prop_wrapGlobalEvent_different_directories = property $ do
@@ -379,6 +397,28 @@ genUUID = do
             ]
     pure $ Text.intercalate "-" parts
 
+genValue :: Gen Value
+genValue =
+    Gen.choice
+        [ genSimpleValue
+        , Array . V.fromList <$> Gen.list (Range.linear 0 5) genSimpleValue
+        , Object <$> genObject
+        ]
+  where
+    genSimpleValue =
+        Gen.choice
+            [ pure Null
+            , Bool <$> Gen.bool
+            , Number . fromIntegral <$> Gen.int (Range.linear (-1000) 1000)
+            , String <$> Gen.text (Range.linear 0 40) Gen.unicode
+            ]
+    genObject = do
+        pairs <- Gen.list (Range.linear 0 5) $ do
+            key <- Gen.text (Range.linear 1 10) Gen.lower
+            val <- genSimpleValue
+            pure (K.fromText key, val)
+        pure $ KM.fromList pairs
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // wrapEventPayload properties //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -429,6 +469,18 @@ prop_wrapEventPayload_consistent_with_wrapGlobalEvent = property $ do
     let result2 = wrapGlobalEvent dir eventType props
 
     result1 === result2
+
+-- | Property: wrapEventPayload preserves payload even with conflicting keys
+prop_wrapEventPayload_preserves_payload :: Property
+prop_wrapEventPayload_preserves_payload = property $ do
+    dir <- forAll genDirectory
+    payload <- forAll genValue
+    let result = wrapEventPayload dir payload
+    case result of
+        Object obj -> case KM.lookup "payload" obj of
+            Just p -> p === payload
+            Nothing -> failOnNothing "payload field"
+        other -> failOnNonObject "wrapEventPayload result" other
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // mkRawEvent properties //
@@ -484,6 +536,18 @@ prop_mkRawEvent_encodable = property $ do
 
     decoded === Just result
 
+-- | Property: mkRawEvent preserves properties even if conflicting keys are present
+prop_mkRawEvent_preserves_properties :: Property
+prop_mkRawEvent_preserves_properties = property $ do
+    eventType <- forAll genEventType
+    props <- forAll genValue
+    let result = mkRawEvent eventType props
+    case result of
+        Object obj -> case KM.lookup "properties" obj of
+            Just p -> p === props
+            Nothing -> failOnNothing "properties field"
+        other -> failOnNonObject "mkRawEvent result" other
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // formatSSEMessage properties //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -522,6 +586,15 @@ prop_formatSSEMessage_preserves_content = property $ do
     let withoutSuffix = BSL.take (BSL.length withoutPrefix - 2) withoutPrefix -- "\n\n" is 2 bytes
     withoutSuffix === jsonBytes
 
+-- | Property: formatSSEMessage preserves arbitrary bytes exactly
+prop_formatSSEMessage_preserves_bytes :: Property
+prop_formatSSEMessage_preserves_bytes = property $ do
+    bytes <- forAll $ Gen.bytes (Range.linear 0 64)
+    let jsonBytes = BSL.fromStrict bytes
+    let builders = formatSSEMessage jsonBytes
+    let result = mconcat $ map toLazyByteString builders
+    result === ("data: " <> jsonBytes <> "\n\n")
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- // Pre-built event constants //
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -550,6 +623,12 @@ prop_serverConnectedRaw_valid_json = property $ do
         Nothing -> do
             annotate "serverConnectedRaw is not valid JSON"
             failure
+
+-- | Property: serverConnectedRaw matches mkRawEvent encoding
+prop_serverConnectedRaw_matches_mkRawEvent :: Property
+prop_serverConnectedRaw_matches_mkRawEvent = property $ do
+    let decoded = decode serverConnectedRaw :: Maybe Value
+    decoded === Just (mkRawEvent "server.connected" (object []))
 
 -- | Property: serverHeartbeatRaw has correct structure
 prop_serverHeartbeatRaw_structure :: Property
@@ -614,6 +693,7 @@ tests =
             , testProperty "preserves event type exactly" prop_wrapGlobalEvent_preserves_type
             , testProperty "handles empty properties" prop_wrapGlobalEvent_empty_properties
             , testProperty "handles nested properties" prop_wrapGlobalEvent_nested_properties
+            , testProperty "preserves non-object properties" prop_wrapGlobalEvent_preserves_non_object_properties
             , testProperty "different directories produce different outputs" prop_wrapGlobalEvent_different_directories
             , testProperty "different event types produce different outputs" prop_wrapGlobalEvent_different_types
             ]
@@ -621,21 +701,25 @@ tests =
             "wrapEventPayload"
             [ testProperty "produces valid structure" prop_wrapEventPayload_structure
             , testProperty "is consistent with wrapGlobalEvent" prop_wrapEventPayload_consistent_with_wrapGlobalEvent
+            , testProperty "preserves payload with conflicting keys" prop_wrapEventPayload_preserves_payload
             ]
         , testGroup
             "mkRawEvent"
             [ testProperty "produces valid raw event structure" prop_mkRawEvent_structure
             , testProperty "is deterministic" prop_mkRawEvent_deterministic
             , testProperty "encodes to valid JSON" prop_mkRawEvent_encodable
+            , testProperty "preserves properties with conflicting keys" prop_mkRawEvent_preserves_properties
             ]
         , testGroup
             "formatSSEMessage"
             [ testProperty "produces valid SSE wire format" prop_formatSSEMessage_format
             , testProperty "preserves JSON content" prop_formatSSEMessage_preserves_content
+            , testProperty "preserves arbitrary bytes" prop_formatSSEMessage_preserves_bytes
             ]
         , testGroup
             "Pre-built events"
             [ testProperty "serverConnectedRaw is valid JSON" prop_serverConnectedRaw_valid_json
+            , testProperty "serverConnectedRaw matches mkRawEvent encoding" prop_serverConnectedRaw_matches_mkRawEvent
             , testProperty "serverHeartbeatRaw has correct structure" prop_serverHeartbeatRaw_structure
             ]
         , testGroup

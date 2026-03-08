@@ -9,26 +9,35 @@ import Api (PartInput (..))
 import Api hiding (PartInput (..))
 import Bus.Bus qualified as Bus
 import Config.Dhall qualified as Dhall
+import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (bracket, catch)
-import Control.Monad (void)
+import Control.Monad (void, when)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.Aeson.Key qualified as K
 import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString.Builder (Builder, toLazyByteString)
+import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
 import Find.Search (SearchError)
 import Formatter.Status qualified as Formatter
+import Global.Event (globalEventHandler)
 import Handlers
 import Katip (Severity (ErrorS))
 import Log qualified
+import Network.Wai (defaultRequest, responseToStream)
+import Network.Wai.Internal (ResponseReceived (..))
 import Pty.Pty qualified as Pty
 import Pty.Types (CreatePtyInput (..))
 
+import Servant (Tagged (..))
 import Servant.Server (ServerError)
 import State
 import Storage.Storage qualified as Storage
@@ -37,6 +46,7 @@ import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.Posix.Signals qualified as Sig
 import System.Process (readProcessWithExitCode)
+import System.Timeout (timeout)
 import Test.Fixture (withTempDir)
 import Test.Helpers (hasKey, lookupArray, lookupText, runHandlerIO, valueToText, waitForCount, waitVar)
 import Test.Hspec
@@ -130,6 +140,17 @@ hasSuffix suffix val =
     case valueToText val of
         Just p -> suffix `T.isSuffixOf` p
         Nothing -> False
+
+readSseEvent :: TQueue Builder -> IO Text
+readSseEvent queue = go ""
+  where
+    go acc = do
+        chunk <- atomically $ readTQueue queue
+        let textChunk = TE.decodeUtf8 (LBS.toStrict (toLazyByteString chunk))
+        let merged = acc <> textChunk
+        if "\n\n" `T.isInfixOf` merged
+            then pure merged
+            else go merged
 
 spec :: Dhall.DhallCache -> Formatter.ExeCache -> Spec
 spec dhallCache exeCache = do
@@ -245,6 +266,35 @@ spec dhallCache exeCache = do
                 (Left err, _) -> expectationFailure $ "Handler failed: " ++ show err
                 (Right _, Just e) -> expectationFailure $ "Search error: " ++ show e
                 (Right _vals, Nothing) -> pure ()
+
+        it "global event handler stops on closed connection" $ do
+            result <- withIgnoreSignals $ withState dhallCache exeCache $ \st -> do
+                var <- newEmptyMVar
+                let Tagged app = globalEventHandler st
+                _ <- app defaultRequest $ \res -> do
+                    putMVar var res
+                    pure ResponseReceived
+                res <- takeMVar var
+                let (_status, _headers, withBody) = responseToStream res
+                queue <- newTQueueIO
+                closedVar <- newTVarIO False
+                done <- newEmptyMVar
+                let send chunk = do
+                        closed <- readTVarIO closedVar
+                        if closed
+                            then ioError (userError "closed")
+                            else atomically $ writeTQueue queue chunk
+                let flush = do
+                        closed <- readTVarIO closedVar
+                        when closed $ ioError (userError "closed")
+                tid <- forkIO $ withBody $ \body -> body send flush >> putMVar done ()
+                _ <- readSseEvent queue
+                atomically $ writeTVar closedVar True
+                Bus.publish (stBus st) "test.event" (object ["ok" .= True])
+                resTimeout <- timeout 1000000 (takeMVar done)
+                killThread tid
+                pure resTimeout
+            isJust result `shouldBe` True
 
         it "pty handler lifecycle creates, lists, updates, and deletes" $ do
             result <- withIgnoreSignals $ withState dhallCache exeCache $ \st -> do
