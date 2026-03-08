@@ -251,8 +251,6 @@ data BashInput = BashInput
     -- ^ The bash command to execute
     , biDescription :: Text
     -- ^ Human-readable description of the command's purpose
-    , biTimeout :: Maybe Int
-    -- ^ Timeout in milliseconds (defaults to 120000, i.e., 2 minutes)
     , biWorkdir :: Maybe Text
     -- ^ Working directory for command execution
     }
@@ -263,7 +261,6 @@ instance FromJSON BashInput where
         BashInput
             <$> v .: "command"
             <*> v .: "description"
-            <*> v .:? "timeout"
             <*> v .:? "workdir"
 
 instance ToJSON BashInput where
@@ -271,7 +268,6 @@ instance ToJSON BashInput where
         object
             [ "command" .= biCommand
             , "description" .= biDescription
-            , "timeout" .= biTimeout
             , "workdir" .= biWorkdir
             ]
 

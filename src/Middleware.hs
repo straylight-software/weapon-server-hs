@@ -37,16 +37,15 @@ import Data.Aeson qualified as A
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
+import Data.Char (ord)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Data.Char (ord)
 import Data.Word (Word8)
 import Katip qualified
-import Numeric (showHex)
 import Log (Logger, logMsg)
 import Network.HTTP.Types (
     Header,
@@ -77,6 +76,7 @@ import Network.Wai (
     setRequestBodyChunks,
     strictRequestBody,
  )
+import Numeric (showHex)
 
 -- | Allow header name (not exported by http-types)
 hAllow :: HeaderName
@@ -890,21 +890,21 @@ escapeJsonString = LBS.pack . concatMap escapeChar . LBS.unpack
   where
     escapeChar :: Word8 -> [Word8]
     escapeChar c
-        | c == 0x22 = [0x5c, 0x22]  -- \"
-        | c == 0x5c = [0x5c, 0x5c]  -- \\
-        | c == 0x08 = [0x5c, 0x62]   -- \b
-        | c == 0x0c = [0x5c, 0x66]   -- \f
-        | c == 0x0a = [0x5c, 0x6e]   -- \n
-        | c == 0x0d = [0x5c, 0x72]   -- \r
-        | c == 0x09 = [0x5c, 0x74]   -- \t
-        | c < 0x20 = encodeControlChar c  -- control characters as \u00XX
+        | c == 0x22 = [0x5c, 0x22] -- \"
+        | c == 0x5c = [0x5c, 0x5c] -- \\
+        | c == 0x08 = [0x5c, 0x62] -- \b
+        | c == 0x0c = [0x5c, 0x66] -- \f
+        | c == 0x0a = [0x5c, 0x6e] -- \n
+        | c == 0x0d = [0x5c, 0x72] -- \r
+        | c == 0x09 = [0x5c, 0x74] -- \t
+        | c < 0x20 = encodeControlChar c -- control characters as \u00XX
         | otherwise = [c]
-    
+
     encodeControlChar :: Word8 -> [Word8]
-    encodeControlChar c = 
+    encodeControlChar c =
         let hex = showHex c ""
             padded = if length hex == 1 then '0' : hex else hex
-        in [0x5c, 0x75, 0x30, 0x30] ++ map (fromIntegral . ord) padded
+         in [0x5c, 0x75, 0x30, 0x30] ++ map (fromIntegral . ord) padded
 
 -- | Build a JSON error response body for 400 Bad Request
 errorJson :: LBS.ByteString -> LBS.ByteString -> LBS.ByteString

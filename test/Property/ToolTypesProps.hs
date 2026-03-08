@@ -72,7 +72,6 @@ genBashInput =
     BashInput
         <$> genNonEmptyText
         <*> genText
-        <*> Gen.maybe (Gen.int (Range.linear 100 60000))
         <*> Gen.maybe genFilePath
 
 genGlobInput :: Gen GlobInput

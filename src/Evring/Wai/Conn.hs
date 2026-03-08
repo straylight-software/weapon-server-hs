@@ -39,11 +39,11 @@ import Control.Concurrent (forkIO)
 import Control.Exception (SomeException, catch)
 import Control.Monad (void)
 import Data.Bifunctor (first)
-import System.IO (hPutStrLn, stderr)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Char8 qualified as BC
+import System.IO (hPutStrLn, stderr)
 
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Unsafe qualified as BSU
@@ -209,7 +209,6 @@ recvCont ctx@ConnContext{..} loop clientFd clientAddr app recvBuf leftoverRef = 
                                                     errLen
                                                     (sendCont ctx loop clientFd clientAddr app recvBuf leftoverRef sendBuf False)
                                                 pure Nothing
-
                                     Right respLen -> do
                                         -- Determine if keep-alive
                                         let keepAlive = checkKeepAlive req
@@ -397,8 +396,9 @@ runApp app req = do
         (\(_ :: SomeException) -> pure ())
     fromMaybe (responseLBS status500 [] "Internal Server Error") <$> readIORef responseRef
 
--- | Serialize a response directly to a buffer, returns bytes written or error
--- The method parameter is used to determine if the body should be omitted (HEAD requests)
+{- | Serialize a response directly to a buffer, returns bytes written or error
+The method parameter is used to determine if the body should be omitted (HEAD requests)
+-}
 {-# INLINE serializeResponseTo #-}
 serializeResponseTo :: ByteString -> Response -> Ptr Word8 -> Int -> IO (Either (Int, String) Int)
 serializeResponseTo reqMethod resp bufPtr maxLen = do
