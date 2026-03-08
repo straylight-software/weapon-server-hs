@@ -86,6 +86,16 @@ spec = do
                         [] -> expectationFailure "Expected exactly one result, got none"
                         (_ : _ : _moreThanOne) -> expectationFailure "Expected exactly one result, got multiple"
 
+                it "finds files by substring without extension" $ withTempDir $ \tmpDir -> do
+                    TIO.writeFile (tmpDir </> "App.purs") "module App where"
+                    TIO.writeFile (tmpDir </> "Other.purs") "module Other where"
+
+                    results <- findFile tmpDir "App"
+                    case results of
+                        [v] -> valueToText v `shouldSatisfy` maybe False (T.isSuffixOf "App.purs")
+                        [] -> expectationFailure "Expected exactly one result, got none"
+                        (_ : _ : _moreThanOne) -> expectationFailure "Expected exactly one result, got multiple"
+
                 it "returns empty list for no matches" $ withTempDir $ \tmpDir -> do
                     TIO.writeFile (tmpDir </> "test.txt") "content"
 

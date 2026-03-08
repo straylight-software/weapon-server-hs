@@ -139,7 +139,7 @@ findSymbol = runRg
 -- File Search (IO)
 --------------------------------------------------------------------------------
 
-{- | Find files matching a glob pattern.
+{- | Find files matching a pattern.
 
 Uses default options (files only, no limit).
 For more control, use 'findFileWithOptions'.
@@ -147,7 +147,8 @@ For more control, use 'findFileWithOptions'.
 ==== Parameters
 
 * @root@ - The root directory to search within
-* @pattern@ - Glob pattern to match (e.g., @"*.hs"@, @"src/**/*.json"@)
+* @pattern@ - Pattern to match. Globs (e.g., @"*.hs"@) are supported.
+  Non-glob queries are treated as literal substrings against full paths.
 
 ==== Returns
 
@@ -162,12 +163,13 @@ Throws 'SearchError' if @fd@ is not found in PATH.
 findFile :: FilePath -> Text -> IO [Value]
 findFile root pat = findFileWithOptions root pat defaultFindFileOptions
 
-{- | Find files matching a glob pattern with configurable options.
+{- | Find files matching a pattern with configurable options.
 
 ==== Parameters
 
 * @root@ - The root directory to search within
-* @pattern@ - Glob pattern to match
+* @pattern@ - Pattern to match. Globs are supported; otherwise the query is a
+  literal substring match.
 * @opts@ - Search options (see 'FindFileOptions')
 
 ==== Returns
@@ -274,7 +276,25 @@ requireExecutable name installInstructions = do
 -- | Build the full argument list for fd.
 buildFdArgs :: FindFileOptions -> Text -> FilePath -> [String]
 buildFdArgs opts pat root =
-    buildFdTypeArgs opts ++ ["--glob", T.unpack pat, root]
+    let (patternArgs, useFullPath) = buildFdPatternArgs pat
+        fullPathArgs = if useFullPath then ["--full-path"] else []
+     in buildFdTypeArgs opts
+            ++ fullPathArgs
+            ++ patternArgs
+            ++ [root]
+
+-- | Decide whether to use glob or literal substring search for fd.
+buildFdPatternArgs :: Text -> ([String], Bool)
+buildFdPatternArgs pat
+    | isGlobPattern pat = (["--glob", T.unpack pat], False)
+    | otherwise = (["--fixed-strings", T.unpack pat], True)
+
+-- | Detect glob-style queries.
+isGlobPattern :: Text -> Bool
+isGlobPattern pat =
+    T.any (`elem` ("*?[]" :: String)) pat
+        || T.isInfixOf "{" pat
+        || T.isInfixOf "}" pat
 
 -- | Run a process and return its stdout on success, empty string on failure.
 runProcess :: String -> [String] -> IO String
