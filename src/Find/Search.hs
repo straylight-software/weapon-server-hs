@@ -277,7 +277,7 @@ requireExecutable name installInstructions = do
 buildFdArgs :: FindFileOptions -> Text -> FilePath -> [String]
 buildFdArgs opts pat root =
     let (patternArgs, useFullPath) = buildFdPatternArgs pat
-        fullPathArgs = if useFullPath then ["--full-path"] else []
+        fullPathArgs = ["--full-path" | useFullPath]
      in buildFdTypeArgs opts
             ++ fullPathArgs
             ++ patternArgs

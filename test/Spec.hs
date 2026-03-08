@@ -39,6 +39,7 @@ import Property.IoUringProps qualified as IoUringProps
 import Property.LLMProps qualified as LLMProps
 import Property.LLMTypesProps qualified as LLMTypesProps
 import Property.LspProps qualified as LspProps
+import Property.LspWorkspaceSymbolProps qualified as LspWorkspaceSymbolProps
 import Property.MessagePartProps qualified as MessagePartProps
 import Property.MessageProps qualified as MessageProps
 import Property.MessageTypesProps qualified as MessageTypesProps
@@ -140,6 +141,7 @@ main = do
                 , LLMProps.tests
                 , OpenRouterProps.tests
                 , LspProps.tests
+                , LspWorkspaceSymbolProps.tests
                 , ProviderProps.tests
                 , PtyInternalProps.tests
                 , PtyProps.tests

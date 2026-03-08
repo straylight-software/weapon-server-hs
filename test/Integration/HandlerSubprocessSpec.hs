@@ -231,6 +231,21 @@ spec dhallCache exeCache = do
                     let matches = filter (\v -> valueToText v == Just path || hasSuffix ".txt" v) vals
                     null matches `shouldBe` False
 
+        it "find symbol handler returns a list (may be empty)" $ do
+            result <- withIgnoreSignals $ withState dhallCache exeCache $ \st -> do
+                let root = T.unpack (stDirectory st)
+                let path = root </> "find_symbol.txt"
+                TIO.writeFile path "MySymbol = 123\nother = 456\n"
+                ( do
+                        vals <- runHandlerIO (findSymbolHandler st (Just "MySymbol"))
+                        pure (vals, Nothing)
+                    )
+                    `catch` \(e :: SearchError) -> pure (Right [], Just e)
+            case result of
+                (Left err, _) -> expectationFailure $ "Handler failed: " ++ show err
+                (Right _, Just e) -> expectationFailure $ "Search error: " ++ show e
+                (Right _vals, Nothing) -> pure ()
+
         it "pty handler lifecycle creates, lists, updates, and deletes" $ do
             result <- withIgnoreSignals $ withState dhallCache exeCache $ \st -> do
                 let input = CreatePtyInput (Just "sleep") (Just ["infinity"]) Nothing Nothing Nothing (Just False) Nothing Nothing Nothing

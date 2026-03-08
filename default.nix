@@ -22,6 +22,9 @@
   http-types,
   katip,
   lib,
+  lsp,
+  lsp-client,
+  lsp-types,
   mtl,
   network,
   openapi3 ? null,
@@ -88,6 +91,9 @@ mkDerivation {
     http-client-tls
     http-types
     katip
+    lsp
+    lsp-client
+    lsp-types
     mtl
     network
     posix-pty
@@ -118,6 +124,9 @@ mkDerivation {
     directory
     filepath
     http-types
+    lsp
+    lsp-client
+    lsp-types
     katip
     process
     servant-server
@@ -149,6 +158,9 @@ mkDerivation {
     http-client-tls
     http-types
     katip
+    lsp
+    lsp-client
+    lsp-types
     openapi3
     process
     regex-pcre

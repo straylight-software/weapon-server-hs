@@ -313,10 +313,11 @@ parseUnifiedDiffBlock block =
             , fdiAfter = Nothing
             }
 
--- | Extract the file path for a unified diff block.
---
--- Prefers the @+++@ path for normal or added files, falls back to the
--- @---@ path for deleted files, and finally the @diff --git@ header.
+{- | Extract the file path for a unified diff block.
+
+Prefers the @+++@ path for normal or added files, falls back to the
+@---@ path for deleted files, and finally the @diff --git@ header.
+-}
 parseDiffFile :: [Text] -> Text
 parseDiffFile ls =
     let newPath = cleanDiffPath =<< firstPathAfter "+++ " ls
@@ -468,7 +469,9 @@ loadFileDiffs :: ExeCache -> FilePath -> IO [FileDiffInternal]
 loadFileDiffs exeCache root = do
     requireGit exeCache
     mPatch <-
-        runGit exeCache root
+        runGit
+            exeCache
+            root
             [ "diff"
             , "--no-color"
             , "--no-ext-diff"

@@ -391,7 +391,7 @@ renderDeletedDiff fname dels =
 
 renderRenamedDiff :: Text -> Text -> Text
 renderRenamedDiff oldName newName =
-    T.unlines $
+    T.unlines
         [ "diff --git a/" <> oldName <> " b/" <> newName
         , "similarity index 100%"
         , "rename from " <> oldName

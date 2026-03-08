@@ -97,6 +97,7 @@ library
     LLM.Types
     Log
     Lsp.Store
+    Lsp.WorkspaceSymbol
     Message.Parts
     Message.Todo
     Message.Types
@@ -202,6 +203,9 @@ library
     , http-client-tls
     , http-types          >=0.12
     , katip               >=0.8
+    , lsp                 >=2.7
+    , lsp-client          >=0.4
+    , lsp-types           >=2.3
     , mtl                 >=2.2
     , network             >=3.1
     , posix-pty           >=0.2
@@ -327,6 +331,7 @@ test-suite weapon-server-test
     Property.LLMProps
     Property.LLMTypesProps
     Property.LspProps
+    Property.LspWorkspaceSymbolProps
     Property.MessagePartProps
     Property.MessageProps
     Property.MessageTypesProps
@@ -391,6 +396,7 @@ test-suite weapon-server-test
     , http-client-tls
     , http-types
     , katip                 >=0.8
+    , lsp-types             >=2.3
     , openapi3              >=3.2
     , process
     , regex-pcre            >=0.95

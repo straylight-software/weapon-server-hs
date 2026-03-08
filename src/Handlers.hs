@@ -168,6 +168,7 @@ import LLM.OpenRouter qualified as OpenRouter
 import LLM.Types qualified as LLMTypes
 import Log qualified
 import Lsp.Store qualified as LspStore
+import Lsp.WorkspaceSymbol qualified as LspWorkspaceSymbol
 import Message.Parts qualified as Parts
 import Message.Todo qualified as Todo
 
@@ -1747,12 +1748,10 @@ findFileHandler st mQuery mDirsText mType mLimitText = do
         FindSearch.findFileWithOptions root query opts
 
 findSymbolHandler :: AppState -> Maybe Text -> Handler [Value]
-findSymbolHandler _st mQuery = do
-    -- Validate query is present and non-empty (required by OpenAPI spec)
-    _ <- V.requireNonEmptyTextParam "query" mQuery
-    -- NOTE: TypeScript implementation returns [] (stub for LSP workspace symbols)
-    -- This endpoint is intended to use LSP's workspace symbol search, not ripgrep
-    return []
+findSymbolHandler st mQuery = do
+    query <- V.requireNonEmptyTextParam "query" mQuery
+    let root = unpack (stDirectory st)
+    liftIO $ LspWorkspaceSymbol.workspaceSymbols (stDhallCache st) root query
 
 fileStatusHandler :: AppState -> Maybe Text -> Maybe Text -> Handler [Value]
 fileStatusHandler st mDir mPath = liftIO $ do
